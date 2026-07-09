@@ -1,0 +1,16 @@
+# Legacy OpenCobolIDE dependency inventory.
+#
+# These packages are not the supported OpenCobol2 dependency set.
+# Dependencies are migrated individually into pyproject.toml after
+# compatibility and architectural review.
+
+pygments
+pyqode.core
+pyqode.cobol
+pyqode.qt
+qcrash
+qdarkstyle
+githubpy
+keyring
+pyqode-uic
+pyqt-distutils

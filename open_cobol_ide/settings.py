@@ -5,8 +5,10 @@ import logging
 import json
 import os
 import sys
-from pyqode.qt import QtCore, QtWidgets, QtGui
-from pyqode.qt.QtCore import QSettings
+
+from PySide6 import QtCore, QtWidgets, QtGui
+from PySide6.QtCore import QSettings
+
 from open_cobol_ide import system
 from open_cobol_ide.enums import FileType, GnuCobolStandard
 

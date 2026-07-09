@@ -1,0 +1,100 @@
+[build-system]
+requires = [
+    "setuptools>=80",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "OpenCobol2"
+version = "0.1.0.dev0"
+description = "A modern COBOL integrated development environment built on the foundations of OpenCobolIDE."
+readme = "README.rst"
+requires-python = ">=3.14"
+license = "GPL-3.0-or-later"
+license-files = [
+    "LICENSE"
+]
+
+authors = [
+    { name = "Colin Duquesnoy" }
+]
+
+maintainers = [
+    { name = "Mitchell Aikens" }
+]
+
+keywords = [
+    "COBOL",
+    "GnuCOBOL",
+    "IDE",
+    "editor",
+    "development"
+]
+
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Integrated Environments (IDE)",
+    "Topic :: Text Editors :: Integrated Development Environments (IDE)"
+]
+
+dependencies = [
+    "PySide6>=6.10"
+]
+
+
+[project.scripts]
+opencobol2-console = "open_cobol_ide.main:main"
+
+
+[project.gui-scripts]
+opencobol2 = "open_cobol_ide.main:main"
+
+
+[project.urls]
+Homepage = "https://github.com/msaikens/OpenCobol2"
+Repository = "https://github.com/msaikens/OpenCobol2"
+Issues = "https://github.com/msaikens/OpenCobol2/issues"
+
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9",
+    "pytest-cov>=7"
+]
+
+dev = [
+    "build>=1.4",
+    "pytest>=9",
+    "pytest-cov>=7"
+]
+
+
+[tool.setuptools]
+include-package-data = true
+
+
+[tool.setuptools.packages.find]
+exclude = [
+    "test",
+    "test.*"
+]
+
+
+[tool.pytest.ini_options]
+testpaths = [
+    "test"
+]
+
+addopts = [
+    "--strict-config",
+    "--strict-markers"
+]

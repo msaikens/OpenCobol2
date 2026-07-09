@@ -12,36 +12,59 @@ import sys
 import shutil
 import tempfile
 
-from pyqode.cobol.widgets import CobolCodeEdit
-from pyqode.core.cache import Cache
-from pyqode.core.modes import CheckerMessage, CheckerMessages
-from pyqode.qt import QtCore
+from enum import IntEnum
+
+from PySide6 import QtCore
 
 from open_cobol_ide import system, msvc
 from open_cobol_ide.enums import FileType, GnuCobolStandard
 from open_cobol_ide.memoize import memoized
 from open_cobol_ide.settings import Settings
 
+class CheckerMessages(IntEnum):
+    """Severity levels for compiler diagnostics."""
+
+    INFO = 0
+    WARNING = 1
+    ERROR = 2
+
+
+DEFAULT_COMPILER_CHECK_SOURCE = """\
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. HELLO-WORLD.
+
+       PROCEDURE DIVISION.
+           DISPLAY "Hello, world!"
+           STOP RUN.
+"""
+
+
+def _logger():
+    return logging.getLogger(__name__)
 
 def _logger():
     return logging.getLogger(__name__)
 
 
 def _get_encoding(filename):
-    """
-    Gets a filename encoding from the pyqode.core cache. If the requested file
-    path could not be found in cache, the locale preferred encoding is used.
+    """Return the preferred encoding for reading a COBOL source file.
 
-    :param filename: path of the file in cache.
-    :return: cached encoding
+    OpenCobolIDE previously retrieved per-file encoding metadata from the
+    PyQode editor cache. Compiler infrastructure must not depend on an editor
+    implementation, so OpenCobol2 currently falls back to the platform
+    preferred encoding.
+
+    A dedicated document-encoding service will replace this fallback as the
+    editor architecture is modernized.
     """
-    try:
-        encoding = Cache().get_file_encoding(filename)
-    except KeyError:
-        encoding = locale.getpreferredencoding()
-        _logger().warning(
-            'encoding for %s not found in cache, using locale preferred '
-            'encoding instead: %s', filename, encoding)
+    encoding = locale.getpreferredencoding(False)
+
+    _logger().debug(
+        "using preferred encoding for %s: %s",
+        filename,
+        encoding,
+    )
+
     return encoding
 
 
@@ -69,55 +92,84 @@ def get_file_type(path):
     return ftype
 
 
-def run_command(pgm, args, working_dir=''):
-    if ' ' in pgm:
-        pgm = '"%s"' % pgm
+def run_command(pgm, args, working_dir=""):
+    """Run an external compiler command and return its exit status and output."""
+    path_cpy = os.environ["PATH"]
 
-    path_cpy = os.environ['PATH']
+    process_environment = GnuCobolCompiler.setup_process_environment()
+    os.environ["PATH"] = process_environment.value("PATH")
 
-    p_env = GnuCobolCompiler.setup_process_environment()
-    os.environ['PATH'] = p_env.value('PATH')
-    p = QtCore.QProcess()
-    p.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+    process = QtCore.QProcess()
+    process.setProcessChannelMode(
+        QtCore.QProcess.ProcessChannelMode.MergedChannels
+    )
+
     if working_dir:
-        p.setWorkingDirectory(working_dir)
-    p.setProcessEnvironment(p_env)
-    _logger().debug('command: %s', ' '.join([pgm] + args))
-    _logger().debug('working directory: %s', working_dir)
-    _logger().debug('environment: %s',
-                    p.processEnvironment().toStringList())
-    p.start(pgm, args)
+        process.setWorkingDirectory(working_dir)
 
-    print(' '.join([pgm] + args))
+    process.setProcessEnvironment(process_environment)
 
-    p.waitForFinished()
+    _logger().debug(
+        "command: %s",
+        " ".join([pgm] + args),
+    )
+    _logger().debug(
+        "working directory: %s",
+        working_dir,
+    )
+    _logger().debug(
+        "environment: %s",
+        process.processEnvironment().toStringList(),
+    )
 
-    # determine exit code (handle crashed processes)
-    if p.exitStatus() != p.Crashed:
-        status = p.exitCode()
-    else:
-        status = 139
-
-    # get compiler output
-    raw_output = p.readAllStandardOutput().data()
     try:
-        output = raw_output.decode(locale.getpreferredencoding())
-    except UnicodeDecodeError:
-        # This is a hack to get a meaningful output when compiling a file
-        # from UNC path using a batch file on some systems, see
-        # https://github.com/OpenCobolIDE/OpenCobolIDE/issues/188
-        output = str(raw_output).replace("b'", '')[:-1].replace(
-            '\\r\\n', '\n').replace('\\\\', '\\')
+        process.start(pgm, args)
 
-    _logger().debug('output: %r', output)
-    _logger().debug('exit code: %r', status)
+        if not process.waitForStarted():
+            error_message = (
+                f"Failed to start process {pgm!r}: "
+                f"{process.errorString()}"
+            )
 
-    os.environ['PATH'] = path_cpy
+            _logger().error(error_message)
 
-    print(output)
+            return 127, error_message
 
-    return status, output
+        print(" ".join([pgm] + args))
 
+        process.waitForFinished(-1)
+
+        raw_output = process.readAllStandardOutput().data()
+
+        try:
+            output = raw_output.decode(
+                locale.getpreferredencoding(False)
+            )
+        except UnicodeDecodeError:
+            output = (
+                str(raw_output)
+                .replace("b'", "")[:-1]
+                .replace("\\r\\n", "\n")
+                .replace("\\\\", "\\")
+            )
+
+        if (
+            process.exitStatus()
+            == QtCore.QProcess.ExitStatus.NormalExit
+        ):
+            status = process.exitCode()
+        else:
+            status = 139
+
+        _logger().debug("output: %r", output)
+        _logger().debug("exit code: %r", status)
+
+        print(output)
+
+        return status, output
+
+    finally:
+        os.environ["PATH"] = path_cpy
 
 def check_compiler():
     """
@@ -235,16 +287,16 @@ class GnuCobolCompiler(QtCore.QObject):
         _logger().debug('PATH=%s', PATH)
 
         if s.cob_config_dir_enabled and s.cob_config_dir:
-            env.insert('COB_CONFIG_DIR', s.cob_config_dir)
+            env.insert("COB_CONFIG_DIR", s.cob_config_dir)
 
         if s.cob_copy_dir_enabled and s.cob_copy_dir:
-            env.insert('COB_COPY_DIR', s.cob_copy_dir)
+            env.insert("COB_COPY_DIR", s.cob_copy_dir)
 
-        if s.cob_include_path_enabled and s.cob_copy_dir:
-            env.insert('COB_INCLUDE_PATH', s.cob_include_path)
+        if s.cob_include_path_enabled and s.cob_include_path:
+            env.insert("COB_INCLUDE_PATH", s.cob_include_path)
 
-        if s.cob_lib_path and s.cob_copy_dir:
-            env.insert('COB_LIB_PATH', s.cob_lib_path)
+        if s.cob_lib_path:
+            env.insert("COB_LIB_PATH", s.cob_lib_path)
 
         return env
 
@@ -270,14 +322,17 @@ class GnuCobolCompiler(QtCore.QObject):
                     return False
             return True
 
-        from open_cobol_ide.view.dialogs.preferences import DEFAULT_TEMPLATE
         working_dir = tempfile.gettempdir()
         cbl_path = os.path.join(working_dir, 'test.cbl')
+        """ Removed legacy DEFAULT TEMPLATE """
         try:
-            with open(cbl_path, 'w') as f:
-                f.write(DEFAULT_TEMPLATE)
-        except OSError as e:
-            return 'Failed to create %s, error=%r' % (cbl_path, e), -1
+            with open(cbl_path, "w", encoding="utf-8") as file:
+                file.write(DEFAULT_COMPILER_CHECK_SOURCE)
+        except OSError as error:
+            return (
+            f"Failed to create {cbl_path}, error={error!r}",
+            -1,
+        )
         dest = os.path.join(tempfile.gettempdir(),
                             'test' + ('.exe' if system.windows else ''))
 
@@ -502,57 +557,64 @@ class GnuCobolCompiler(QtCore.QObject):
         return os.path.splitext(inputs[0])[0] + self.extension_for_type(
             file_type)
 
-    def make_command(self, input_file_names, file_type, output_dir=None,
-                     additional_options=None):
-        """
-        Makes the command needed to compile the specified file.
-
-        :param input_file_names: Input file names (without path).
-            The first name must be the source file, other entries can
-            be used to link with additional object files.
-        :param output_file_name: Output file base name (without path and
-            extension). None to use the input_file_name base name.
-        :param file_type: file type (exe or dll).
-
-        :return: a tuple made up of the program name and the command arguments.
-        """
-        from .settings import Settings
+    def make_command(
+        self,
+        input_file_names,
+        file_type,
+        output_dir=None,
+        additional_options=None,
+    ):
+        """Build the GnuCOBOL command for the requested inputs."""
         settings = Settings()
-        output_file_name = self.get_output_filename(
-            input_file_names, file_type)
-        options = []
-        if file_type == FileType.EXECUTABLE:
-            options.append('-x')
-        options.append('-o')
-        options.append(os.path.join(output_dir, output_file_name))
-        if GnuCobolStandard(settings.cobol_standard) != GnuCobolStandard.none:
-            options.append('-std=%s' % str(settings.cobol_standard).replace(
-                'GnuCobolStandard.', ''))
-        options += settings.compiler_flags
-        if settings.free_format:
-            options.append('-free')
-        if settings.copybook_paths:
-            for pth in settings.copybook_paths.split(';'):
-                if not pth:
-                    continue
-                options.append('-I%s' % pth)
-        if settings.library_search_path:
-            for pth in settings.library_search_path.split(';'):
-                if pth:
-                    options.append('-L%s' % pth)
-        if settings.libraries:
-            for lib in system.shell_split(settings.libraries):
-                if lib:
-                    options.append('-l%s' % lib)
-        if additional_options:
-            options += additional_options
-        for ifn in input_file_names:
-            if system.windows and ' ' in ifn:
-                ifn = '"%s"' % ifn
-            options.append(ifn)
-        pgm = Settings().compiler_path
 
-        return pgm, options
+        output_file_name = self.get_output_filename(
+            input_file_names,
+            file_type
+        )
+
+        options = []
+
+        if file_type == FileType.EXECUTABLE:
+            options.append("-x")
+
+        options.append("-o")
+        options.append(os.path.join(output_dir, output_file_name))
+
+        cobol_standard = GnuCobolStandard(settings.cobol_standard)
+
+        if cobol_standard != GnuCobolStandard.none:
+            options.append(f"-std={cobol_standard.name}")
+
+        options.extend(settings.compiler_flags)
+
+        if settings.free_format:
+            options.append("-free")
+
+        if settings.copybook_paths:
+            for path in settings.copybook_paths.split(";"):
+                if path:
+                    options.append(f"-I{path}")
+
+        if settings.library_search_path:
+            for path in settings.library_search_path.split(";"):
+                if path:
+                    options.append(f"-L{path}")
+
+        if settings.libraries:
+            for library in system.shell_split(settings.libraries):
+                if library:
+                    options.append(f"-l{library}")
+
+        if additional_options:
+            options.extend(additional_options)
+
+        for input_file_name in input_file_names:
+            if system.windows and " " in input_file_name:
+                input_file_name = f'"{input_file_name}"'
+
+        options.append(input_file_name)
+
+        return settings.compiler_path, options
 
     @staticmethod
     def parse_output(output, working_directory):
@@ -813,7 +875,7 @@ class DbpreCompiler(QtCore.QObject):
 
 
 class EsqlOCCompiler(QtCore.QObject):
-    """
+    r"""
     Provides an interface to esqlOC.exe:
 
     esqlOC.exe -static -o file.cob file.sqb

@@ -1,104 +1,120 @@
+"""Microsoft Visual C++ environment discovery utilities.
+
+This module initializes process environment values required to invoke
+MSVC-based compiler toolchains on Windows.
 """
-This module contains a function that can be used to init os.environ to be
-ready to run msvc based compiler process (highly windows specific).
-"""
+
+from __future__ import annotations
+
+from functools import cache
 import logging
-import subprocess
 import os
-
-from pyqode.core.api.utils import memoized
-
-
-#: environment variables we are intetrested in
-INTERESTING = set(("include", "lib", "libpath", "path"))
+import subprocess
 
 
-@memoized
-def get_vc_vars(vcvarsall, arch):
+#: Environment variables collected from the Visual C++ developer environment.
+INTERESTING = {"include", "lib", "libpath", "path"}
+
+
+@cache
+def get_vc_vars(vcvarsall: str, arch: str) -> dict[str, str]:
+    """Return cached Visual C++ environment variables.
+
+    Args:
+        vcvarsall: Path to the ``vcvarsall.bat`` script.
+        arch: Target architecture, such as ``x86`` or ``x64``.
+
+    Returns:
+        Environment variables required by the selected MSVC toolchain.
     """
-    Gets the VC environment variables
+    env: dict[str, str] = {}
 
-    :param vcvarsall: path to the vcvarsall batch to run.
-    :param arch: architecture to setup (x86 or x64).
-    """
-    env = {}
     try:
-        _logger().debug('querying vcvarsall')
+        _logger().debug("querying vcvarsall")
         vc_env = query_vcvarsall(vcvarsall, arch)
     except (RuntimeError, PermissionError):
-        _logger().exception('failed to initialize VC vars, compilation will '
-                            'likely not work...')
+        _logger().exception(
+            "failed to initialize VC vars; compilation will likely not work"
+        )
     else:
-        _logger().debug('vcenv: %r', vc_env)
+        _logger().debug("vcenv: %r", vc_env)
+
         for key in INTERESTING:
-            dst_key = key
-            if key == 'path':
-                dst_key = key.upper()
+            destination_key = key.upper() if key == "path" else key
+
             try:
-                env[dst_key] = vc_env[key]
+                env[destination_key] = vc_env[key]
             except KeyError:
-                _logger().exception('failed to read key from vcvarsall')
+                _logger().exception(
+                    "failed to read %s from vcvarsall environment",
+                    key,
+                )
+
     return env
 
 
-def query_vcvarsall(path, arch):
-    """
-    Launch vcvarsall.bat for the given architecture and reads the environment
-    variables from the standard output.
+def query_vcvarsall(path: str, arch: str) -> dict[str, str]:
+    """Query a Visual C++ developer environment.
 
-    This function has been taken from distutils2 (and adapted for own needs).
+    Launch ``vcvarsall.bat`` for the requested architecture and parse
+    selected environment variables from the resulting ``set`` output.
+
+    This function originated from distutils2 and was adapted by the
+    OpenCobolIDE project.
     """
-    result = {}
+    result: dict[str, str] = {}
+
     _logger().debug('querying vcvarsall: "%s" %s set', path, arch)
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+    startup_info = subprocess.STARTUPINFO()
+    startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+    command = f'"{path}" {arch} & set'
+
     try:
-        popen = subprocess.Popen('"%s" %s & set' % (path, arch),
-                                 stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE,
-                                 startupinfo=si)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startupinfo=startup_info,
+        )
     except OSError:
-        _logger().exception('exception while querying vcvarsall')
-        stdout, stderr = b'', b''
+        _logger().exception("exception while querying vcvarsall")
+        stdout = b""
+        stderr = b""
     else:
-        stdout, stderr = popen.communicate()
-        if popen.wait() != 0:
+        stdout, stderr = process.communicate()
+
+        if process.wait() != 0:
             raise RuntimeError(stderr.decode("mbcs"))
 
-    def convert_mbcs(s):
-        dec = getattr(s, "decode", None)
-        if dec is not None:
-            try:
-                s = dec("mbcs")
-            except UnicodeError:
-                pass
-        return s
+    stdout_text = stdout.decode("mbcs")
 
-    def rm_duplicates(variable):
-        """Remove duplicate values of an environment variable.
-        """
-        oldList = variable.split(os.pathsep)
-        newList = []
-        for i in oldList:
-            if i not in newList:
-                newList.append(i)
-        newVariable = os.pathsep.join(newList)
-        return newVariable
-
-    stdout = stdout.decode("mbcs")
-    for line in stdout.split("\n"):
-        line = convert_mbcs(line)
-        if '=' not in line:
+    for line in stdout_text.splitlines():
+        if "=" not in line:
             continue
-        line = line.strip()
-        key, value = line.split('=', 1)
+
+        key, value = line.strip().split("=", 1)
         key = key.lower()
-        if key in INTERESTING:
-            if value.endswith(os.pathsep):
-                value = value[:-1]
-            result[key] = rm_duplicates(value)
+
+        if key not in INTERESTING:
+            continue
+
+        if value.endswith(os.pathsep):
+            value = value[:-1]
+
+        result[key] = _remove_duplicates(value)
+
     return result
 
 
-def _logger():
+def _remove_duplicates(variable: str) -> str:
+    """Remove duplicate path entries while preserving their original order."""
+    values = variable.split(os.pathsep)
+    unique_values = list(dict.fromkeys(values))
+    return os.pathsep.join(unique_values)
+
+
+def _logger() -> logging.Logger:
+    """Return the module logger."""
     return logging.getLogger(__name__)

@@ -9,7 +9,7 @@ import platform
 import shlex
 import sys
 
-from pyqode.qt import QtGui
+from PySide6 import QtGui
 
 
 windows = platform.system() == 'Windows'
