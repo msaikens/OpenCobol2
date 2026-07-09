@@ -75,9 +75,11 @@ def test_discovered_gnucobol_can_compile_program(
         toolchain=toolchain,
     )
 
-    result = compiler.compile(
+    compilation = compiler.compile(
         request,
     )
+
+    result = compilation.process_result
 
     assert result.status is CompilerExecutionStatus.COMPLETED, (
         "Real GnuCOBOL process did not complete.\n"
@@ -90,12 +92,13 @@ def test_discovered_gnucobol_can_compile_program(
         f"STDERR:\n{result.stderr}"
     )
 
-    assert result.succeeded, (
+    assert compilation.succeeded, (
         "Real GnuCOBOL compilation failed.\n"
         f"Compiler: {toolchain.compiler_path}\n"
         f"Source: {toolchain.source}\n"
         f"Version: {toolchain.version}\n"
         f"Return code: {result.return_code}\n"
+        f"Diagnostics: {compilation.diagnostics!r}\n"
         f"STDOUT:\n{result.stdout}\n"
         f"STDERR:\n{result.stderr}"
     )

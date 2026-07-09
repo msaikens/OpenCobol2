@@ -8,6 +8,12 @@ import os
 import subprocess
 import time
 
+from opencobol2.compiler.gnucobol_diagnostics import (
+    parse_gnucobol_diagnostics,
+)
+from opencobol2.compiler.gnucobol_models import (
+    GnuCobolCompilation,
+)
 from opencobol2.compiler.models import (
     CobolSourceFormat,
     CompileRequest,
@@ -50,8 +56,31 @@ class GnuCobolCompiler:
         request: CompileRequest,
         *,
         base_environment: Mapping[str, str] | None = None,
+    ) -> GnuCobolCompilation:
+        """Compile one COBOL request and parse captured diagnostics."""
+        process_result = self._invoke(
+            request,
+            base_environment=base_environment,
+        )
+
+        diagnostics = parse_gnucobol_diagnostics(
+            _collect_diagnostic_output(
+                process_result,
+            )
+        )
+
+        return GnuCobolCompilation(
+            process_result=process_result,
+            diagnostics=diagnostics,
+        )
+
+    def _invoke(
+        self,
+        request: CompileRequest,
+        *,
+        base_environment: Mapping[str, str] | None = None,
     ) -> CompileResult:
-        """Compile one COBOL request with the configured toolchain."""
+        """Invoke the configured GnuCOBOL compiler process."""
         command = build_gnucobol_command(
             self.toolchain,
             request,
@@ -172,6 +201,20 @@ def build_gnucobol_command(
     )
 
     return tuple(command)
+
+
+def _collect_diagnostic_output(
+    process_result: CompileResult,
+) -> str:
+    """Collect captured process streams for diagnostic parsing."""
+    return "\n".join(
+        output
+        for output in (
+            process_result.stdout,
+            process_result.stderr,
+        )
+        if output
+    )
 
 
 def _normalize_process_output(

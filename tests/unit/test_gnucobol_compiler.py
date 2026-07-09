@@ -13,6 +13,7 @@ import opencobol2.compiler.gnucobol as gnucobol
 from opencobol2.compiler import (
     CompileRequest,
     CompilerExecutionStatus,
+    DiagnosticSeverity,
     GnuCobolCompiler,
     build_gnucobol_command,
 )
@@ -93,7 +94,7 @@ def test_compile_returns_completed_result(
         toolchain=toolchain,
     )
 
-    result = compiler.compile(
+    compilation = compiler.compile(
         request,
         base_environment={
             "PATH": "base-path",
@@ -101,12 +102,16 @@ def test_compile_returns_completed_result(
         },
     )
 
+    result = compilation.process_result
+
     assert result.status is CompilerExecutionStatus.COMPLETED
     assert result.return_code == 0
     assert result.stdout == "compiler stdout"
     assert result.stderr == "compiler stderr"
     assert result.elapsed_seconds == 0.25
     assert result.succeeded is True
+    assert compilation.succeeded is True
+    assert compilation.diagnostics == ()
 
     assert captured["command"] == build_gnucobol_command(
         toolchain,
@@ -161,15 +166,72 @@ def test_nonzero_return_code_is_completed_failure(
         toolchain=toolchain,
     )
 
-    result = compiler.compile(
+    compilation = compiler.compile(
         request,
         base_environment={},
     )
+
+    result = compilation.process_result
 
     assert result.status is CompilerExecutionStatus.COMPLETED
     assert result.return_code == 1
     assert result.stderr == "syntax error"
     assert result.succeeded is False
+    assert compilation.succeeded is False
+
+
+def test_compile_parses_captured_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolchain = _toolchain()
+    request = _request()
+
+    def fake_run(
+        command: tuple[str, ...],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout=(
+                "program.cob:5: warning: "
+                "dialect extension used [-Wdialect]"
+            ),
+            stderr=(
+                "program.cob:6: error: "
+                "invalid statement"
+            ),
+        )
+
+    monkeypatch.setattr(
+        gnucobol.subprocess,
+        "run",
+        fake_run,
+    )
+
+    compiler = GnuCobolCompiler(
+        toolchain=toolchain,
+    )
+
+    compilation = compiler.compile(
+        request,
+        base_environment={},
+    )
+
+    assert len(compilation.diagnostics) == 2
+
+    warning = compilation.diagnostics[0]
+
+    assert warning.severity is DiagnosticSeverity.WARNING
+    assert warning.line == 5
+    assert warning.message == "dialect extension used"
+    assert warning.code == "-Wdialect"
+
+    error = compilation.diagnostics[1]
+
+    assert error.severity is DiagnosticSeverity.ERROR
+    assert error.line == 6
+    assert error.message == "invalid statement"
 
 
 def test_failed_process_start_returns_result(
@@ -209,10 +271,12 @@ def test_failed_process_start_returns_result(
         toolchain=toolchain,
     )
 
-    result = compiler.compile(
+    compilation = compiler.compile(
         request,
         base_environment={},
     )
+
+    result = compilation.process_result
 
     assert (
         result.status
@@ -229,6 +293,8 @@ def test_failed_process_start_returns_result(
         result.error_message or ""
     )
     assert result.succeeded is False
+    assert compilation.succeeded is False
+    assert compilation.diagnostics == ()
 
 
 def test_timeout_returns_partial_captured_output(
@@ -271,10 +337,12 @@ def test_timeout_returns_partial_captured_output(
         timeout_seconds=5.0,
     )
 
-    result = compiler.compile(
+    compilation = compiler.compile(
         request,
         base_environment={},
     )
+
+    result = compilation.process_result
 
     assert result.status is CompilerExecutionStatus.TIMED_OUT
     assert result.return_code is None
@@ -285,6 +353,7 @@ def test_timeout_returns_partial_captured_output(
         "GnuCOBOL compilation timed out after 5 seconds."
     )
     assert result.succeeded is False
+    assert compilation.succeeded is False
 
 
 def test_custom_timeout_is_passed_to_subprocess(

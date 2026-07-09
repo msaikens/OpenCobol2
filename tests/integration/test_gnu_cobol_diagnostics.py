@@ -13,7 +13,6 @@ from opencobol2.compiler import (
     CompilerExecutionStatus,
     DiagnosticSeverity,
     GnuCobolCompiler,
-    parse_gnucobol_diagnostics,
 )
 from opencobol2.toolchains import discover_gnucobol
 
@@ -21,7 +20,7 @@ from opencobol2.toolchains import discover_gnucobol
 def test_real_gnucobol_error_output_can_be_parsed(
     tmp_path: Path,
 ) -> None:
-    """Compile malformed COBOL and parse a real compiler diagnostic."""
+    """Compile malformed COBOL and inspect parsed real diagnostics."""
     toolchain = discover_gnucobol()
 
     if toolchain is None:
@@ -58,9 +57,11 @@ def test_real_gnucobol_error_output_can_be_parsed(
         toolchain=toolchain,
     )
 
-    result = compiler.compile(
+    compilation = compiler.compile(
         request,
     )
+
+    result = compilation.process_result
 
     assert result.status is CompilerExecutionStatus.COMPLETED, (
         "Real GnuCOBOL process did not complete.\n"
@@ -73,20 +74,9 @@ def test_real_gnucobol_error_output_can_be_parsed(
 
     assert result.return_code is not None
     assert result.return_code != 0
-    assert result.succeeded is False
+    assert compilation.succeeded is False
 
-    diagnostic_output = "\n".join(
-        output
-        for output in (
-            result.stdout,
-            result.stderr,
-        )
-        if output
-    )
-
-    diagnostics = parse_gnucobol_diagnostics(
-        diagnostic_output,
-    )
+    diagnostics = compilation.diagnostics
 
     assert diagnostics, (
         "Real GnuCOBOL compilation failed but no diagnostics were parsed.\n"

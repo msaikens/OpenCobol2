@@ -11,6 +11,9 @@ from opencobol2.compiler.gnucobol import (
 from opencobol2.compiler.gnucobol_diagnostics import (
     parse_gnucobol_diagnostics,
 )
+from opencobol2.compiler.gnucobol_models import (
+    GnuCobolCompilation,
+)
 from opencobol2.compiler.models import (
     CobolSourceFormat,
     CompileRequest,
@@ -28,6 +31,7 @@ __all__ = [
     "CompilerExecutionStatus",
     "CompilerOutputKind",
     "DiagnosticSeverity",
+    "GnuCobolCompilation",
     "GnuCobolCompiler",
     "build_gnucobol_command",
     "parse_gnucobol_diagnostics",
