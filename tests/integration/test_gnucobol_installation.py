@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import subprocess
 
 import pytest
 
-from opencobol2.toolchains import ToolchainSource, discover_gnucobol
+from opencobol2.compiler import (
+    CobolSourceFormat,
+    CompileRequest,
+    CompilerExecutionStatus,
+    GnuCobolCompiler,
+)
+from opencobol2.toolchains import (
+    ToolchainSource,
+    discover_gnucobol,
+)
 
 
-def test_discovered_gnucobol_can_compile_program(tmp_path: Path) -> None:
-    """Discover a real compiler and use its modeled environment to compile COBOL."""
+def test_discovered_gnucobol_can_compile_program(
+    tmp_path: Path,
+) -> None:
+    """Discover a real compiler and compile COBOL through the public service."""
     toolchain = discover_gnucobol()
 
     if toolchain is None:
@@ -25,15 +35,22 @@ def test_discovered_gnucobol_can_compile_program(tmp_path: Path) -> None:
     assert toolchain.version_text
     assert isinstance(toolchain.source, ToolchainSource)
 
-    environment = toolchain.process_environment(os.environ)
-    path_entries = environment.get("PATH", "").split(os.pathsep)
+    process_environment = toolchain.process_environment(
+        os.environ,
+    )
+    path_entries = process_environment.get(
+        "PATH",
+        "",
+    ).split(os.pathsep)
 
     assert path_entries
     assert Path(path_entries[0]) == toolchain.bin_directory
 
     source_path = tmp_path / "hello.cob"
     executable_path = tmp_path / (
-        "hello.exe" if os.name == "nt" else "hello"
+        "hello.exe"
+        if os.name == "nt"
+        else "hello"
     )
 
     source_path.write_text(
@@ -47,29 +64,41 @@ def test_discovered_gnucobol_can_compile_program(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    completed_process = subprocess.run(
-        [
-            str(toolchain.compiler_path),
-            "-x",
-            str(source_path),
-            "-o",
-            str(executable_path),
-        ],
-        cwd=tmp_path,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        errors="replace",
-        timeout=30,
-        check=False,
+    request = CompileRequest(
+        source_path=source_path,
+        output_path=executable_path,
+        working_directory=tmp_path,
+        source_format=CobolSourceFormat.FIXED,
     )
 
-    assert completed_process.returncode == 0, (
+    compiler = GnuCobolCompiler(
+        toolchain=toolchain,
+    )
+
+    result = compiler.compile(
+        request,
+    )
+
+    assert result.status is CompilerExecutionStatus.COMPLETED, (
+        "Real GnuCOBOL process did not complete.\n"
+        f"Compiler: {toolchain.compiler_path}\n"
+        f"Source: {toolchain.source}\n"
+        f"Version: {toolchain.version}\n"
+        f"Status: {result.status}\n"
+        f"Error: {result.error_message}\n"
+        f"STDOUT:\n{result.stdout}\n"
+        f"STDERR:\n{result.stderr}"
+    )
+
+    assert result.succeeded, (
         "Real GnuCOBOL compilation failed.\n"
         f"Compiler: {toolchain.compiler_path}\n"
         f"Source: {toolchain.source}\n"
         f"Version: {toolchain.version}\n"
-        f"Output:\n{completed_process.stdout}"
+        f"Return code: {result.return_code}\n"
+        f"STDOUT:\n{result.stdout}\n"
+        f"STDERR:\n{result.stderr}"
     )
+
+    assert result.return_code == 0
     assert executable_path.is_file()

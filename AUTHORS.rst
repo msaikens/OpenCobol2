@@ -12,3 +12,8 @@
 
 - **Vlinhart** (@vlinhart)
     Contributor (documentation)
+
+Open Cobol 2 Developers
+
+- **Mitchell Aikens** (@maikens)
+    Main developer

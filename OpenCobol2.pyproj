@@ -577,7 +577,18 @@
     <Compile Include="legacy\opencobolide\tests\test_compiler.py" />
     <Compile Include="legacy\opencobolide\tests\test_functional.py" />
     <Compile Include="legacy\opencobolide\tests\__init__.py" />
+    <Compile Include="src\opencobol2\compiler\diagnostics.py" />
+    <Compile Include="src\opencobol2\compiler\gnucobol.py" />
+    <Compile Include="src\opencobol2\compiler\gnucobol_diagnostics.py" />
+    <Compile Include="src\opencobol2\compiler\models.py" />
+    <Compile Include="src\opencobol2\compiler\__init__.py" />
     <Compile Include="tests\integration\test_gnucobol_installation.py" />
+    <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
+    <Compile Include="tests\unit\test_compiler_diagnostics.py" />
+    <Compile Include="tests\unit\test_compiler_models.py" />
+    <Compile Include="tests\unit\test_gnucobol_command.py" />
+    <Compile Include="tests\unit\test_gnucobol_compiler.py" />
+    <Compile Include="tests\unit\test_gnucobol_diagnostics.py" />
     <Compile Include="tests\unit\test_gnucobol_toolchain.py" />
     <Compile Include="legacy\opencobolide\build-support\OpenCobolIDE.pyw" />
     <Compile Include="scripts\freeze.py" />
@@ -868,6 +879,7 @@
     <Folder Include="share" />
     <Folder Include="src\" />
     <Folder Include="src\opencobol2\" />
+    <Folder Include="src\opencobol2\compiler\" />
     <Folder Include="src\opencobol2\test\" />
     <Folder Include="src\opencobol2\toolchains\" />
     <Folder Include="tests\" />
