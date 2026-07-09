@@ -1,0 +1,65 @@
+*.py[cod]
+
+# C extensions
+*.so
+
+# Inno setup scrip
+*.iss
+
+# Packages
+*.egg
+*.egg-info
+dist
+build
+eggs
+parts
+var
+sdist
+develop-eggs
+.installed.cfg
+
+bin
+
+# Installer logs
+pip-log.txt
+
+# Unit test / coverage reports
+.coverage
+.tox
+nosetests.xml
+htmlcov
+
+# PEP8 tests
+.cache
+
+# Translations
+*.mo
+
+# Mr Developer
+.mr.developer.cfg
+.project
+.pydevproject
+
+/.idea
+/temp/
+/__pycache__/
+*.DS_Store
+
+
+# Dolphin (KDE)
+.directory
+
+# stdeb files
+*.tar.gz
+deb_dist
+/gpg_key
+
+# gedit temp files
+*~
+
+# hackedit project files
+.hackedit
+
+.vs/
+
+
