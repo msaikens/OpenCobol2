@@ -22,7 +22,7 @@ _VERSION_PATTERN = re.compile(
 )
 
 _INFO_PATTERN = re.compile(
-    r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*:\s*(?P<value>.*?)\s*$"
+    r"^\s*(?P<key>[^:]+?)\s*:\s*(?P<value>.*?)\s*$"
 )
 
 

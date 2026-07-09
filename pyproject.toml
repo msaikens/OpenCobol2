@@ -51,14 +51,6 @@ dependencies = [
 ]
 
 
-[project.scripts]
-opencobol2-console = "open_cobol_ide.main:main"
-
-
-[project.gui-scripts]
-opencobol2 = "open_cobol_ide.main:main"
-
-
 [project.urls]
 Homepage = "https://github.com/msaikens/OpenCobol2"
 Repository = "https://github.com/msaikens/OpenCobol2"
@@ -79,19 +71,19 @@ dev = [
 
 
 [tool.setuptools]
+package-dir = { "" = "src" }
 include-package-data = true
 
 
 [tool.setuptools.packages.find]
-exclude = [
-    "test",
-    "test.*"
+where = [
+    "src"
 ]
 
 
 [tool.pytest.ini_options]
 testpaths = [
-    "test"
+    "tests"
 ]
 
 addopts = [
