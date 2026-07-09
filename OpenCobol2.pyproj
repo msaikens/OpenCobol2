@@ -1299,6 +1299,7 @@
     <Content Include="legacy\opencobolide\tests\__pycache__\__init__.cpython-314.pyc" />
     <Content Include="legacy\opencobolide\build-support\LICENSE" />
     <Content Include="legacy\opencobolide\build-support\MANIFEST.in" />
+    <Content Include="OpenCobol2.slnx" />
     <Content Include="pyproject.toml" />
     <Content Include="legacy\opencobolide\build-support\pytest.legacy.ini" />
     <Content Include="legacy\opencobolide\build-support\pyuic.cfg" />
