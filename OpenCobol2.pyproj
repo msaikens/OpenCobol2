@@ -590,7 +590,6 @@
     <Compile Include="src\opencobol2\toolchains\models.py" />
     <Compile Include="src\opencobol2\toolchains\__init__.py" />
     <Compile Include="src\opencobol2\__init__.py" />
-    <Compile Include="tools\diagnose_gnucobol.py" />
   </ItemGroup>
   <ItemGroup>
     <Content Include=".gitignore" />
