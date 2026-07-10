@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name = "OpenCobol2"
 version = "0.1.0.dev0"
 description = "A modern COBOL integrated development environment built on the foundations of OpenCobolIDE."
-readme = "README.rst"
+readme = "README.MD"
 requires-python = ">=3.14"
 license = "GPL-3.0-or-later"
 license-files = [
@@ -18,43 +18,53 @@ license-files = [
 ]
 
 authors = [
-    { name = "Colin Duquesnoy" }
+    { name = "Mitchell Aikens", email = "mitchaikenspayments@gmail.com" }
 ]
 
 maintainers = [
-    { name = "Mitchell Aikens" }
+    { name = "Mitchell Aikens", email = "mitchaikenspayments@gmail.com" }
 ]
 
 keywords = [
     "COBOL",
     "GnuCOBOL",
     "IDE",
+    "mainframe",
+    "z/OS",
     "editor",
-    "development"
+    "compiler",
+    "development",
+    "Git",
+    "GitHub"
 ]
 
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: Win32 (MS Windows)",
-    "Environment :: X11 Applications :: Qt",
     "Intended Audience :: Developers",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: COBOL",
+    "Topic :: Software Development :: Compilers",
     "Topic :: Software Development :: Integrated Environments (IDE)",
     "Topic :: Text Editors :: Integrated Development Environments (IDE)"
 ]
 
 dependencies = [
-    "PySide6>=6.10"
+    "PySide6>=6.10",
+    "platformdirs>=4"
 ]
 
+import-names = [
+    "opencobol2"
+]
 
 [project.urls]
 Homepage = "https://github.com/msaikens/OpenCobol2"
 Repository = "https://github.com/msaikens/OpenCobol2"
 Issues = "https://github.com/msaikens/OpenCobol2/issues"
+Changelog = "https://github.com/msaikens/OpenCobol2/releases"
 
 
 [project.optional-dependencies]

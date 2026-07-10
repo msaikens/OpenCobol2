@@ -5,14 +5,32 @@ from opencobol2.documents.models import (
     LineEnding,
     TextDocument,
 )
+from opencobol2.documents.service import (
+    DocumentHasUnsavedChangesError,
+    DocumentSavePathRequiredError,
+    DocumentService,
+)
 from opencobol2.documents.storage import (
     DocumentStorage,
+)
+from opencobol2.documents.workspace import (
+    DocumentAlreadyOpenError,
+    DocumentNotOpenError,
+    DocumentWorkspace,
+    WorkspaceDocument,
 )
 
 
 __all__ = [
     "ByteOrderMark",
+    "DocumentAlreadyOpenError",
+    "DocumentHasUnsavedChangesError",
+    "DocumentNotOpenError",
+    "DocumentSavePathRequiredError",
+    "DocumentService",
     "DocumentStorage",
+    "DocumentWorkspace",
     "LineEnding",
     "TextDocument",
+    "WorkspaceDocument",
 ]
