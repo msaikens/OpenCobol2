@@ -8,6 +8,9 @@ from opencobol2.settings.models import (
     EditorSettings,
     ToolchainSettings,
 )
+from opencobol2.settings.service import (
+    SettingsService,
+)
 from opencobol2.settings.storage import (
     default_settings_path,
     SettingsFormatError,
@@ -24,6 +27,7 @@ __all__ = [
     "default_settings_path",
     "EditorSettings",
     "SettingsFormatError",
+    "SettingsService",
     "SettingsStorage",
     "ToolchainSettings",
     "UnsupportedSettingsVersionError",

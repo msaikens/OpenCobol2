@@ -582,19 +582,31 @@
     <Compile Include="src\opencobol2\compiler\gnucobol_diagnostics.py" />
     <Compile Include="src\opencobol2\compiler\gnucobol_models.py" />
     <Compile Include="src\opencobol2\compiler\models.py" />
+    <Compile Include="src\opencobol2\compiler\providers\builtins.py" />
+    <Compile Include="src\opencobol2\compiler\providers\models.py" />
+    <Compile Include="src\opencobol2\compiler\providers\registry.py" />
+    <Compile Include="src\opencobol2\compiler\providers\__init__.py" />
     <Compile Include="src\opencobol2\compiler\__init__.py" />
     <Compile Include="src\opencobol2\documents\models.py" />
     <Compile Include="src\opencobol2\documents\service.py" />
     <Compile Include="src\opencobol2\documents\storage.py" />
     <Compile Include="src\opencobol2\documents\workspace.py" />
     <Compile Include="src\opencobol2\documents\__init__.py" />
+    <Compile Include="src\opencobol2\services\toolchains.py" />
+    <Compile Include="src\opencobol2\services\__init__.py" />
     <Compile Include="src\opencobol2\settings\models.py" />
+    <Compile Include="src\opencobol2\settings\service.py" />
     <Compile Include="src\opencobol2\settings\storage.py" />
     <Compile Include="src\opencobol2\settings\__init__.py" />
+    <Compile Include="tests\integration\test_configured_gnucobol_toolchain.py" />
     <Compile Include="tests\integration\test_gnucobol_installation.py" />
     <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
+    <Compile Include="tests\unit\test_builtin_compiler_providers.py" />
     <Compile Include="tests\unit\test_compiler_diagnostics.py" />
     <Compile Include="tests\unit\test_compiler_models.py" />
+    <Compile Include="tests\unit\test_compiler_provider_models.py" />
+    <Compile Include="tests\unit\test_compiler_provider_registry.py" />
+    <Compile Include="tests\unit\test_configured_toolchains.py" />
     <Compile Include="tests\unit\test_document_models.py" />
     <Compile Include="tests\unit\test_document_service.py" />
     <Compile Include="tests\unit\test_document_storage.py" />
@@ -616,6 +628,7 @@
     <Compile Include="src\opencobol2\__init__.py" />
     <Compile Include="tests\unit\test_settings_model.py" />
     <Compile Include="tests\unit\test_settings_storage.py" />
+    <Compile Include="tests\unit\test_settings_service.py" />
   </ItemGroup>
   <ItemGroup>
     <Content Include=".gitignore" />
@@ -895,7 +908,9 @@
     <Folder Include="src\" />
     <Folder Include="src\opencobol2\" />
     <Folder Include="src\opencobol2\compiler\" />
+    <Folder Include="src\opencobol2\compiler\providers\" />
     <Folder Include="src\opencobol2\documents\" />
+    <Folder Include="src\opencobol2\services\" />
     <Folder Include="src\opencobol2\settings\" />
     <Folder Include="src\opencobol2\test\" />
     <Folder Include="src\opencobol2\toolchains\" />
