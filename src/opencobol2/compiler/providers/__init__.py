@@ -1,15 +1,18 @@
-"""Compiler provider APIs and built-in providers."""
+"""Compiler provider contracts, registries, and built-in providers."""
 
 from opencobol2.compiler.providers.builtins import (
-    create_builtin_compiler_provider_registry,
     CUSTOM_COMPILER_PROVIDER_ID,
-    CustomLocalCompilerProvider,
     GNUCOBOL_PROVIDER_ID,
-    GnuCobolCompilerProvider,
     IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
-    IbmEnterpriseCobolZosCompilerProvider,
     VISUAL_COBOL_PROVIDER_ID,
+    CustomLocalCompilerProvider,
+    GnuCobolCompilerProvider,
+    IbmEnterpriseCobolZosCompilerProvider,
     VisualCobolCompilerProvider,
+    create_builtin_compiler_provider_registry,
+)
+from opencobol2.compiler.providers.configuration import (
+    resolve_compiler_profile_configuration,
 )
 from opencobol2.compiler.providers.models import (
     CompilerConfigurationField,
@@ -35,7 +38,6 @@ __all__ = [
     "CompilerProviderAlreadyRegisteredError",
     "CompilerProviderNotFoundError",
     "CompilerProviderRegistry",
-    "create_builtin_compiler_provider_registry",
     "CUSTOM_COMPILER_PROVIDER_ID",
     "CustomLocalCompilerProvider",
     "GNUCOBOL_PROVIDER_ID",
@@ -45,4 +47,6 @@ __all__ = [
     "JsonValue",
     "VISUAL_COBOL_PROVIDER_ID",
     "VisualCobolCompilerProvider",
+    "create_builtin_compiler_provider_registry",
+    "resolve_compiler_profile_configuration",
 ]

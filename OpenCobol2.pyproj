@@ -581,11 +581,14 @@
     <Compile Include="src\opencobol2\compiler\gnucobol.py" />
     <Compile Include="src\opencobol2\compiler\gnucobol_diagnostics.py" />
     <Compile Include="src\opencobol2\compiler\gnucobol_models.py" />
+    <Compile Include="src\opencobol2\compiler\local_process.py" />
     <Compile Include="src\opencobol2\compiler\models.py" />
     <Compile Include="src\opencobol2\compiler\providers\builtins.py" />
+    <Compile Include="src\opencobol2\compiler\providers\configuration.py" />
     <Compile Include="src\opencobol2\compiler\providers\models.py" />
     <Compile Include="src\opencobol2\compiler\providers\registry.py" />
     <Compile Include="src\opencobol2\compiler\providers\__init__.py" />
+    <Compile Include="src\opencobol2\compiler\runtimes\gnucobol.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\models.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\registry.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\__init__.py" />
@@ -606,10 +609,12 @@
     <Compile Include="tests\integration\test_configured_gnucobol_toolchain.py" />
     <Compile Include="tests\integration\test_gnucobol_installation.py" />
     <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
+    <Compile Include="tests\unit\tests_gnucobol_runtime.py" />
     <Compile Include="tests\unit\test_builtin_compiler_providers.py" />
     <Compile Include="tests\unit\test_compiler_diagnostics.py" />
     <Compile Include="tests\unit\test_compiler_models.py" />
     <Compile Include="tests\unit\test_compiler_profile_service.py" />
+    <Compile Include="tests\unit\test_compiler_provider_configuration.py" />
     <Compile Include="tests\unit\test_compiler_provider_models.py" />
     <Compile Include="tests\unit\test_compiler_provider_registry.py" />
     <Compile Include="tests\unit\test_compiler_runtime_activation.py" />
@@ -622,6 +627,8 @@
     <Compile Include="tests\unit\test_gnucobol_command.py" />
     <Compile Include="tests\unit\test_gnucobol_compiler.py" />
     <Compile Include="tests\unit\test_gnucobol_diagnostics.py" />
+    <Compile Include="tests\unit\test_gnucobol_runtime.py" />
+    <Compile Include="tests\unit\test_gnucobol_runtime_activation.py" />
     <Compile Include="tests\unit\test_gnucobol_toolchain.py" />
     <Compile Include="legacy\opencobolide\build-support\OpenCobolIDE.pyw" />
     <Compile Include="scripts\freeze.py" />
@@ -634,6 +641,7 @@
     <Compile Include="src\opencobol2\toolchains\models.py" />
     <Compile Include="src\opencobol2\toolchains\__init__.py" />
     <Compile Include="src\opencobol2\__init__.py" />
+    <Compile Include="tests\unit\test_local_compiler_process.py" />
     <Compile Include="tests\unit\test_settings_model.py" />
     <Compile Include="tests\unit\test_settings_storage.py" />
     <Compile Include="tests\unit\test_settings_service.py" />

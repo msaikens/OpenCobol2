@@ -1,5 +1,10 @@
 """Compiler runtime activation contracts and registries."""
 
+from opencobol2.compiler.runtimes.gnucobol import (
+    GnuCobolRuntime,
+    GnuCobolRuntimeFactory,
+    GnuCobolRuntimeUnavailableError,
+)
 from opencobol2.compiler.runtimes.models import (
     CompilerRuntime,
     CompilerRuntimeFactory,
@@ -17,4 +22,7 @@ __all__ = [
     "CompilerRuntimeFactoryAlreadyRegisteredError",
     "CompilerRuntimeFactoryNotFoundError",
     "CompilerRuntimeFactoryRegistry",
+    "GnuCobolRuntime",
+    "GnuCobolRuntimeFactory",
+    "GnuCobolRuntimeUnavailableError",
 ]
