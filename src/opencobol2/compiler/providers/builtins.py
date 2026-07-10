@@ -16,10 +16,6 @@ from opencobol2.compiler.providers.registry import (
 
 GNUCOBOL_PROVIDER_ID = "opencobol2.gnucobol"
 
-IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID = (
-    "opencobol2.ibm-enterprise-cobol-zos"
-)
-
 CUSTOM_COMPILER_PROVIDER_ID = (
     "opencobol2.custom-local"
 )
@@ -224,110 +220,6 @@ class GnuCobolCompilerProvider(
         )
 
 
-class IbmEnterpriseCobolZosCompilerProvider(
-    _DeclarativeCompilerProvider,
-):
-    """Built-in provider for IBM Enterprise COBOL on z/OS."""
-
-    def __init__(
-        self,
-    ) -> None:
-        super().__init__(
-            provider_id=(
-                IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID
-            ),
-            display_name=(
-                "IBM Enterprise COBOL for z/OS"
-            ),
-            execution_kind=(
-                CompilerExecutionKind.REMOTE_JOB
-            ),
-            configuration_fields=(
-                CompilerConfigurationField(
-                    key="connection_profile_id",
-                    title="z/OS connection profile",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING
-                    ),
-                    required=True,
-                ),
-                CompilerConfigurationField(
-                    key="compile_mode",
-                    title="Compile mode",
-                    kind=(
-                        CompilerConfigurationFieldKind.CHOICE
-                    ),
-                    default="jcl-procedure",
-                    choices=(
-                        "jcl-procedure",
-                        "zos-unix",
-                    ),
-                ),
-                CompilerConfigurationField(
-                    key="compile_procedure",
-                    title="Cataloged compile procedure",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING
-                    ),
-                    default="IGYWCL",
-                ),
-                CompilerConfigurationField(
-                    key="compiler_program",
-                    title="Compiler program",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING
-                    ),
-                    default="IGYCRCTL",
-                ),
-                CompilerConfigurationField(
-                    key="zos_unix_command",
-                    title="z/OS UNIX compiler command",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING
-                    ),
-                    default="cob2",
-                ),
-                CompilerConfigurationField(
-                    key="source_dataset",
-                    title="Source data set",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING
-                    ),
-                ),
-                CompilerConfigurationField(
-                    key="copybook_datasets",
-                    title="Copybook data sets",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING_LIST
-                    ),
-                    default=(),
-                ),
-                CompilerConfigurationField(
-                    key="load_library",
-                    title="Load library",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING
-                    ),
-                ),
-                CompilerConfigurationField(
-                    key="compiler_options",
-                    title="Compiler options",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING_LIST
-                    ),
-                    default=(),
-                ),
-                CompilerConfigurationField(
-                    key="jcl_template_path",
-                    title="Custom JCL template",
-                    kind=(
-                        CompilerConfigurationFieldKind.PATH
-                    ),
-                ),
-            ),
-        )
-
-
 class CustomLocalCompilerProvider(
     _DeclarativeCompilerProvider,
 ):
@@ -475,7 +367,6 @@ def create_builtin_compiler_provider_registry(
 
     for provider in (
         GnuCobolCompilerProvider(),
-        IbmEnterpriseCobolZosCompilerProvider(),
         CustomLocalCompilerProvider(),
     ):
         registry.register(

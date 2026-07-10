@@ -9,13 +9,13 @@ from uuid import UUID
 import pytest
 
 from opencobol2.compiler.providers import (
+    CUSTOM_COMPILER_PROVIDER_ID,
+    GNUCOBOL_PROVIDER_ID,
     CompilerExecutionKind,
     CompilerProfile,
     CompilerProviderRegistry,
-    GNUCOBOL_PROVIDER_ID,
+    CustomLocalCompilerProvider,
     GnuCobolCompilerProvider,
-    IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
-    IbmEnterpriseCobolZosCompilerProvider,
 )
 from opencobol2.compiler.runtimes import (
     CompilerRuntime,
@@ -109,7 +109,7 @@ def _create_profile_service(
         GnuCobolCompilerProvider(),
     )
     provider_registry.register(
-        IbmEnterpriseCobolZosCompilerProvider(),
+        CustomLocalCompilerProvider(),
     )
 
     return CompilerProfileService(
@@ -166,7 +166,7 @@ def test_activate_default_runtime(
     )
 
 
-def test_activate_specific_remote_job_runtime(
+def test_activate_specific_custom_local_runtime(
     tmp_path: Path,
 ) -> None:
     settings_service = _create_settings_service(
@@ -174,12 +174,10 @@ def test_activate_specific_remote_job_runtime(
     )
 
     profile = CompilerProfile(
-        provider_id=(
-            IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID
-        ),
-        display_name="Production z/OS",
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Vendor COBOL",
         configuration={
-            "connection_profile_id": "prod-zos",
+            "executable_path": "compiler.exe",
         },
     )
 
@@ -195,11 +193,9 @@ def test_activate_specific_remote_job_runtime(
     runtime_registry = CompilerRuntimeFactoryRegistry()
     runtime_registry.register(
         FakeCompilerRuntimeFactory(
-            provider_id=(
-                IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID
-            ),
+            provider_id=CUSTOM_COMPILER_PROVIDER_ID,
             execution_kind=(
-                CompilerExecutionKind.REMOTE_JOB
+                CompilerExecutionKind.LOCAL_PROCESS
             ),
         )
     )
@@ -217,7 +213,7 @@ def test_activate_specific_remote_job_runtime(
 
     assert (
         runtime.provider_id
-        == IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID
+        == CUSTOM_COMPILER_PROVIDER_ID
     )
     assert (
         runtime.profile_id
@@ -225,7 +221,7 @@ def test_activate_specific_remote_job_runtime(
     )
     assert (
         runtime.execution_kind
-        is CompilerExecutionKind.REMOTE_JOB
+        is CompilerExecutionKind.LOCAL_PROCESS
     )
 
 

@@ -577,6 +577,9 @@
     <Compile Include="legacy\opencobolide\tests\test_compiler.py" />
     <Compile Include="legacy\opencobolide\tests\test_functional.py" />
     <Compile Include="legacy\opencobolide\tests\__init__.py" />
+    <Compile Include="src\opencobol2\commands\models.py" />
+    <Compile Include="src\opencobol2\commands\registry.py" />
+    <Compile Include="src\opencobol2\commands\__init__.py" />
     <Compile Include="src\opencobol2\compiler\custom_local_diagnostics.py" />
     <Compile Include="src\opencobol2\compiler\custom_local_models.py" />
     <Compile Include="src\opencobol2\compiler\diagnostics.py" />
@@ -602,6 +605,7 @@
     <Compile Include="src\opencobol2\documents\storage.py" />
     <Compile Include="src\opencobol2\documents\workspace.py" />
     <Compile Include="src\opencobol2\documents\__init__.py" />
+    <Compile Include="src\opencobol2\services\commands.py" />
     <Compile Include="src\opencobol2\services\compilers.py" />
     <Compile Include="src\opencobol2\services\compiler_runtimes.py" />
     <Compile Include="src\opencobol2\services\toolchains.py" />
@@ -615,6 +619,9 @@
     <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
     <Compile Include="tests\unit\tests_gnucobol_runtime.py" />
     <Compile Include="tests\unit\test_builtin_compiler_providers.py" />
+    <Compile Include="tests\unit\test_command_models.py" />
+    <Compile Include="tests\unit\test_command_registry.py" />
+    <Compile Include="tests\unit\test_command_service.py" />
     <Compile Include="tests\unit\test_compiler_diagnostics.py" />
     <Compile Include="tests\unit\test_compiler_models.py" />
     <Compile Include="tests\unit\test_compiler_profile_service.py" />
@@ -935,6 +942,7 @@
     <Folder Include="src\opencobol2\compiler\runtimes\" />
     <Folder Include="src\opencobol2\compiler\providers\" />
     <Folder Include="src\opencobol2\documents\" />
+    <Folder Include="src\opencobol2\commands\" />
     <Folder Include="src\opencobol2\services\" />
     <Folder Include="src\opencobol2\settings\" />
     <Folder Include="src\opencobol2\test\" />

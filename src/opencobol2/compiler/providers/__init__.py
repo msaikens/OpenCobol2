@@ -3,10 +3,8 @@
 from opencobol2.compiler.providers.builtins import (
     CUSTOM_COMPILER_PROVIDER_ID,
     GNUCOBOL_PROVIDER_ID,
-    IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
     CustomLocalCompilerProvider,
     GnuCobolCompilerProvider,
-    IbmEnterpriseCobolZosCompilerProvider,
     create_builtin_compiler_provider_registry,
 )
 from opencobol2.compiler.providers.configuration import (
@@ -40,8 +38,6 @@ __all__ = [
     "CustomLocalCompilerProvider",
     "GNUCOBOL_PROVIDER_ID",
     "GnuCobolCompilerProvider",
-    "IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID",
-    "IbmEnterpriseCobolZosCompilerProvider",
     "JsonValue",
     "create_builtin_compiler_provider_registry",
     "resolve_compiler_profile_configuration",

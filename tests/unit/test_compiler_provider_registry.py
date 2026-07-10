@@ -13,7 +13,6 @@ from opencobol2.compiler.providers import (
     create_builtin_compiler_provider_registry,
     CUSTOM_COMPILER_PROVIDER_ID,
     GNUCOBOL_PROVIDER_ID,
-    IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
 )
 
 
@@ -117,6 +116,5 @@ def test_builtin_registry_contains_four_providers() -> None:
 
     assert provider_ids == {
         GNUCOBOL_PROVIDER_ID,
-        IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
         CUSTOM_COMPILER_PROVIDER_ID,
     }
