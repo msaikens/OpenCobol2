@@ -1,5 +1,16 @@
 """Application command contracts and registries."""
 
+from opencobol2.commands.builtins import (
+    AccessibilityCommandService,
+    BuiltInCommandHandlerNotConfiguredError,
+    BuiltInCommandHandlers,
+    BuiltInCommandIds,
+    BuiltInCommandSurfaceIds,
+    BuiltInMenuContributionIds,
+    ToolWindowCommandService,
+    create_builtin_command_contribution_registry,
+    create_builtin_command_registry,
+)
 from opencobol2.commands.contribution_registry import (
     CommandContributionAlreadyRegisteredError,
     CommandContributionNotFoundError,
@@ -34,6 +45,12 @@ from opencobol2.commands.registry import (
 
 
 __all__ = [
+    "AccessibilityCommandService",
+    "BuiltInCommandHandlerNotConfiguredError",
+    "BuiltInCommandHandlers",
+    "BuiltInCommandIds",
+    "BuiltInCommandSurfaceIds",
+    "BuiltInMenuContributionIds",
     "Command",
     "CommandAlreadyRegisteredError",
     "CommandContext",
@@ -57,4 +74,7 @@ __all__ = [
     "ResolvedDynamicMenuItem",
     "ResolvedSubmenuContribution",
     "SubmenuContribution",
+    "ToolWindowCommandService",
+    "create_builtin_command_contribution_registry",
+    "create_builtin_command_registry",
 ]
