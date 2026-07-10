@@ -11,6 +11,7 @@ import opencobol2.services.toolchains as toolchain_services
 from opencobol2.compiler.providers import (
     CompilerProfile,
     GNUCOBOL_PROVIDER_ID,
+    JsonValue,
 )
 from opencobol2.services import (
     GnuCobolToolchainService,
@@ -24,11 +25,7 @@ from opencobol2.toolchains import (
     GnuCobolToolchain,
     ToolchainSource,
 )
-from opencobol2.compiler.providers import (
-    CompilerProfile,
-    GNUCOBOL_PROVIDER_ID,
-    JsonValue,
-)
+
 
 def _create_settings_service(
     tmp_path: Path,

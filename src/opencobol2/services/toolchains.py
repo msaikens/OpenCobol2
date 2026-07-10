@@ -56,9 +56,7 @@ class GnuCobolToolchainService:
         for (
             configuration_key,
             environment_key,
-        ) in (
-            _GNUCOBOL_ENVIRONMENT_CONFIGURATION_KEYS.items()
-        ):
+        ) in _GNUCOBOL_ENVIRONMENT_CONFIGURATION_KEYS.items():
             value = profile.configuration.get(
                 configuration_key,
             )
@@ -115,7 +113,7 @@ class GnuCobolToolchainService:
     def _default_profile(
         self,
     ) -> CompilerProfile:
-        """Return the currently selected default compiler profile."""
+        """Return the selected default compiler profile."""
         profile = (
             self.settings_service
             .current
