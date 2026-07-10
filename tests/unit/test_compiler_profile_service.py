@@ -8,14 +8,14 @@ from uuid import uuid4
 import pytest
 
 from opencobol2.compiler.providers import (
+    CUSTOM_COMPILER_PROVIDER_ID,
+    GNUCOBOL_PROVIDER_ID,
     CompilerExecutionKind,
     CompilerProfile,
     CompilerProviderNotFoundError,
     CompilerProviderRegistry,
-    GNUCOBOL_PROVIDER_ID,
+    CustomLocalCompilerProvider,
     GnuCobolCompilerProvider,
-    VISUAL_COBOL_PROVIDER_ID,
-    VisualCobolCompilerProvider,
 )
 from opencobol2.services import (
     CompilerProfileNotFoundError,
@@ -34,6 +34,7 @@ def _create_settings_service(
     tmp_path: Path,
 ) -> SettingsService:
     """Create an isolated settings service."""
+
     return SettingsService(
         SettingsStorage(
             tmp_path / "settings.json",
@@ -41,14 +42,17 @@ def _create_settings_service(
     )
 
 
-def _create_registry() -> CompilerProviderRegistry:
+def _create_registry(
+) -> CompilerProviderRegistry:
     """Create a small compiler provider registry for service tests."""
+
     registry = CompilerProviderRegistry()
+
     registry.register(
         GnuCobolCompilerProvider(),
     )
     registry.register(
-        VisualCobolCompilerProvider(),
+        CustomLocalCompilerProvider(),
     )
 
     return registry
@@ -61,6 +65,7 @@ def test_resolve_default_returns_profile_and_provider(
         tmp_path,
     )
     registry = _create_registry()
+
     service = CompilerProfileService(
         settings_service=settings_service,
         provider_registry=registry,
@@ -88,6 +93,7 @@ def test_resolution_exposes_provider_execution_kind(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     service = CompilerProfileService(
         settings_service=settings_service,
         provider_registry=_create_registry(),
@@ -107,13 +113,15 @@ def test_resolve_specific_configured_profile(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     profile = CompilerProfile(
-        provider_id=VISUAL_COBOL_PROVIDER_ID,
-        display_name="Visual COBOL",
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Vendor COBOL",
         configuration={
-            "product_variant": "visual-cobol",
+            "executable_path": "compiler.exe",
         },
     )
+
     settings_service.update_compilers(
         CompilerSettings(
             default_profile_id=None,
@@ -135,7 +143,7 @@ def test_resolve_specific_configured_profile(
     assert resolution.profile is profile
     assert (
         resolution.provider.provider_id
-        == VISUAL_COBOL_PROVIDER_ID
+        == CUSTOM_COMPILER_PROVIDER_ID
     )
 
 
@@ -145,15 +153,20 @@ def test_resolve_reads_latest_settings_snapshot(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     service = CompilerProfileService(
         settings_service=settings_service,
         provider_registry=_create_registry(),
     )
 
     profile = CompilerProfile(
-        provider_id=VISUAL_COBOL_PROVIDER_ID,
-        display_name="Visual COBOL",
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Vendor COBOL",
+        configuration={
+            "executable_path": "compiler.exe",
+        },
     )
+
     settings_service.update_compilers(
         CompilerSettings(
             default_profile_id=profile.profile_id,
@@ -174,6 +187,7 @@ def test_missing_default_profile_is_rejected(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     settings_service.update_compilers(
         CompilerSettings(
             default_profile_id=None,
@@ -199,10 +213,12 @@ def test_unknown_profile_id_is_rejected(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     service = CompilerProfileService(
         settings_service=settings_service,
         provider_registry=_create_registry(),
     )
+
     profile_id = uuid4()
 
     with pytest.raises(
@@ -220,10 +236,12 @@ def test_unregistered_profile_provider_is_rejected(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     profile = CompilerProfile(
         provider_id="plugin.example.compiler",
         display_name="Plugin Compiler",
     )
+
     settings_service.update_compilers(
         CompilerSettings(
             default_profile_id=profile.profile_id,
@@ -251,6 +269,7 @@ def test_provider_validation_is_applied_during_resolution(
     settings_service = _create_settings_service(
         tmp_path,
     )
+
     profile = CompilerProfile(
         provider_id=GNUCOBOL_PROVIDER_ID,
         display_name="Invalid GnuCOBOL",
@@ -258,6 +277,7 @@ def test_provider_validation_is_applied_during_resolution(
             "unknown_setting": True,
         },
     )
+
     settings_service.update_compilers(
         CompilerSettings(
             default_profile_id=profile.profile_id,
@@ -284,7 +304,8 @@ def test_resolution_rejects_mismatched_provider() -> None:
         provider_id=GNUCOBOL_PROVIDER_ID,
         display_name="GnuCOBOL",
     )
-    provider = VisualCobolCompilerProvider()
+
+    provider = CustomLocalCompilerProvider()
 
     with pytest.raises(
         ValueError,

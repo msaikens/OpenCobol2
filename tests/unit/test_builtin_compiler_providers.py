@@ -5,15 +5,15 @@ from __future__ import annotations
 import pytest
 
 from opencobol2.compiler.providers import (
-    CompilerProfile,
     CUSTOM_COMPILER_PROVIDER_ID,
-    CustomLocalCompilerProvider,
     GNUCOBOL_PROVIDER_ID,
-    GnuCobolCompilerProvider,
     IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
+    CompilerExecutionKind,
+    CompilerProfile,
+    CustomLocalCompilerProvider,
+    GnuCobolCompilerProvider,
     IbmEnterpriseCobolZosCompilerProvider,
-    VISUAL_COBOL_PROVIDER_ID,
-    VisualCobolCompilerProvider,
+    create_builtin_compiler_provider_registry,
 )
 
 
@@ -50,48 +50,6 @@ def test_gnucobol_rejects_unknown_configuration() -> None:
         )
 
 
-def test_visual_cobol_accepts_current_configuration() -> None:
-    profile = CompilerProfile(
-        provider_id=VISUAL_COBOL_PROVIDER_ID,
-        display_name="Visual COBOL",
-        configuration={
-            "compiler_path": "C:/product/bin/cobol.exe",
-            "product_variant": "enterprise-developer",
-            "copybook_paths": [
-                "C:/product/copy",
-            ],
-            "compiler_directives": [
-                "SOURCEFORMAT(FREE)",
-            ],
-        },
-        environment_overrides={
-            "COBDIR": "C:/product",
-        },
-    )
-
-    VisualCobolCompilerProvider().validate_profile(
-        profile,
-    )
-
-
-def test_visual_cobol_rejects_invalid_product_variant() -> None:
-    profile = CompilerProfile(
-        provider_id=VISUAL_COBOL_PROVIDER_ID,
-        display_name="Visual COBOL",
-        configuration={
-            "product_variant": "other",
-        },
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="must be one of",
-    ):
-        VisualCobolCompilerProvider().validate_profile(
-            profile,
-        )
-
-
 def test_ibm_provider_requires_connection_profile() -> None:
     profile = CompilerProfile(
         provider_id=(
@@ -119,10 +77,10 @@ def test_ibm_provider_accepts_jcl_profile() -> None:
             "connection_profile_id": "prod-zos",
             "compile_mode": "jcl-procedure",
             "compile_procedure": "IGYWCL",
-            "compiler_options": [
+            "compiler_options": (
                 "OPT(2)",
                 "SSRANGE",
-            ],
+            ),
         },
     )
 
@@ -157,24 +115,24 @@ def test_custom_provider_accepts_flexible_local_configuration() -> None:
             "executable_path": (
                 "C:/vendor/compiler.exe"
             ),
-            "version_arguments": [
+            "version_arguments": (
                 "/version",
-            ],
-            "compile_arguments": [
+            ),
+            "compile_arguments": (
                 "{source}",
                 "/out:{output}",
-            ],
-            "fixed_format_arguments": [
+            ),
+            "fixed_format_arguments": (
                 "/fixed",
-            ],
-            "free_format_arguments": [
+            ),
+            "free_format_arguments": (
                 "/free",
-            ],
+            ),
             "diagnostic_format": "msvc",
-            "success_return_codes": [
+            "success_return_codes": (
                 0,
                 4,
-            ],
+            ),
         },
         environment_overrides={
             "VENDOR_HOME": "C:/vendor",
@@ -192,9 +150,9 @@ def test_custom_provider_rejects_invalid_success_return_codes() -> None:
         display_name="Vendor COBOL",
         configuration={
             "executable_path": "compiler",
-            "success_return_codes": [
+            "success_return_codes": (
                 "0",
-            ],
+            ),
         },
     )
 
@@ -205,3 +163,43 @@ def test_custom_provider_rejects_invalid_success_return_codes() -> None:
         CustomLocalCompilerProvider().validate_profile(
             profile,
         )
+
+
+def test_builtin_registry_contains_supported_compiler_paths() -> None:
+    registry = (
+        create_builtin_compiler_provider_registry()
+    )
+
+    assert tuple(
+        provider.provider_id
+        for provider in registry.providers
+    ) == (
+        GNUCOBOL_PROVIDER_ID,
+        IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
+        CUSTOM_COMPILER_PROVIDER_ID,
+    )
+
+
+def test_builtin_provider_execution_models_are_explicit() -> None:
+    registry = (
+        create_builtin_compiler_provider_registry()
+    )
+
+    assert (
+        registry.get(
+            GNUCOBOL_PROVIDER_ID,
+        ).execution_kind
+        is CompilerExecutionKind.LOCAL_PROCESS
+    )
+    assert (
+        registry.get(
+            IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID,
+        ).execution_kind
+        is CompilerExecutionKind.REMOTE_JOB
+    )
+    assert (
+        registry.get(
+            CUSTOM_COMPILER_PROVIDER_ID,
+        ).execution_kind
+        is CompilerExecutionKind.LOCAL_PROCESS
+    )

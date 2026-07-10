@@ -16,10 +16,6 @@ from opencobol2.compiler.providers.registry import (
 
 GNUCOBOL_PROVIDER_ID = "opencobol2.gnucobol"
 
-VISUAL_COBOL_PROVIDER_ID = (
-    "opencobol2.visual-cobol"
-)
-
 IBM_ENTERPRISE_COBOL_ZOS_PROVIDER_ID = (
     "opencobol2.ibm-enterprise-cobol-zos"
 )
@@ -77,6 +73,7 @@ class _DeclarativeCompilerProvider:
         self,
     ) -> str:
         """Return the stable provider identifier."""
+
         return self._provider_id
 
     @property
@@ -84,6 +81,7 @@ class _DeclarativeCompilerProvider:
         self,
     ) -> str:
         """Return the user-facing provider name."""
+
         return self._display_name
 
     @property
@@ -91,6 +89,7 @@ class _DeclarativeCompilerProvider:
         self,
     ) -> CompilerExecutionKind:
         """Return how this provider performs compilation."""
+
         return self._execution_kind
 
     @property
@@ -98,6 +97,7 @@ class _DeclarativeCompilerProvider:
         self,
     ) -> tuple[CompilerConfigurationField, ...]:
         """Return provider configuration field definitions."""
+
         return self._configuration_fields
 
     def validate_profile(
@@ -105,6 +105,7 @@ class _DeclarativeCompilerProvider:
         profile: CompilerProfile,
     ) -> None:
         """Validate one compiler profile."""
+
         if profile.provider_id != self.provider_id:
             raise ValueError(
                 "Compiler profile provider "
@@ -217,78 +218,6 @@ class GnuCobolCompilerProvider(
                     ),
                     description=(
                         "Optional GnuCOBOL library path."
-                    ),
-                ),
-            ),
-        )
-
-
-class VisualCobolCompilerProvider(
-    _DeclarativeCompilerProvider,
-):
-    """Built-in provider for Rocket Visual COBOL."""
-
-    def __init__(
-        self,
-    ) -> None:
-        super().__init__(
-            provider_id=VISUAL_COBOL_PROVIDER_ID,
-            display_name="Rocket Visual COBOL",
-            execution_kind=(
-                CompilerExecutionKind.LOCAL_PROCESS
-            ),
-            configuration_fields=(
-                CompilerConfigurationField(
-                    key="compiler_path",
-                    title="Compiler executable",
-                    kind=(
-                        CompilerConfigurationFieldKind.PATH
-                    ),
-                    description=(
-                        "Explicit path to cobol.exe on Windows "
-                        "or cob on Linux/UNIX."
-                    ),
-                ),
-                CompilerConfigurationField(
-                    key="install_directory",
-                    title="Product installation directory",
-                    kind=(
-                        CompilerConfigurationFieldKind.PATH
-                    ),
-                ),
-                CompilerConfigurationField(
-                    key="product_variant",
-                    title="Product variant",
-                    kind=(
-                        CompilerConfigurationFieldKind.CHOICE
-                    ),
-                    default="visual-cobol",
-                    choices=(
-                        "visual-cobol",
-                        "enterprise-developer",
-                    ),
-                ),
-                CompilerConfigurationField(
-                    key="copybook_paths",
-                    title="Copybook paths",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING_LIST
-                    ),
-                    default=(),
-                ),
-                CompilerConfigurationField(
-                    key="compiler_directives",
-                    title="Compiler directives",
-                    kind=(
-                        CompilerConfigurationFieldKind.STRING_LIST
-                    ),
-                    default=(),
-                ),
-                CompilerConfigurationField(
-                    key="configuration_file",
-                    title="Runtime configuration file",
-                    kind=(
-                        CompilerConfigurationFieldKind.PATH
                     ),
                 ),
             ),
@@ -541,11 +470,11 @@ class CustomLocalCompilerProvider(
 def create_builtin_compiler_provider_registry(
 ) -> CompilerProviderRegistry:
     """Create the registry containing OpenCobol2 built-in providers."""
+
     registry = CompilerProviderRegistry()
 
     for provider in (
         GnuCobolCompilerProvider(),
-        VisualCobolCompilerProvider(),
         IbmEnterpriseCobolZosCompilerProvider(),
         CustomLocalCompilerProvider(),
     ):

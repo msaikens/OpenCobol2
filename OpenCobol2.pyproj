@@ -577,6 +577,8 @@
     <Compile Include="legacy\opencobolide\tests\test_compiler.py" />
     <Compile Include="legacy\opencobolide\tests\test_functional.py" />
     <Compile Include="legacy\opencobolide\tests\__init__.py" />
+    <Compile Include="src\opencobol2\compiler\custom_local_diagnostics.py" />
+    <Compile Include="src\opencobol2\compiler\custom_local_models.py" />
     <Compile Include="src\opencobol2\compiler\diagnostics.py" />
     <Compile Include="src\opencobol2\compiler\gnucobol.py" />
     <Compile Include="src\opencobol2\compiler\gnucobol_diagnostics.py" />
@@ -588,6 +590,8 @@
     <Compile Include="src\opencobol2\compiler\providers\models.py" />
     <Compile Include="src\opencobol2\compiler\providers\registry.py" />
     <Compile Include="src\opencobol2\compiler\providers\__init__.py" />
+    <Compile Include="src\opencobol2\compiler\runtimes\capabilities.py" />
+    <Compile Include="src\opencobol2\compiler\runtimes\custom_local.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\gnucobol.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\models.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\registry.py" />
@@ -618,8 +622,12 @@
     <Compile Include="tests\unit\test_compiler_provider_models.py" />
     <Compile Include="tests\unit\test_compiler_provider_registry.py" />
     <Compile Include="tests\unit\test_compiler_runtime_activation.py" />
+    <Compile Include="tests\unit\test_compiler_runtime_capabilities.py" />
     <Compile Include="tests\unit\test_compiler_runtime_registry.py" />
     <Compile Include="tests\unit\test_configured_toolchains.py" />
+    <Compile Include="tests\unit\test_custom_local_diagnostics.py" />
+    <Compile Include="tests\unit\test_custom_local_runtime.py" />
+    <Compile Include="tests\unit\test_custom_local_runtime_activation.py" />
     <Compile Include="tests\unit\test_document_models.py" />
     <Compile Include="tests\unit\test_document_service.py" />
     <Compile Include="tests\unit\test_document_storage.py" />
