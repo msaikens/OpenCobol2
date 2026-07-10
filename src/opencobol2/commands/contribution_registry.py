@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from opencobol2.commands.contributions import (
-    CommandContribution,
+    CommandSurfaceContribution,
     CommandSurfaceKind,
+    DynamicMenuContribution,
+    SubmenuContribution,
+    CommandContribution,
 )
 
 
@@ -30,13 +33,13 @@ class CommandContributionRegistry:
 
         self._contributions: dict[
             str,
-            CommandContribution,
+            CommandSurfaceContribution,
         ] = {}
 
     @property
     def contributions(
         self,
-    ) -> tuple[CommandContribution, ...]:
+    ) -> tuple[CommandSurfaceContribution, ...]:
         """Return contributions in registration order."""
 
         return tuple(
@@ -45,17 +48,21 @@ class CommandContributionRegistry:
 
     def register(
         self,
-        contribution: CommandContribution,
+        contribution: CommandSurfaceContribution,
     ) -> None:
         """Register one command surface contribution."""
 
         if not isinstance(
             contribution,
-            CommandContribution,
+            (
+                CommandContribution,
+                SubmenuContribution,
+                DynamicMenuContribution,
+            ),
         ):
             raise TypeError(
                 "Command contribution registry entries must be "
-                "CommandContribution instances."
+                "command surface contribution instances."
             )
 
         if (
@@ -74,7 +81,7 @@ class CommandContributionRegistry:
     def unregister(
         self,
         contribution_id: str,
-    ) -> CommandContribution:
+    ) -> CommandSurfaceContribution:
         """Remove and return a registered contribution."""
 
         normalized_contribution_id = (
@@ -96,7 +103,7 @@ class CommandContributionRegistry:
     def get(
         self,
         contribution_id: str,
-    ) -> CommandContribution:
+    ) -> CommandSurfaceContribution:
         """Return a registered contribution."""
 
         normalized_contribution_id = (
@@ -119,7 +126,7 @@ class CommandContributionRegistry:
         self,
         surface_kind: CommandSurfaceKind,
         surface_id: str,
-    ) -> tuple[CommandContribution, ...]:
+    ) -> tuple[CommandSurfaceContribution, ...]:
         """Return ordered contributions for one application surface."""
 
         if not isinstance(

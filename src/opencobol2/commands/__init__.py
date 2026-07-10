@@ -7,8 +7,17 @@ from opencobol2.commands.contribution_registry import (
 )
 from opencobol2.commands.contributions import (
     CommandContribution,
+    CommandSurfaceContribution,
     CommandSurfaceKind,
+    DynamicMenuContribution,
+    DynamicMenuItem,
+    DynamicMenuProvider,
     ResolvedCommandContribution,
+    ResolvedCommandSurfaceContribution,
+    ResolvedDynamicMenuContribution,
+    ResolvedDynamicMenuItem,
+    ResolvedSubmenuContribution,
+    SubmenuContribution,
 )
 from opencobol2.commands.models import (
     Command,
@@ -37,6 +46,15 @@ __all__ = [
     "CommandRegistry",
     "CommandState",
     "CommandStateProvider",
+    "CommandSurfaceContribution",
     "CommandSurfaceKind",
+    "DynamicMenuContribution",
+    "DynamicMenuItem",
+    "DynamicMenuProvider",
     "ResolvedCommandContribution",
+    "ResolvedCommandSurfaceContribution",
+    "ResolvedDynamicMenuContribution",
+    "ResolvedDynamicMenuItem",
+    "ResolvedSubmenuContribution",
+    "SubmenuContribution",
 ]
