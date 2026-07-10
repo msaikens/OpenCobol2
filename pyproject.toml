@@ -56,10 +56,6 @@ dependencies = [
     "platformdirs>=4"
 ]
 
-import-names = [
-    "opencobol2"
-]
-
 [project.urls]
 Homepage = "https://github.com/msaikens/OpenCobol2"
 Repository = "https://github.com/msaikens/OpenCobol2"

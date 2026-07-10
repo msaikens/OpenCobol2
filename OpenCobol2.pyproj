@@ -588,6 +588,9 @@
     <Compile Include="src\opencobol2\documents\storage.py" />
     <Compile Include="src\opencobol2\documents\workspace.py" />
     <Compile Include="src\opencobol2\documents\__init__.py" />
+    <Compile Include="src\opencobol2\settings\models.py" />
+    <Compile Include="src\opencobol2\settings\storage.py" />
+    <Compile Include="src\opencobol2\settings\__init__.py" />
     <Compile Include="tests\integration\test_gnucobol_installation.py" />
     <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
     <Compile Include="tests\unit\test_compiler_diagnostics.py" />
@@ -611,6 +614,8 @@
     <Compile Include="src\opencobol2\toolchains\models.py" />
     <Compile Include="src\opencobol2\toolchains\__init__.py" />
     <Compile Include="src\opencobol2\__init__.py" />
+    <Compile Include="tests\unit\test_settings_model.py" />
+    <Compile Include="tests\unit\test_settings_storage.py" />
   </ItemGroup>
   <ItemGroup>
     <Content Include=".gitignore" />
@@ -891,6 +896,7 @@
     <Folder Include="src\opencobol2\" />
     <Folder Include="src\opencobol2\compiler\" />
     <Folder Include="src\opencobol2\documents\" />
+    <Folder Include="src\opencobol2\settings\" />
     <Folder Include="src\opencobol2\test\" />
     <Folder Include="src\opencobol2\toolchains\" />
     <Folder Include="tests\" />
