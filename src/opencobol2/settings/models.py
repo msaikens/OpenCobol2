@@ -4,54 +4,143 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import MappingProxyType
-from typing import Mapping
+from uuid import UUID
 
 from opencobol2.compiler import CobolSourceFormat
+from opencobol2.compiler.providers import (
+    CompilerProfile,
+    GNUCOBOL_PROVIDER_ID,
+)
 
 
 CURRENT_SETTINGS_SCHEMA_VERSION = 1
 
+DEFAULT_GNUCOBOL_PROFILE_ID = UUID(
+    "4ceea39a-11d5-5a22-91e3-cf5318eb3a02"
+)
+
+
+def _create_default_gnucobol_profile() -> CompilerProfile:
+    """Create the built-in automatic-discovery GnuCOBOL profile."""
+    return CompilerProfile(
+        profile_id=DEFAULT_GNUCOBOL_PROFILE_ID,
+        provider_id=GNUCOBOL_PROVIDER_ID,
+        display_name="GnuCOBOL",
+    )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ToolchainSettings:
-    """User-configurable external tool and environment settings."""
+class CompilerSettings:
+    """Configured compiler profiles and default compiler selection."""
 
-    gnucobol_compiler_path: Path | None = None
-    git_executable_path: Path | None = None
-    environment_overrides: Mapping[str, str] = field(
-        default_factory=dict,
+    default_profile_id: UUID | None = (
+        DEFAULT_GNUCOBOL_PROFILE_ID
+    )
+    profiles: tuple[CompilerProfile, ...] = field(
+        default_factory=lambda: (
+            _create_default_gnucobol_profile(),
+        ),
     )
 
     def __post_init__(self) -> None:
-        """Normalize toolchain configuration."""
-        object.__setattr__(
-            self,
-            "gnucobol_compiler_path",
-            _normalize_optional_path(
-                self.gnucobol_compiler_path,
-            ),
+        """Validate and normalize compiler profile settings."""
+        if (
+            self.default_profile_id is not None
+            and not isinstance(
+                self.default_profile_id,
+                UUID,
+            )
+        ):
+            raise TypeError(
+                "Default compiler profile ID must be a UUID or None."
+            )
+
+        profiles = tuple(
+            self.profiles,
         )
 
+        if not all(
+            isinstance(
+                profile,
+                CompilerProfile,
+            )
+            for profile in profiles
+        ):
+            raise TypeError(
+                "Compiler profiles must contain "
+                "CompilerProfile instances."
+            )
+
+        profile_ids = tuple(
+            profile.profile_id
+            for profile in profiles
+        )
+
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ValueError(
+                "Compiler profile IDs must be unique."
+            )
+
+        if (
+            self.default_profile_id is not None
+            and self.default_profile_id not in profile_ids
+        ):
+            raise ValueError(
+                "Default compiler profile ID must reference "
+                "an existing compiler profile."
+            )
+
+        object.__setattr__(
+            self,
+            "profiles",
+            profiles,
+        )
+
+    @property
+    def default_profile(
+        self,
+    ) -> CompilerProfile | None:
+        """Return the selected default compiler profile."""
+        if self.default_profile_id is None:
+            return None
+
+        return self.get_profile(
+            self.default_profile_id,
+        )
+
+    def get_profile(
+        self,
+        profile_id: UUID,
+    ) -> CompilerProfile | None:
+        """Return a configured compiler profile by ID."""
+        if not isinstance(
+            profile_id,
+            UUID,
+        ):
+            raise TypeError(
+                "Compiler profile ID must be a UUID."
+            )
+
+        for profile in self.profiles:
+            if profile.profile_id == profile_id:
+                return profile
+
+        return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExternalToolSettings:
+    """User-configurable external application tool settings."""
+
+    git_executable_path: Path | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize external tool paths."""
         object.__setattr__(
             self,
             "git_executable_path",
             _normalize_optional_path(
                 self.git_executable_path,
-            ),
-        )
-
-        normalized_environment = (
-            _normalize_environment_overrides(
-                self.environment_overrides,
-            )
-        )
-
-        object.__setattr__(
-            self,
-            "environment_overrides",
-            MappingProxyType(
-                normalized_environment,
             ),
         )
 
@@ -92,27 +181,22 @@ class EditorSettings:
             self.font_size,
             "Editor font size",
         )
-
         _require_positive_integer(
             self.tab_width,
             "Editor tab width",
         )
-
         _require_boolean(
             self.insert_spaces,
             "Insert spaces",
         )
-
         _require_boolean(
             self.automatic_indentation,
             "Automatic indentation",
         )
-
         _require_positive_integer(
             self.indentation_width,
             "Editor indentation width",
         )
-
         _require_boolean(
             self.code_folding,
             "Code folding",
@@ -136,27 +220,22 @@ class CobolGuideSettings:
             self.show_sequence_area,
             "Sequence area visibility",
         )
-
         _require_boolean(
             self.show_indicator_column,
             "Indicator column visibility",
         )
-
         _require_boolean(
             self.show_area_a,
             "Area A visibility",
         )
-
         _require_boolean(
             self.show_area_b_boundary,
             "Area B boundary visibility",
         )
-
         _require_boolean(
             self.show_reference_area,
             "Reference area visibility",
         )
-
         _require_boolean(
             self.shade_areas,
             "COBOL area shading",
@@ -198,8 +277,11 @@ class ApplicationSettings:
     """Complete persisted OpenCobol2 settings state."""
 
     schema_version: int = CURRENT_SETTINGS_SCHEMA_VERSION
-    toolchains: ToolchainSettings = field(
-        default_factory=ToolchainSettings,
+    compilers: CompilerSettings = field(
+        default_factory=CompilerSettings,
+    )
+    external_tools: ExternalToolSettings = field(
+        default_factory=ExternalToolSettings,
     )
     editor: EditorSettings = field(
         default_factory=EditorSettings,
@@ -230,11 +312,20 @@ class ApplicationSettings:
             )
 
         if not isinstance(
-            self.toolchains,
-            ToolchainSettings,
+            self.compilers,
+            CompilerSettings,
         ):
             raise TypeError(
-                "Toolchain settings must be ToolchainSettings."
+                "Compiler settings must be CompilerSettings."
+            )
+
+        if not isinstance(
+            self.external_tools,
+            ExternalToolSettings,
+        ):
+            raise TypeError(
+                "External tool settings must be "
+                "ExternalToolSettings."
             )
 
         if not isinstance(
@@ -264,54 +355,6 @@ def _normalize_optional_path(
     return Path(
         path,
     )
-
-
-def _normalize_environment_overrides(
-    environment: Mapping[str, str],
-) -> dict[str, str]:
-    """Validate and copy external-process environment overrides."""
-    if not isinstance(
-        environment,
-        Mapping,
-    ):
-        raise TypeError(
-            "Environment overrides must be a mapping."
-        )
-
-    normalized_environment: dict[
-        str,
-        str,
-    ] = {}
-
-    for name, value in environment.items():
-        if not isinstance(
-            name,
-            str,
-        ):
-            raise TypeError(
-                "Environment variable names must be strings."
-            )
-
-        normalized_name = name.strip()
-
-        if not normalized_name:
-            raise ValueError(
-                "Environment variable names must not be empty."
-            )
-
-        if not isinstance(
-            value,
-            str,
-        ):
-            raise TypeError(
-                "Environment variable values must be strings."
-            )
-
-        normalized_environment[
-            normalized_name
-        ] = value
-
-    return normalized_environment
 
 
 def _require_positive_integer(

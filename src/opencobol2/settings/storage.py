@@ -8,17 +8,23 @@ import os
 from pathlib import Path
 import tempfile
 from typing import Any
+from uuid import UUID
 
 from platformdirs import user_config_path
 
 from opencobol2.compiler import CobolSourceFormat
+from opencobol2.compiler.providers import (
+    CompilerProfile,
+    JsonValue,
+)
 from opencobol2.settings.models import (
     ApplicationSettings,
     CobolGuideSettings,
     CobolSettings,
+    CompilerSettings,
     CURRENT_SETTINGS_SCHEMA_VERSION,
     EditorSettings,
-    ToolchainSettings,
+    ExternalToolSettings,
 )
 
 
@@ -113,8 +119,7 @@ class SettingsStorage:
         )
 
         payload = (
-            serialized_settings
-            + "\n"
+            serialized_settings + "\n"
         ).encode(
             "utf-8",
         )
@@ -138,33 +143,23 @@ def _encode_settings(
     """Encode typed settings into JSON-compatible values."""
     return {
         "schema_version": settings.schema_version,
-        "toolchains": {
-            "gnucobol_compiler_path": (
-                str(
-                    settings.toolchains.gnucobol_compiler_path
-                )
-                if (
-                    settings.toolchains.gnucobol_compiler_path
-                    is not None
-                )
-                else None
-            ),
+        "compilers": _encode_compiler_settings(
+            settings.compilers,
+        ),
+        "external_tools": {
             "git_executable_path": (
                 str(
-                    settings.toolchains.git_executable_path
+                    settings
+                    .external_tools
+                    .git_executable_path
                 )
                 if (
-                    settings.toolchains.git_executable_path
+                    settings
+                    .external_tools
+                    .git_executable_path
                     is not None
                 )
                 else None
-            ),
-            "environment_overrides": dict(
-                sorted(
-                    settings.toolchains
-                    .environment_overrides
-                    .items()
-                )
             ),
         },
         "editor": {
@@ -186,19 +181,31 @@ def _encode_settings(
             ),
             "guides": {
                 "show_sequence_area": (
-                    settings.cobol.guides.show_sequence_area
+                    settings
+                    .cobol
+                    .guides
+                    .show_sequence_area
                 ),
                 "show_indicator_column": (
-                    settings.cobol.guides.show_indicator_column
+                    settings
+                    .cobol
+                    .guides
+                    .show_indicator_column
                 ),
                 "show_area_a": (
                     settings.cobol.guides.show_area_a
                 ),
                 "show_area_b_boundary": (
-                    settings.cobol.guides.show_area_b_boundary
+                    settings
+                    .cobol
+                    .guides
+                    .show_area_b_boundary
                 ),
                 "show_reference_area": (
-                    settings.cobol.guides.show_reference_area
+                    settings
+                    .cobol
+                    .guides
+                    .show_reference_area
                 ),
                 "shade_areas": (
                     settings.cobol.guides.shade_areas
@@ -206,6 +213,84 @@ def _encode_settings(
             },
         },
     }
+
+
+def _encode_compiler_settings(
+    settings: CompilerSettings,
+) -> dict[str, Any]:
+    """Encode configured compiler profiles."""
+    return {
+        "default_profile_id": (
+            str(
+                settings.default_profile_id,
+            )
+            if settings.default_profile_id is not None
+            else None
+        ),
+        "profiles": [
+            _encode_compiler_profile(
+                profile,
+            )
+            for profile in settings.profiles
+        ],
+    }
+
+
+def _encode_compiler_profile(
+    profile: CompilerProfile,
+) -> dict[str, Any]:
+    """Encode one persisted compiler profile."""
+    return {
+        "profile_id": str(
+            profile.profile_id,
+        ),
+        "provider_id": profile.provider_id,
+        "display_name": profile.display_name,
+        "configuration": {
+            key: _encode_json_value(
+                value,
+            )
+            for key, value in sorted(
+                profile.configuration.items(),
+            )
+        },
+        "environment_overrides": dict(
+            sorted(
+                profile.environment_overrides.items(),
+            )
+        ),
+    }
+
+
+def _encode_json_value(
+    value: JsonValue,
+) -> Any:
+    """Convert a frozen compiler configuration value to JSON data."""
+    if isinstance(
+        value,
+        Mapping,
+    ):
+        return {
+            key: _encode_json_value(
+                item_value,
+            )
+            for key, item_value in sorted(
+                value.items(),
+            )
+        }
+
+    if isinstance(
+        value,
+        tuple,
+    ):
+        return [
+            _encode_json_value(
+                item,
+            )
+            for item in value
+        ]
+
+    return value
 
 
 def _decode_settings(
@@ -235,63 +320,172 @@ def _decode_settings(
             f"{CURRENT_SETTINGS_SCHEMA_VERSION}."
         )
 
-    toolchains = _decode_toolchain_settings(
-        root.get(
-            "toolchains",
-            {},
+    if "toolchains" in root:
+        raise SettingsFormatError(
+            "Settings schema version 1 uses the current "
+            "'compilers' and 'external_tools' layout; "
+            "the obsolete 'toolchains' layout is not supported."
         )
-    )
 
-    editor = _decode_editor_settings(
-        root.get(
-            "editor",
-            {},
+    try:
+        compilers = _decode_compiler_settings(
+            root.get(
+                "compilers",
+                {},
+            )
         )
-    )
-
-    cobol = _decode_cobol_settings(
-        root.get(
-            "cobol",
-            {},
+        external_tools = _decode_external_tool_settings(
+            root.get(
+                "external_tools",
+                {},
+            )
         )
-    )
+        editor = _decode_editor_settings(
+            root.get(
+                "editor",
+                {},
+            )
+        )
+        cobol = _decode_cobol_settings(
+            root.get(
+                "cobol",
+                {},
+            )
+        )
 
-    return ApplicationSettings(
-        schema_version=schema_version,
-        toolchains=toolchains,
-        editor=editor,
-        cobol=cobol,
-    )
+        return ApplicationSettings(
+            schema_version=schema_version,
+            compilers=compilers,
+            external_tools=external_tools,
+            editor=editor,
+            cobol=cobol,
+        )
+    except SettingsFormatError:
+        raise
+    except (
+        TypeError,
+        ValueError,
+    ) as error:
+        raise SettingsFormatError(
+            f"Settings contain an invalid value: {error}"
+        ) from error
 
 
-def _decode_toolchain_settings(
+def _decode_compiler_settings(
     raw_settings: Any,
-) -> ToolchainSettings:
-    """Decode toolchain settings."""
+) -> CompilerSettings:
+    """Decode compiler profile settings."""
     settings = _require_mapping(
         raw_settings,
-        "Toolchain settings",
+        "Compiler settings",
+    )
+    defaults = CompilerSettings()
+
+    raw_profiles = settings.get(
+        "profiles",
+        None,
     )
 
-    return ToolchainSettings(
-        gnucobol_compiler_path=_optional_string(
-            settings.get(
-                "gnucobol_compiler_path",
-            ),
-            "GnuCOBOL compiler path",
+    if raw_profiles is None:
+        profiles = defaults.profiles
+    else:
+        profile_values = _require_list(
+            raw_profiles,
+            "Compiler profiles",
+        )
+        profiles = tuple(
+            _decode_compiler_profile(
+                raw_profile,
+            )
+            for raw_profile in profile_values
+        )
+
+    raw_default_profile_id = settings.get(
+        "default_profile_id",
+        (
+            str(defaults.default_profile_id)
+            if defaults.default_profile_id is not None
+            else None
         ),
+    )
+
+    default_profile_id = _optional_uuid(
+        raw_default_profile_id,
+        "Default compiler profile ID",
+    )
+
+    return CompilerSettings(
+        default_profile_id=default_profile_id,
+        profiles=profiles,
+    )
+
+
+def _decode_compiler_profile(
+    raw_profile: Any,
+) -> CompilerProfile:
+    """Decode one persisted compiler profile."""
+    profile = _require_mapping(
+        raw_profile,
+        "Compiler profile",
+    )
+
+    profile_id = _require_uuid(
+        profile.get(
+            "profile_id",
+        ),
+        "Compiler profile ID",
+    )
+    provider_id = _require_string(
+        profile.get(
+            "provider_id",
+        ),
+        "Compiler provider ID",
+    )
+    display_name = _require_string(
+        profile.get(
+            "display_name",
+        ),
+        "Compiler profile display name",
+    )
+    configuration = _decode_json_mapping(
+        profile.get(
+            "configuration",
+            {},
+        ),
+        "Compiler profile configuration",
+    )
+    environment_overrides = _require_string_mapping(
+        profile.get(
+            "environment_overrides",
+            {},
+        ),
+        "Compiler environment overrides",
+    )
+
+    return CompilerProfile(
+        profile_id=profile_id,
+        provider_id=provider_id,
+        display_name=display_name,
+        configuration=configuration,
+        environment_overrides=environment_overrides,
+    )
+
+
+def _decode_external_tool_settings(
+    raw_settings: Any,
+) -> ExternalToolSettings:
+    """Decode external application tool settings."""
+    settings = _require_mapping(
+        raw_settings,
+        "External tool settings",
+    )
+
+    return ExternalToolSettings(
         git_executable_path=_optional_string(
             settings.get(
                 "git_executable_path",
             ),
             "Git executable path",
-        ),
-        environment_overrides=_require_string_mapping(
-            settings.get(
-                "environment_overrides",
-                {},
-            ),
-            "Environment overrides",
         ),
     )
 
@@ -304,7 +498,6 @@ def _decode_editor_settings(
         raw_settings,
         "Editor settings",
     )
-
     defaults = EditorSettings()
 
     return EditorSettings(
@@ -368,7 +561,6 @@ def _decode_cobol_settings(
         raw_settings,
         "COBOL settings",
     )
-
     defaults = CobolSettings()
 
     raw_source_format = _require_string(
@@ -410,7 +602,6 @@ def _decode_cobol_guide_settings(
         raw_settings,
         "COBOL guide settings",
     )
-
     defaults = CobolGuideSettings()
 
     return CobolGuideSettings(
@@ -459,6 +650,98 @@ def _decode_cobol_guide_settings(
     )
 
 
+def _decode_json_mapping(
+    value: Any,
+    name: str,
+) -> dict[str, JsonValue]:
+    """Decode a JSON object containing recursive configuration values."""
+    mapping = _require_mapping(
+        value,
+        name,
+    )
+
+    result: dict[str, JsonValue] = {}
+
+    for key, item_value in mapping.items():
+        if not isinstance(
+            key,
+            str,
+        ):
+            raise SettingsFormatError(
+                f"{name} keys must be strings."
+            )
+
+        result[key] = _decode_json_value(
+            item_value,
+            f"{name} value for {key!r}",
+        )
+
+    return result
+
+
+def _decode_json_value(
+    value: Any,
+    name: str,
+) -> JsonValue:
+    """Decode one recursive JSON-compatible compiler value."""
+    if (
+        value is None
+        or isinstance(
+            value,
+            (
+                str,
+                bool,
+                int,
+            ),
+        )
+    ):
+        return value
+
+    if isinstance(
+        value,
+        float,
+    ):
+        return value
+
+    if isinstance(
+        value,
+        list,
+    ):
+        return tuple(
+            _decode_json_value(
+                item,
+                f"{name} item",
+            )
+            for item in value
+        )
+
+    if isinstance(
+        value,
+        Mapping,
+    ):
+        result: dict[str, JsonValue] = {}
+
+        for key, item_value in value.items():
+            if not isinstance(
+                key,
+                str,
+            ):
+                raise SettingsFormatError(
+                    f"{name} object keys must be strings."
+                )
+
+            result[key] = _decode_json_value(
+                item_value,
+                f"{name} value for {key!r}",
+            )
+
+        return result
+
+    raise SettingsFormatError(
+        f"{name} contains an unsupported JSON value."
+    )
+
+
 def _write_replacement_file(
     destination: Path,
     payload: bytes,
@@ -477,13 +760,10 @@ def _write_replacement_file(
             temporary_path = Path(
                 temporary_file.name,
             )
-
             temporary_file.write(
                 payload,
             )
-
             temporary_file.flush()
-
             os.fsync(
                 temporary_file.fileno(),
             )
@@ -511,6 +791,22 @@ def _require_mapping(
     ):
         raise SettingsFormatError(
             f"{name} must be an object."
+        )
+
+    return value
+
+
+def _require_list(
+    value: Any,
+    name: str,
+) -> list[Any]:
+    """Require a JSON array value."""
+    if not isinstance(
+        value,
+        list,
+    ):
+        raise SettingsFormatError(
+            f"{name} must be an array."
         )
 
     return value
@@ -545,9 +841,7 @@ def _require_string_mapping(
                 f"{name} values must be strings."
             )
 
-        result[
-            key
-        ] = item_value
+        result[key] = item_value
 
     return result
 
@@ -577,6 +871,40 @@ def _optional_string(
         return None
 
     return _require_string(
+        value,
+        name,
+    )
+
+
+def _require_uuid(
+    value: Any,
+    name: str,
+) -> UUID:
+    """Require a valid UUID string."""
+    raw_value = _require_string(
+        value,
+        name,
+    )
+
+    try:
+        return UUID(
+            raw_value,
+        )
+    except ValueError as error:
+        raise SettingsFormatError(
+            f"{name} must be a valid UUID."
+        ) from error
+
+
+def _optional_uuid(
+    value: Any,
+    name: str,
+) -> UUID | None:
+    """Require a valid UUID string or null."""
+    if value is None:
+        return None
+
+    return _require_uuid(
         value,
         name,
     )

@@ -4,19 +4,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 import opencobol2.settings.storage as settings_storage
 from opencobol2.compiler import CobolSourceFormat
+from opencobol2.compiler.providers import CompilerProfile
 from opencobol2.settings import (
     ApplicationSettings,
     CobolGuideSettings,
     CobolSettings,
+    CompilerSettings,
     EditorSettings,
+    ExternalToolSettings,
     SettingsFormatError,
     SettingsStorage,
-    ToolchainSettings,
     UnsupportedSettingsVersionError,
 )
 
@@ -41,27 +44,38 @@ def test_settings_round_trip_preserves_custom_configuration(
         / "config"
         / "settings.json"
     )
-
     storage = SettingsStorage(
         settings_path,
     )
 
-    settings = ApplicationSettings(
-        toolchains=ToolchainSettings(
-            gnucobol_compiler_path=(
-                "C:/custom/gnucobol/bin/cobc.exe"
+    profile = CompilerProfile(
+        provider_id="example.compiler",
+        display_name="Custom COBOL",
+        configuration={
+            "compiler_path": (
+                "C:/custom/cobol/bin/compiler.exe"
             ),
+            "copybook_paths": (
+                "C:/copybooks/common",
+                "C:/copybooks/project",
+            ),
+        },
+        environment_overrides={
+            "COBOL_HOME": "C:/custom/cobol",
+        },
+    )
+
+    settings = ApplicationSettings(
+        compilers=CompilerSettings(
+            default_profile_id=profile.profile_id,
+            profiles=(
+                profile,
+            ),
+        ),
+        external_tools=ExternalToolSettings(
             git_executable_path=(
                 "C:/custom/git/bin/git.exe"
             ),
-            environment_overrides={
-                "COB_CONFIG_DIR": (
-                    "C:/custom/gnucobol/config"
-                ),
-                "COB_COPY_DIR": (
-                    "C:/custom/gnucobol/copy"
-                ),
-            },
         ),
         editor=EditorSettings(
             font_family="Cascadia Mono",
@@ -90,17 +104,29 @@ def test_settings_round_trip_preserves_custom_configuration(
     saved_path = storage.save(
         settings,
     )
-
     loaded_settings = storage.load()
 
     assert saved_path == settings_path
     assert loaded_settings == settings
     assert (
         loaded_settings
-        .toolchains
-        .gnucobol_compiler_path
+        .compilers
+        .default_profile
+        is not None
+    )
+    assert (
+        loaded_settings
+        .compilers
+        .default_profile
+        .provider_id
+        == "example.compiler"
+    )
+    assert (
+        loaded_settings
+        .external_tools
+        .git_executable_path
         == Path(
-            "C:/custom/gnucobol/bin/cobc.exe"
+            "C:/custom/git/bin/git.exe"
         )
     )
     assert (
@@ -108,8 +134,150 @@ def test_settings_round_trip_preserves_custom_configuration(
         == "Cascadia Mono"
     )
     assert (
-        loaded_settings.cobol.default_source_format
+        loaded_settings
+        .cobol
+        .default_source_format
         is CobolSourceFormat.FREE
+    )
+
+
+def test_compiler_profile_nested_json_value_round_trip(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    profile = CompilerProfile(
+        provider_id="plugin.example.remote",
+        display_name="Remote Compiler",
+        configuration={
+            "string": "value",
+            "integer": 42,
+            "number": 3.5,
+            "boolean": True,
+            "nothing": None,
+            "list": (
+                "one",
+                2,
+                False,
+                {
+                    "nested": (
+                        "a",
+                        "b",
+                    ),
+                },
+            ),
+            "object": {
+                "inner": {
+                    "enabled": True,
+                },
+            },
+        },
+    )
+
+    settings = ApplicationSettings(
+        compilers=CompilerSettings(
+            default_profile_id=profile.profile_id,
+            profiles=(
+                profile,
+            ),
+        ),
+    )
+
+    storage.save(
+        settings,
+    )
+    loaded = storage.load()
+
+    loaded_profile = (
+        loaded.compilers.default_profile
+    )
+
+    assert loaded_profile is not None
+    assert (
+        loaded_profile.configuration
+        == profile.configuration
+    )
+    assert isinstance(
+        loaded_profile.configuration["list"],
+        tuple,
+    )
+
+
+def test_saved_compiler_profile_json_uses_arrays_and_objects(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    profile = CompilerProfile(
+        provider_id="example.compiler",
+        display_name="Example",
+        configuration={
+            "arguments": (
+                "-x",
+                "-Wall",
+            ),
+            "nested": {
+                "enabled": True,
+            },
+        },
+    )
+
+    storage.save(
+        ApplicationSettings(
+            compilers=CompilerSettings(
+                default_profile_id=profile.profile_id,
+                profiles=(
+                    profile,
+                ),
+            ),
+        )
+    )
+
+    raw_settings = json.loads(
+        settings_path.read_text(
+            encoding="utf-8",
+        )
+    )
+    raw_profile = (
+        raw_settings["compilers"]["profiles"][0]
+    )
+
+    assert raw_profile["configuration"]["arguments"] == [
+        "-x",
+        "-Wall",
+    ]
+    assert raw_profile["configuration"]["nested"] == {
+        "enabled": True,
+    }
+
+
+def test_external_git_path_is_persisted(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    storage.save(
+        ApplicationSettings(
+            external_tools=ExternalToolSettings(
+                git_executable_path="tools/git.exe",
+            ),
+        )
+    )
+
+    loaded = storage.load()
+
+    assert (
+        loaded.external_tools.git_executable_path
+        == Path("tools/git.exe")
     )
 
 
@@ -122,7 +290,6 @@ def test_save_creates_parent_directory(
         / "config"
         / "settings.json"
     )
-
     storage = SettingsStorage(
         settings_path,
     )
@@ -138,7 +305,6 @@ def test_saved_json_contains_schema_version(
     tmp_path: Path,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-
     storage = SettingsStorage(
         settings_path,
     )
@@ -153,16 +319,36 @@ def test_saved_json_contains_schema_version(
         )
     )
 
-    assert raw_settings[
-        "schema_version"
-    ] == 1
+    assert raw_settings["schema_version"] == 1
+
+
+def test_saved_json_uses_compiler_and_external_tool_groups(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    storage.save(
+        ApplicationSettings(),
+    )
+
+    raw_settings = json.loads(
+        settings_path.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert "compilers" in raw_settings
+    assert "external_tools" in raw_settings
+    assert "toolchains" not in raw_settings
 
 
 def test_partial_settings_file_uses_current_defaults(
     tmp_path: Path,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-
     settings_path.write_text(
         json.dumps(
             {
@@ -174,7 +360,6 @@ def test_partial_settings_file_uses_current_defaults(
         ),
         encoding="utf-8",
     )
-
     storage = SettingsStorage(
         settings_path,
     )
@@ -184,20 +369,197 @@ def test_partial_settings_file_uses_current_defaults(
     assert settings.editor.font_size == 16
     assert settings.editor.tab_width == 4
     assert settings.editor.code_folding is True
-    assert settings.toolchains == ToolchainSettings()
+    assert settings.compilers == CompilerSettings()
+    assert (
+        settings.external_tools
+        == ExternalToolSettings()
+    )
     assert settings.cobol == CobolSettings()
+
+
+def test_compiler_profile_uuid_round_trip(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    profile_id = uuid4()
+    profile = CompilerProfile(
+        profile_id=profile_id,
+        provider_id="example.compiler",
+        display_name="Example",
+    )
+
+    storage.save(
+        ApplicationSettings(
+            compilers=CompilerSettings(
+                default_profile_id=profile_id,
+                profiles=(
+                    profile,
+                ),
+            ),
+        )
+    )
+
+    loaded = storage.load()
+
+    assert (
+        loaded.compilers.default_profile_id
+        == profile_id
+    )
+    assert (
+        loaded.compilers.profiles[0].profile_id
+        == profile_id
+    )
+
+
+def test_invalid_profile_uuid_is_rejected(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "compilers": {
+                    "default_profile_id": None,
+                    "profiles": [
+                        {
+                            "profile_id": "not-a-uuid",
+                            "provider_id": "example.compiler",
+                            "display_name": "Example",
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    with pytest.raises(
+        SettingsFormatError,
+        match="Compiler profile ID must be a valid UUID",
+    ):
+        storage.load()
+
+
+def test_duplicate_profile_ids_are_settings_format_error(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    profile_id = str(
+        uuid4(),
+    )
+
+    settings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "compilers": {
+                    "default_profile_id": profile_id,
+                    "profiles": [
+                        {
+                            "profile_id": profile_id,
+                            "provider_id": "example.first",
+                            "display_name": "First",
+                        },
+                        {
+                            "profile_id": profile_id,
+                            "provider_id": "example.second",
+                            "display_name": "Second",
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    with pytest.raises(
+        SettingsFormatError,
+        match="Compiler profile IDs must be unique",
+    ):
+        storage.load()
+
+
+def test_invalid_default_profile_reference_is_settings_format_error(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+
+    settings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "compilers": {
+                    "default_profile_id": str(
+                        uuid4(),
+                    ),
+                    "profiles": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    with pytest.raises(
+        SettingsFormatError,
+        match=(
+            "Default compiler profile ID must reference "
+            "an existing compiler profile"
+        ),
+    ):
+        storage.load()
+
+
+def test_obsolete_toolchain_layout_is_rejected(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+
+    settings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "toolchains": {
+                    "gnucobol_compiler_path": (
+                        "C:/old/cobc.exe"
+                    ),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    with pytest.raises(
+        SettingsFormatError,
+        match="obsolete 'toolchains' layout",
+    ):
+        storage.load()
 
 
 def test_invalid_json_is_rejected(
     tmp_path: Path,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-
     settings_path.write_text(
         "{not-json",
         encoding="utf-8",
     )
-
     storage = SettingsStorage(
         settings_path,
     )
@@ -213,7 +575,6 @@ def test_unsupported_schema_version_is_rejected(
     tmp_path: Path,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-
     settings_path.write_text(
         json.dumps(
             {
@@ -222,7 +583,6 @@ def test_unsupported_schema_version_is_rejected(
         ),
         encoding="utf-8",
     )
-
     storage = SettingsStorage(
         settings_path,
     )
@@ -238,7 +598,6 @@ def test_invalid_setting_type_is_rejected(
     tmp_path: Path,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-
     settings_path.write_text(
         json.dumps(
             {
@@ -250,7 +609,6 @@ def test_invalid_setting_type_is_rejected(
         ),
         encoding="utf-8",
     )
-
     storage = SettingsStorage(
         settings_path,
     )
@@ -267,21 +625,17 @@ def test_failed_replace_preserves_existing_settings_and_cleans_temp_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-
     original_settings = ApplicationSettings(
         editor=EditorSettings(
             font_size=12,
         ),
     )
-
     storage = SettingsStorage(
         settings_path,
     )
-
     storage.save(
         original_settings,
     )
-
     original_payload = settings_path.read_bytes()
 
     def fail_replace(
@@ -312,8 +666,10 @@ def test_failed_replace_preserves_existing_settings_and_cleans_temp_file(
             changed_settings,
         )
 
-    assert settings_path.read_bytes() == original_payload
-
+    assert (
+        settings_path.read_bytes()
+        == original_payload
+    )
     assert tuple(
         tmp_path.glob(
             f".{settings_path.name}.*.tmp"

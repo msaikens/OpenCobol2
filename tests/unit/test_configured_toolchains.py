@@ -8,19 +8,27 @@ from typing import Mapping
 import pytest
 
 import opencobol2.services.toolchains as toolchain_services
+from opencobol2.compiler.providers import (
+    CompilerProfile,
+    GNUCOBOL_PROVIDER_ID,
+)
 from opencobol2.services import (
     GnuCobolToolchainService,
 )
 from opencobol2.settings import (
+    CompilerSettings,
     SettingsService,
     SettingsStorage,
-    ToolchainSettings,
 )
 from opencobol2.toolchains import (
     GnuCobolToolchain,
     ToolchainSource,
 )
-
+from opencobol2.compiler.providers import (
+    CompilerProfile,
+    GNUCOBOL_PROVIDER_ID,
+    JsonValue,
+)
 
 def _create_settings_service(
     tmp_path: Path,
@@ -33,22 +41,63 @@ def _create_settings_service(
     )
 
 
-def test_discovery_uses_configured_compiler_path(
+def _create_gnucobol_profile(
+    *,
+    configuration: dict[str, JsonValue] | None = None,
+    environment_overrides: dict[str, str] | None = None,
+) -> CompilerProfile:
+    """Create an isolated GnuCOBOL compiler profile."""
+    return CompilerProfile(
+        provider_id=GNUCOBOL_PROVIDER_ID,
+        display_name="Test GnuCOBOL",
+        configuration=(
+            {}
+            if configuration is None
+            else configuration
+        ),
+        environment_overrides=(
+            {}
+            if environment_overrides is None
+            else environment_overrides
+        ),
+    )
+
+
+def _configure_default_profile(
+    settings_service: SettingsService,
+    profile: CompilerProfile,
+) -> None:
+    """Persist one selected compiler profile."""
+    settings_service.update_compilers(
+        CompilerSettings(
+            default_profile_id=profile.profile_id,
+            profiles=(
+                profile,
+            ),
+        )
+    )
+
+
+def test_discovery_uses_profile_compiler_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_service = _create_settings_service(
         tmp_path,
     )
-
     compiler_path = Path(
         "C:/custom/gnucobol/bin/cobc.exe"
     )
-
-    settings_service.update_toolchains(
-        ToolchainSettings(
-            gnucobol_compiler_path=compiler_path,
-        )
+    profile = _create_gnucobol_profile(
+        configuration={
+            "compiler_path": str(
+                compiler_path,
+            ),
+        },
+    )
+    _configure_default_profile(
+        settings_service,
+        profile,
     )
 
     captured_path: Path | None = None
@@ -59,7 +108,6 @@ def test_discovery_uses_configured_compiler_path(
         environment: Mapping[str, str] | None = None,
     ) -> None:
         nonlocal captured_path
-
         captured_path = explicit_path
 
         return None
@@ -83,21 +131,22 @@ def test_discovery_uses_configured_compiler_path(
     assert captured_path == compiler_path
 
 
-def test_configured_environment_overrides_base_environment(
+def test_profile_environment_overrides_base_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_service = _create_settings_service(
         tmp_path,
     )
-
-    settings_service.update_toolchains(
-        ToolchainSettings(
-            environment_overrides={
-                "COB_CONFIG_DIR": "configured",
-                "OPENCOBOL2_TEST_VALUE": "enabled",
-            },
-        )
+    profile = _create_gnucobol_profile(
+        environment_overrides={
+            "COB_CONFIG_DIR": "configured",
+            "OPENCOBOL2_TEST_VALUE": "enabled",
+        },
+    )
+    _configure_default_profile(
+        settings_service,
+        profile,
     )
 
     captured_environment: dict[str, str] | None = None
@@ -145,12 +194,60 @@ def test_configured_environment_overrides_base_environment(
         == "configured"
     )
     assert (
-        captured_environment["OPENCOBOL2_TEST_VALUE"]
+        captured_environment[
+            "OPENCOBOL2_TEST_VALUE"
+        ]
         == "enabled"
     )
     assert (
         captured_environment["PRESERVED_VALUE"]
         == "yes"
+    )
+
+
+def test_structured_configuration_overrides_profile_environment(
+    tmp_path: Path,
+) -> None:
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    profile = _create_gnucobol_profile(
+        configuration={
+            "config_directory": "structured-config",
+            "copy_directory": "structured-copy",
+            "library_path": "structured-library",
+        },
+        environment_overrides={
+            "COB_CONFIG_DIR": "profile-config",
+            "COB_COPY_DIR": "profile-copy",
+            "COB_LIBRARY_PATH": "profile-library",
+        },
+    )
+
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+
+    environment = service.process_environment(
+        profile,
+        {
+            "COB_CONFIG_DIR": "base-config",
+            "COB_COPY_DIR": "base-copy",
+            "COB_LIBRARY_PATH": "base-library",
+        },
+    )
+
+    assert (
+        environment["COB_CONFIG_DIR"]
+        == "structured-config"
+    )
+    assert (
+        environment["COB_COPY_DIR"]
+        == "structured-copy"
+    )
+    assert (
+        environment["COB_LIBRARY_PATH"]
+        == "structured-library"
     )
 
 
@@ -160,15 +257,11 @@ def test_process_environment_does_not_mutate_base_mapping(
     settings_service = _create_settings_service(
         tmp_path,
     )
-
-    settings_service.update_toolchains(
-        ToolchainSettings(
-            environment_overrides={
-                "COB_CONFIG_DIR": "configured",
-            },
-        )
+    profile = _create_gnucobol_profile(
+        environment_overrides={
+            "COB_CONFIG_DIR": "configured",
+        },
     )
-
     base_environment = {
         "PATH": "base-path",
         "COB_CONFIG_DIR": "base",
@@ -179,6 +272,7 @@ def test_process_environment_does_not_mutate_base_mapping(
     )
 
     environment = service.process_environment(
+        profile,
         base_environment,
     )
 
@@ -186,21 +280,19 @@ def test_process_environment_does_not_mutate_base_mapping(
         "PATH": "base-path",
         "COB_CONFIG_DIR": "base",
     }
-
     assert environment == {
         "PATH": "base-path",
         "COB_CONFIG_DIR": "configured",
     }
 
 
-def test_discovery_reads_latest_settings_snapshot(
+def test_discovery_reads_latest_default_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_service = _create_settings_service(
         tmp_path,
     )
-
     service = GnuCobolToolchainService(
         settings_service=settings_service,
     )
@@ -208,11 +300,16 @@ def test_discovery_reads_latest_settings_snapshot(
     compiler_path = Path(
         "D:/new-toolchain/bin/cobc.exe"
     )
-
-    settings_service.update_toolchains(
-        ToolchainSettings(
-            gnucobol_compiler_path=compiler_path,
-        )
+    profile = _create_gnucobol_profile(
+        configuration={
+            "compiler_path": str(
+                compiler_path,
+            ),
+        },
+    )
+    _configure_default_profile(
+        settings_service,
+        profile,
     )
 
     captured_path: Path | None = None
@@ -223,7 +320,6 @@ def test_discovery_reads_latest_settings_snapshot(
         environment: Mapping[str, str] | None = None,
     ) -> None:
         nonlocal captured_path
-
         captured_path = explicit_path
 
         return None
@@ -241,6 +337,103 @@ def test_discovery_reads_latest_settings_snapshot(
     assert captured_path == compiler_path
 
 
+def test_discovery_accepts_explicit_gnucobol_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+    compiler_path = Path(
+        "E:/alternate/cobc.exe"
+    )
+    profile = _create_gnucobol_profile(
+        configuration={
+            "compiler_path": str(
+                compiler_path,
+            ),
+        },
+    )
+
+    captured_path: Path | None = None
+
+    def fake_discover(
+        explicit_path=None,
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        nonlocal captured_path
+        captured_path = explicit_path
+
+        return None
+
+    monkeypatch.setattr(
+        toolchain_services,
+        "discover_gnucobol",
+        fake_discover,
+    )
+
+    service.discover(
+        profile,
+        base_environment={},
+    )
+
+    assert captured_path == compiler_path
+
+
+def test_non_gnucobol_profile_is_rejected(
+    tmp_path: Path,
+) -> None:
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+    profile = CompilerProfile(
+        provider_id="example.other-compiler",
+        display_name="Other Compiler",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="GnuCOBOL toolchain discovery requires provider",
+    ):
+        service.discover(
+            profile,
+            base_environment={},
+        )
+
+
+def test_missing_default_profile_is_rejected(
+    tmp_path: Path,
+) -> None:
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    settings_service.update_compilers(
+        CompilerSettings(
+            default_profile_id=None,
+            profiles=(),
+        )
+    )
+
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No default compiler profile is configured",
+    ):
+        service.discover(
+            base_environment={},
+        )
+
+
 def test_discovery_returns_discovered_toolchain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -248,7 +441,6 @@ def test_discovery_returns_discovered_toolchain(
     settings_service = _create_settings_service(
         tmp_path,
     )
-
     expected_toolchain = GnuCobolToolchain(
         compiler_path=Path(
             "tools/cobc.exe"

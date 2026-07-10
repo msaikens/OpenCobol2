@@ -7,8 +7,9 @@ from dataclasses import replace
 from opencobol2.settings.models import (
     ApplicationSettings,
     CobolSettings,
+    CompilerSettings,
     EditorSettings,
-    ToolchainSettings,
+    ExternalToolSettings,
 )
 from opencobol2.settings.storage import (
     SettingsStorage,
@@ -32,7 +33,6 @@ class SettingsService:
             if storage is not None
             else SettingsStorage()
         )
-
         self._current = self._storage.load()
 
     @property
@@ -54,7 +54,6 @@ class SettingsService:
     ) -> ApplicationSettings:
         """Reload persisted settings and replace the current snapshot."""
         settings = self._storage.load()
-
         self._current = settings
 
         return settings
@@ -75,19 +74,49 @@ class SettingsService:
         self._storage.save(
             settings,
         )
-
         self._current = settings
 
         return settings
 
-    def update_toolchains(
+    def update_compilers(
         self,
-        toolchains: ToolchainSettings,
+        compilers: CompilerSettings,
     ) -> ApplicationSettings:
-        """Persist replacement toolchain settings."""
+        """Persist replacement compiler profile settings."""
+        if not isinstance(
+            compilers,
+            CompilerSettings,
+        ):
+            raise TypeError(
+                "Compiler settings must be CompilerSettings."
+            )
+
         settings = replace(
             self._current,
-            toolchains=toolchains,
+            compilers=compilers,
+        )
+
+        return self.apply(
+            settings,
+        )
+
+    def update_external_tools(
+        self,
+        external_tools: ExternalToolSettings,
+    ) -> ApplicationSettings:
+        """Persist replacement external tool settings."""
+        if not isinstance(
+            external_tools,
+            ExternalToolSettings,
+        ):
+            raise TypeError(
+                "External tool settings must be "
+                "ExternalToolSettings."
+            )
+
+        settings = replace(
+            self._current,
+            external_tools=external_tools,
         )
 
         return self.apply(
@@ -99,6 +128,14 @@ class SettingsService:
         editor: EditorSettings,
     ) -> ApplicationSettings:
         """Persist replacement editor settings."""
+        if not isinstance(
+            editor,
+            EditorSettings,
+        ):
+            raise TypeError(
+                "Editor settings must be EditorSettings."
+            )
+
         settings = replace(
             self._current,
             editor=editor,
@@ -113,6 +150,14 @@ class SettingsService:
         cobol: CobolSettings,
     ) -> ApplicationSettings:
         """Persist replacement COBOL settings."""
+        if not isinstance(
+            cobol,
+            CobolSettings,
+        ):
+            raise TypeError(
+                "COBOL settings must be CobolSettings."
+            )
+
         settings = replace(
             self._current,
             cobol=cobol,

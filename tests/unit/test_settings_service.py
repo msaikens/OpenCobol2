@@ -7,13 +7,17 @@ from pathlib import Path
 import pytest
 
 from opencobol2.compiler import CobolSourceFormat
+from opencobol2.compiler.providers import (
+    CompilerProfile,
+)
 from opencobol2.settings import (
     ApplicationSettings,
     CobolSettings,
+    CompilerSettings,
     EditorSettings,
+    ExternalToolSettings,
     SettingsService,
     SettingsStorage,
-    ToolchainSettings,
 )
 
 
@@ -23,13 +27,11 @@ def test_service_loads_current_settings_from_storage(
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     expected_settings = ApplicationSettings(
         editor=EditorSettings(
             font_size=16,
         ),
     )
-
     storage.save(
         expected_settings,
     )
@@ -48,11 +50,9 @@ def test_apply_persists_and_updates_current_settings(
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     service = SettingsService(
         storage,
     )
-
     settings = ApplicationSettings(
         editor=EditorSettings(
             font_size=18,
@@ -75,11 +75,9 @@ def test_failed_apply_preserves_current_settings(
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     service = SettingsService(
         storage,
     )
-
     original_settings = service.current
 
     changed_settings = ApplicationSettings(
@@ -113,31 +111,81 @@ def test_failed_apply_preserves_current_settings(
     assert service.current is original_settings
 
 
-def test_update_toolchains_preserves_other_settings(
+def test_update_compilers_preserves_other_settings(
     tmp_path: Path,
 ) -> None:
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     service = SettingsService(
         storage,
     )
 
+    original_external_tools = (
+        service.current.external_tools
+    )
     original_editor = service.current.editor
     original_cobol = service.current.cobol
 
-    toolchains = ToolchainSettings(
-        gnucobol_compiler_path=(
-            "C:/custom/gnucobol/bin/cobc.exe"
+    profile = CompilerProfile(
+        provider_id="example.compiler",
+        display_name="Example Compiler",
+    )
+    compilers = CompilerSettings(
+        default_profile_id=profile.profile_id,
+        profiles=(
+            profile,
         ),
     )
 
-    updated_settings = service.update_toolchains(
-        toolchains,
+    updated_settings = service.update_compilers(
+        compilers,
     )
 
-    assert updated_settings.toolchains is toolchains
+    assert updated_settings.compilers is compilers
+    assert (
+        updated_settings.external_tools
+        is original_external_tools
+    )
+    assert updated_settings.editor is original_editor
+    assert updated_settings.cobol is original_cobol
+    assert storage.load() == updated_settings
+
+
+def test_update_external_tools_preserves_other_settings(
+    tmp_path: Path,
+) -> None:
+    storage = SettingsStorage(
+        tmp_path / "settings.json",
+    )
+    service = SettingsService(
+        storage,
+    )
+
+    original_compilers = service.current.compilers
+    original_editor = service.current.editor
+    original_cobol = service.current.cobol
+
+    external_tools = ExternalToolSettings(
+        git_executable_path=(
+            "C:/Program Files/Git/bin/git.exe"
+        ),
+    )
+
+    updated_settings = (
+        service.update_external_tools(
+            external_tools,
+        )
+    )
+
+    assert (
+        updated_settings.compilers
+        is original_compilers
+    )
+    assert (
+        updated_settings.external_tools
+        is external_tools
+    )
     assert updated_settings.editor is original_editor
     assert updated_settings.cobol is original_cobol
     assert storage.load() == updated_settings
@@ -149,12 +197,14 @@ def test_update_editor_preserves_other_settings(
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     service = SettingsService(
         storage,
     )
 
-    original_toolchains = service.current.toolchains
+    original_compilers = service.current.compilers
+    original_external_tools = (
+        service.current.external_tools
+    )
     original_cobol = service.current.cobol
 
     editor = EditorSettings(
@@ -166,7 +216,14 @@ def test_update_editor_preserves_other_settings(
         editor,
     )
 
-    assert updated_settings.toolchains is original_toolchains
+    assert (
+        updated_settings.compilers
+        is original_compilers
+    )
+    assert (
+        updated_settings.external_tools
+        is original_external_tools
+    )
     assert updated_settings.editor is editor
     assert updated_settings.cobol is original_cobol
     assert storage.load() == updated_settings
@@ -178,12 +235,14 @@ def test_update_cobol_preserves_other_settings(
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     service = SettingsService(
         storage,
     )
 
-    original_toolchains = service.current.toolchains
+    original_compilers = service.current.compilers
+    original_external_tools = (
+        service.current.external_tools
+    )
     original_editor = service.current.editor
 
     cobol = CobolSettings(
@@ -196,7 +255,14 @@ def test_update_cobol_preserves_other_settings(
         cobol,
     )
 
-    assert updated_settings.toolchains is original_toolchains
+    assert (
+        updated_settings.compilers
+        is original_compilers
+    )
+    assert (
+        updated_settings.external_tools
+        is original_external_tools
+    )
     assert updated_settings.editor is original_editor
     assert updated_settings.cobol is cobol
     assert storage.load() == updated_settings
@@ -208,7 +274,6 @@ def test_reload_replaces_current_snapshot_from_disk(
     storage = SettingsStorage(
         tmp_path / "settings.json",
     )
-
     service = SettingsService(
         storage,
     )
@@ -218,7 +283,6 @@ def test_reload_replaces_current_snapshot_from_disk(
             font_size=20,
         ),
     )
-
     storage.save(
         external_settings,
     )

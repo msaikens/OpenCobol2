@@ -4,9 +4,11 @@ from opencobol2.settings.models import (
     ApplicationSettings,
     CobolGuideSettings,
     CobolSettings,
+    CompilerSettings,
     CURRENT_SETTINGS_SCHEMA_VERSION,
+    DEFAULT_GNUCOBOL_PROFILE_ID,
     EditorSettings,
-    ToolchainSettings,
+    ExternalToolSettings,
 )
 from opencobol2.settings.service import (
     SettingsService,
@@ -23,12 +25,14 @@ __all__ = [
     "ApplicationSettings",
     "CobolGuideSettings",
     "CobolSettings",
+    "CompilerSettings",
     "CURRENT_SETTINGS_SCHEMA_VERSION",
+    "DEFAULT_GNUCOBOL_PROFILE_ID",
     "default_settings_path",
     "EditorSettings",
+    "ExternalToolSettings",
     "SettingsFormatError",
     "SettingsService",
     "SettingsStorage",
-    "ToolchainSettings",
     "UnsupportedSettingsVersionError",
 ]
