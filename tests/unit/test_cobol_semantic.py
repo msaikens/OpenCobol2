@@ -406,6 +406,137 @@ def test_references_resolved_inside_nested_if_and_perform_bodies() -> None:
     assert "MISSING-IN-WHEN" in messages
 
 
+# --- widened token-list coverage (best-effort, WARNING severity) ---------
+
+
+def _data_procedure_source(
+    procedure_body: str,
+) -> str:
+    return (
+        _PROGRAM_HEADER
+        + "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-COUNTER  PIC 9(3).\n"
+        "       01  WS-RATE     PIC 9(3)V99.\n"
+        "       01  WS-PAY      PIC 9(5)V99.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        + procedure_body
+    )
+
+
+def test_move_source_token_resolved_when_defined() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           MOVE WS-RATE TO WS-PAY\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_move_source_token_warns_when_undefined() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           MOVE WS-BOGUS TO WS-PAY\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert result.has_errors is False
+    assert any(
+        "Possibly undefined data name: WS-BOGUS" in d.message
+        for d in result.diagnostics
+    )
+
+
+def test_if_condition_token_resolved() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           IF WS-COUNTER > WS-BOGUS-COND\n"
+            "               DISPLAY WS-PAY\n"
+            "           END-IF\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert any(
+        "Possibly undefined data name: WS-BOGUS-COND" in d.message
+        for d in result.diagnostics
+    )
+
+
+def test_perform_varying_modifier_token_resolved() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           PERFORM VARYING WS-COUNTER FROM 1 BY 1\n"
+            "                   UNTIL WS-COUNTER > 5\n"
+            "               DISPLAY WS-COUNTER\n"
+            "           END-PERFORM\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_generic_statement_token_resolved() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           COMPUTE WS-PAY = WS-COUNTER * WS-RATE\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_generic_statement_token_warns_when_undefined() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           ADD WS-BOGUS TO WS-PAY\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert any(
+        "Possibly undefined data name: WS-BOGUS" in d.message
+        for d in result.diagnostics
+    )
+
+
+def test_display_operand_token_resolved() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           DISPLAY WS-PAY\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_condition_name_used_in_if_resolves_via_88_level() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-STATUS  PIC X.\n"
+        "           88  WS-DONE  VALUE 'D'.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           IF WS-DONE\n"
+        "               STOP RUN\n"
+        "           END-IF.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.diagnostics == ()
+
+
 # --- real-world legacy files -------------------------------------------------
 
 

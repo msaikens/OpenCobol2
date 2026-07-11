@@ -632,6 +632,47 @@ def test_perform_inline_varying() -> None:
     assert modifier_text[0] == "VARYING"
 
 
+def test_perform_data_name_times_is_not_mistaken_for_a_target() -> None:
+    # "PERFORM identifier TIMES" is a bounded inline loop where the
+    # identifier holds the repeat count; it must not be treated as an
+    # out-of-line paragraph target just because it's an identifier.
+    statements = _statements(
+        """
+        PERFORM WS-COUNT TIMES
+            DISPLAY 'HI'
+        END-PERFORM
+        STOP RUN.
+        """,
+    )
+
+    perform = statements[0]
+    assert perform.target_name is None
+    assert [
+        token.text
+        for token in perform.modifier_tokens
+    ] == ["WS-COUNT", "TIMES"]
+    assert len(perform.body) == 1
+
+
+def test_end_program_marker_is_consumed_cleanly() -> None:
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           STOP RUN.\n"
+        "       END PROGRAM TEST.\n"
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.diagnostics == ()
+    assert len(
+        result.unit.procedure.paragraphs[0].statements,
+    ) == 1
+
+
 # --- EVALUATE ----------------------------------------------------------
 
 

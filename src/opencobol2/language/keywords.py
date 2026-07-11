@@ -72,6 +72,10 @@ RESERVED_WORDS: frozenset[str] = frozenset(
         "STATUS",
         "ALTERNATE",
         "DUPLICATES",
+        "INPUT",
+        "OUTPUT",
+        "I-O",
+        "EXTEND",
         # Data description clauses
         "PIC",
         "PICTURE",
@@ -230,6 +234,7 @@ RESERVED_WORDS: frozenset[str] = frozenset(
         "AT",
         "END-OF-PAGE",
         "EOP",
+        "FUNCTION",
         "NO",
         "ADVANCING",
         "LINE",

@@ -119,6 +119,16 @@ def test_is_reserved_word_rejects_unknown_word() -> None:
     assert is_reserved_word("WS-COUNTER") is False
 
 
+@pytest.mark.parametrize(
+    "word",
+    ["INPUT", "OUTPUT", "I-O", "EXTEND", "FUNCTION"],
+)
+def test_open_mode_and_function_reserved_words(
+    word: str,
+) -> None:
+    assert is_reserved_word(word) is True
+
+
 # --- identifiers / reserved words / numerals -----------------------------
 
 

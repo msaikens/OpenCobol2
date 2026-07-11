@@ -2,12 +2,19 @@
 
 Builds a symbol table for data items (respecting level-number nesting,
 including 66 RENAMES, 77 standalone items, and 88 condition names) and
-for procedure division paragraphs/sections, then resolves the name
-references a `GenericStatement`-free statement can express unambiguously
-today: MOVE targets and PERFORM targets. Everything else (unmodeled
-verbs, MOVE source expressions, IF/EVALUATE condition tokens) is not
-resolved yet — those require deeper per-verb grammar than the parser
-currently builds.
+for procedure division paragraphs/sections, then resolves name
+references throughout the procedure division:
+
+* MOVE targets and PERFORM targets are structurally guaranteed to be
+  names by the grammar, so an unresolved reference is reported as an
+  ERROR.
+* Every other token list a statement carries (MOVE sources, IF/EVALUATE
+  conditions, PERFORM modifiers, DISPLAY operands, and generic
+  statement tokens for unmodeled verbs like ADD/CALL/STRING) is scanned
+  best-effort for IDENTIFIER tokens and resolved as a WARNING instead —
+  these lists mix data names with syntax this parser does not deeply
+  model yet (intrinsic FUNCTION names, index-names, special registers),
+  so lower confidence is intentional to avoid false-positive noise.
 """
 
 from __future__ import annotations
@@ -21,6 +28,10 @@ from opencobol2.compiler.diagnostics import (
 from opencobol2.language.ast_nodes import (
     CompilationUnitNode,
     DataItemNode,
+    DisplayStatement,
+    EvaluateStatement,
+    GenericStatement,
+    IfStatement,
     MoveStatement,
     PerformStatement,
     ProcedureDivisionNode,
@@ -31,6 +42,8 @@ from opencobol2.language.diagnostics import (
 from opencobol2.language.tokens import (
     SourcePosition,
     SourceSpan,
+    Token,
+    TokenKind,
 )
 
 
@@ -371,6 +384,20 @@ def _resolve_statements(
                 symbol_table,
                 diagnostics,
             )
+            _resolve_identifier_tokens(
+                statement.source_tokens,
+                symbol_table,
+                diagnostics,
+            )
+        elif isinstance(
+            statement,
+            DisplayStatement,
+        ):
+            _resolve_identifier_tokens(
+                statement.operand_tokens,
+                symbol_table,
+                diagnostics,
+            )
         elif isinstance(
             statement,
             PerformStatement,
@@ -387,15 +414,25 @@ def _resolve_statements(
                 symbol_table,
                 diagnostics,
             )
+            _resolve_identifier_tokens(
+                statement.modifier_tokens,
+                symbol_table,
+                diagnostics,
+            )
             _resolve_statements(
                 statement.body,
                 symbol_table,
                 diagnostics,
             )
-        elif hasattr(
+        elif isinstance(
             statement,
-            "then_statements",
+            IfStatement,
         ):
+            _resolve_identifier_tokens(
+                statement.condition_tokens,
+                symbol_table,
+                diagnostics,
+            )
             _resolve_statements(
                 statement.then_statements,
                 symbol_table,
@@ -406,16 +443,38 @@ def _resolve_statements(
                 symbol_table,
                 diagnostics,
             )
-        elif hasattr(
+        elif isinstance(
             statement,
-            "branches",
+            EvaluateStatement,
         ):
+            _resolve_identifier_tokens(
+                statement.subject_tokens,
+                symbol_table,
+                diagnostics,
+            )
+
             for branch in statement.branches:
+                _resolve_identifier_tokens(
+                    branch.condition_tokens,
+                    symbol_table,
+                    diagnostics,
+                )
                 _resolve_statements(
                     branch.statements,
                     symbol_table,
                     diagnostics,
                 )
+        elif isinstance(
+            statement,
+            GenericStatement,
+        ):
+            # tokens[0] is always the verb itself (a reserved word, so
+            # the identifier filter below already skips it).
+            _resolve_identifier_tokens(
+                statement.tokens,
+                symbol_table,
+                diagnostics,
+            )
 
 
 def _resolve_data_names(
@@ -449,6 +508,54 @@ def _resolve_data_names(
                         f"Ambiguous reference to data name: {name}"
                     ),
                     position=position,
+                ),
+            )
+
+
+def _resolve_identifier_tokens(
+    tokens: tuple[Token, ...],
+    symbol_table: SymbolTable,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    """Best-effort resolve IDENTIFIER tokens in a raw token list.
+
+    Reserved words, literals, and punctuation are never IDENTIFIER
+    tokens, so this only ever considers plausible name references. An
+    unresolved or ambiguous match is reported as a WARNING (not an
+    ERROR) since these token lists are not deeply parsed and may
+    legitimately contain names this analysis cannot classify yet
+    (intrinsic FUNCTION names, index-names, special registers).
+    """
+
+    for token in tokens:
+        if token.kind is not TokenKind.IDENTIFIER:
+            continue
+
+        matches = symbol_table.find_data_symbols(
+            token.text,
+        )
+
+        if not matches:
+            diagnostics.append(
+                ParseDiagnostic(
+                    severity=DiagnosticSeverity.WARNING,
+                    message=(
+                        f"Possibly undefined data name: {token.text}"
+                    ),
+                    position=token.span.start,
+                ),
+            )
+        elif len(
+            matches,
+        ) > 1:
+            diagnostics.append(
+                ParseDiagnostic(
+                    severity=DiagnosticSeverity.WARNING,
+                    message=(
+                        "Ambiguous reference to data name: "
+                        f"{token.text}"
+                    ),
+                    position=token.span.start,
                 ),
             )
 

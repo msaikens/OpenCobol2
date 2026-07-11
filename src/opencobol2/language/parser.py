@@ -329,6 +329,15 @@ class CobolParser:
         ):
             procedure = self._parse_procedure_division()
 
+        if self._at_end_program_marker():
+            self._cursor.advance()
+            self._cursor.advance()
+
+            if self._cursor.current().kind is not TokenKind.PERIOD:
+                self._cursor.advance()
+
+            self._expect_period()
+
         while not self._cursor.at_end():
             token = self._cursor.current()
             self._error(
@@ -497,16 +506,44 @@ class CobolParser:
             or self._at_any_division_header()
             or self._at_procedure_section_header()
             or self._at_paragraph_header()
+            or self._at_end_program_marker()
         )
 
     def _at_division_boundary_only(
         self,
     ) -> bool:
-        """Return whether the cursor is at end-of-file or a division header."""
+        """Return whether the cursor is at end-of-file, a division header,
+        or an `END PROGRAM` marker."""
 
         return (
             self._cursor.at_end()
             or self._at_any_division_header()
+            or self._at_end_program_marker()
+        )
+
+    def _at_end_program_marker(
+        self,
+    ) -> bool:
+        """Return whether the cursor is at an `END PROGRAM` marker.
+
+        `END PROGRAM program-name.` terminates a compilation unit (used
+        for multi-program source and as good practice for single
+        programs). It is not modeled as an AST node yet, but every
+        statement/operand loop must recognize and stop at it rather
+        than silently absorbing the program name as an operand token.
+        """
+
+        return (
+            _word(
+                self._cursor.current(),
+            )
+            == "END"
+            and _word(
+                self._cursor.peek(
+                    1,
+                ),
+            )
+            == "PROGRAM"
         )
 
     def _at_next_verb(
@@ -885,6 +922,7 @@ class CobolParser:
         while (
             not self._cursor.at_end()
             and not self._at_any_division_header()
+            and not self._at_end_program_marker()
         ):
             if self._at_procedure_section_header():
                 sections.append(
@@ -1386,19 +1424,34 @@ class CobolParser:
             current_word = _word(
                 current,
             )
+            # "PERFORM identifier TIMES" is a bounded inline loop where
+            # the identifier is a data-name holding the repeat count —
+            # not an out-of-line paragraph target, even though it is
+            # otherwise indistinguishable from one at this position.
+            followed_by_times = (
+                _word(
+                    self._cursor.peek(
+                        1,
+                    ),
+                )
+                == "TIMES"
+            )
             looks_like_target = (
-                current.kind is TokenKind.IDENTIFIER
-                or (
-                    current.kind is TokenKind.RESERVED_WORD
-                    and current_word not in STATEMENT_VERBS
-                    and current_word not in _STRUCTURAL_TERMINATORS
-                    and current_word
-                    not in (
-                        "UNTIL",
-                        "VARYING",
-                        "TIMES",
-                        "WITH",
-                        "TEST",
+                not followed_by_times
+                and (
+                    current.kind is TokenKind.IDENTIFIER
+                    or (
+                        current.kind is TokenKind.RESERVED_WORD
+                        and current_word not in STATEMENT_VERBS
+                        and current_word not in _STRUCTURAL_TERMINATORS
+                        and current_word
+                        not in (
+                            "UNTIL",
+                            "VARYING",
+                            "TIMES",
+                            "WITH",
+                            "TEST",
+                        )
                     )
                 )
             )
