@@ -621,6 +621,7 @@
     <Compile Include="src\opencobol2\git\tags.py" />
     <Compile Include="src\opencobol2\git\__init__.py" />
     <Compile Include="src\opencobol2\project\models.py" />
+    <Compile Include="src\opencobol2\project\process.py" />
     <Compile Include="src\opencobol2\project\service.py" />
     <Compile Include="src\opencobol2\project\storage.py" />
     <Compile Include="src\opencobol2\project\__init__.py" />
@@ -630,6 +631,7 @@
     <Compile Include="src\opencobol2\services\compilers.py" />
     <Compile Include="src\opencobol2\services\compiler_runtimes.py" />
     <Compile Include="src\opencobol2\services\git.py" />
+    <Compile Include="src\opencobol2\services\project.py" />
     <Compile Include="src\opencobol2\services\toolchains.py" />
     <Compile Include="src\opencobol2\services\tool_windows.py" />
     <Compile Include="src\opencobol2\services\__init__.py" />
@@ -707,8 +709,10 @@
     <Compile Include="src\opencobol2\__init__.py" />
     <Compile Include="tests\unit\test_local_compiler_process.py" />
     <Compile Include="tests\unit\test_project_model.py" />
+    <Compile Include="tests\unit\test_project_process.py" />
     <Compile Include="tests\unit\test_project_service.py" />
     <Compile Include="tests\unit\test_project_storage.py" />
+    <Compile Include="tests\unit\test_project_task_runner.py" />
     <Compile Include="tests\unit\test_settings_model.py" />
     <Compile Include="tests\unit\test_settings_storage.py" />
     <Compile Include="tests\unit\test_settings_service.py" />

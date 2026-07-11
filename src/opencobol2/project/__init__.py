@@ -7,8 +7,13 @@ from opencobol2.project.models import (
     Project,
     ProjectProperties,
     ProjectTask,
+    TaskExecutionStatus,
+    TaskRunResult,
     VirtualFolder,
     create_project,
+)
+from opencobol2.project.process import (
+    invoke_task_process,
 )
 from opencobol2.project.service import (
     LaunchConfigurationNotFoundError,
@@ -39,8 +44,11 @@ __all__ = [
     "ProjectStorage",
     "ProjectTask",
     "ProjectTaskNotFoundError",
+    "TaskExecutionStatus",
+    "TaskRunResult",
     "UnsupportedProjectVersionError",
     "VirtualFolder",
     "VirtualFolderNotFoundError",
     "create_project",
+    "invoke_task_process",
 ]

@@ -4,11 +4,164 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from uuid import UUID, uuid4
 
 
 CURRENT_PROJECT_SCHEMA_VERSION = 1
+
+
+class TaskExecutionStatus(StrEnum):
+    """Outcome of invoking one project task or launch configuration."""
+
+    COMPLETED = "completed"
+    TIMED_OUT = "timed-out"
+    FAILED_TO_START = "failed-to-start"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskRunResult:
+    """Captured result from running one task or launch configuration."""
+
+    run_id: UUID
+    command: tuple[str, ...]
+    status: TaskExecutionStatus
+    return_code: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    elapsed_seconds: float = 0.0
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize and validate captured task run state."""
+
+        if not isinstance(
+            self.run_id,
+            UUID,
+        ):
+            raise TypeError(
+                "Task run ID must be a UUID."
+            )
+
+        command = tuple(
+            str(argument)
+            for argument in self.command
+        )
+
+        if not command:
+            raise ValueError(
+                "Task run command must not be empty."
+            )
+
+        if not isinstance(
+            self.status,
+            TaskExecutionStatus,
+        ):
+            raise TypeError(
+                "Task run status must be TaskExecutionStatus."
+            )
+
+        if (
+            self.return_code is not None
+            and (
+                not isinstance(
+                    self.return_code,
+                    int,
+                )
+                or isinstance(
+                    self.return_code,
+                    bool,
+                )
+            )
+        ):
+            raise TypeError(
+                "Task run return code must be an integer or None."
+            )
+
+        if not isinstance(
+            self.stdout,
+            str,
+        ):
+            raise TypeError(
+                "Task run stdout must be a string."
+            )
+
+        if not isinstance(
+            self.stderr,
+            str,
+        ):
+            raise TypeError(
+                "Task run stderr must be a string."
+            )
+
+        if (
+            not isinstance(
+                self.elapsed_seconds,
+                (
+                    int,
+                    float,
+                ),
+            )
+            or isinstance(
+                self.elapsed_seconds,
+                bool,
+            )
+        ):
+            raise TypeError(
+                "Task run elapsed seconds must be numeric."
+            )
+
+        if self.elapsed_seconds < 0:
+            raise ValueError(
+                "Task run elapsed seconds must not be negative."
+            )
+
+        if (
+            self.error_message is not None
+            and not isinstance(
+                self.error_message,
+                str,
+            )
+        ):
+            raise TypeError(
+                "Task run error message must be a string or None."
+            )
+
+        object.__setattr__(
+            self,
+            "command",
+            command,
+        )
+        object.__setattr__(
+            self,
+            "elapsed_seconds",
+            float(
+                self.elapsed_seconds,
+            ),
+        )
+
+    @property
+    def completed(
+        self,
+    ) -> bool:
+        """Return whether the task process completed."""
+
+        return (
+            self.status
+            is TaskExecutionStatus.COMPLETED
+        )
+
+    @property
+    def succeeded(
+        self,
+    ) -> bool:
+        """Return whether the task completed with return code zero."""
+
+        return (
+            self.completed
+            and self.return_code == 0
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
