@@ -537,6 +537,77 @@ def test_condition_name_used_in_if_resolves_via_88_level() -> None:
     assert result.diagnostics == ()
 
 
+# --- cross-reference index ------------------------------------------------
+
+
+def test_find_data_references_collects_every_resolved_usage() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           MOVE 0 TO WS-COUNTER\n"
+            "           DISPLAY WS-COUNTER\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    positions = result.find_data_references(
+        "ws-counter",
+    )
+
+    assert len(positions) == 2
+
+
+def test_find_data_references_excludes_undefined_names() -> None:
+    result = _analyze(
+        _data_procedure_source(
+            "           MOVE 0 TO WS-BOGUS\n"
+            "           STOP RUN.\n",
+        ),
+    )
+
+    assert result.find_data_references(
+        "ws-bogus",
+    ) == ()
+
+
+def test_find_procedure_references_collects_perform_usages() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           PERFORM SUB-PARA\n"
+        "           PERFORM SUB-PARA\n"
+        "           STOP RUN.\n"
+        "       SUB-PARA.\n"
+        "           DISPLAY 'HI'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert len(
+        result.find_procedure_references(
+            "SUB-PARA",
+        ),
+    ) == 2
+
+
+def test_find_procedure_references_excludes_undefined_names() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           PERFORM MISSING-PARA\n"
+        "           STOP RUN.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.find_procedure_references(
+        "MISSING-PARA",
+    ) == ()
+
+
 # --- real-world legacy files -------------------------------------------------
 
 

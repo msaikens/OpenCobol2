@@ -40,7 +40,9 @@ from opencobol2.language.parser import (
     parse_cobol_tokens,
 )
 from opencobol2.language.semantic import (
+    DataNameReference,
     DataSymbol,
+    ProcedureNameReference,
     ProcedureSymbol,
     ProcedureSymbolKind,
     SemanticAnalysisResult,
@@ -63,6 +65,7 @@ __all__ = [
     "DataDescriptionClause",
     "DataDivisionNode",
     "DataItemNode",
+    "DataNameReference",
     "DataSectionNode",
     "DataSymbol",
     "DisplayStatement",
@@ -81,6 +84,7 @@ __all__ = [
     "ParseResult",
     "PerformStatement",
     "ProcedureDivisionNode",
+    "ProcedureNameReference",
     "ProcedureSectionNode",
     "ProcedureSymbol",
     "ProcedureSymbolKind",

@@ -111,12 +111,30 @@ class SymbolTable:
         return None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DataNameReference:
+    """One resolved usage of a data name (or condition/renames name)."""
+
+    name: str
+    position: SourcePosition
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProcedureNameReference:
+    """One resolved usage of a paragraph or section name."""
+
+    name: str
+    position: SourcePosition
+
+
 @dataclass(slots=True)
 class SemanticAnalysisResult:
-    """The symbol table and diagnostics produced by semantic analysis."""
+    """The symbol table, diagnostics, and cross-references from analysis."""
 
     symbol_table: SymbolTable
     diagnostics: tuple[ParseDiagnostic, ...] = ()
+    data_references: tuple[DataNameReference, ...] = ()
+    procedure_references: tuple[ProcedureNameReference, ...] = ()
 
     @property
     def has_errors(
@@ -128,6 +146,43 @@ class SemanticAnalysisResult:
             diagnostic.severity is DiagnosticSeverity.ERROR
             for diagnostic in self.diagnostics
         )
+
+    def find_data_references(
+        self,
+        name: str,
+    ) -> tuple[SourcePosition, ...]:
+        """Return every usage location resolved for one data name."""
+
+        normalized = name.upper()
+
+        return tuple(
+            reference.position
+            for reference in self.data_references
+            if reference.name.upper() == normalized
+        )
+
+    def find_procedure_references(
+        self,
+        name: str,
+    ) -> tuple[SourcePosition, ...]:
+        """Return every usage location resolved for one procedure name."""
+
+        normalized = name.upper()
+
+        return tuple(
+            reference.position
+            for reference in self.procedure_references
+            if reference.name.upper() == normalized
+        )
+
+
+@dataclass(slots=True)
+class _AnalysisContext:
+    """Mutable accumulator threaded through one analysis pass."""
+
+    diagnostics: list[ParseDiagnostic]
+    data_references: list[DataNameReference]
+    procedure_references: list[ProcedureNameReference]
 
 
 def analyze_compilation_unit(
@@ -143,7 +198,11 @@ def analyze_compilation_unit(
             "Compilation unit must be CompilationUnitNode."
         )
 
-    diagnostics: list[ParseDiagnostic] = []
+    context = _AnalysisContext(
+        diagnostics=[],
+        data_references=[],
+        procedure_references=[],
+    )
 
     data_symbols = (
         _build_data_symbols(
@@ -155,7 +214,7 @@ def analyze_compilation_unit(
     procedure_symbols = (
         _build_procedure_symbols(
             unit.procedure,
-            diagnostics,
+            context.diagnostics,
         )
         if unit.procedure is not None
         else ()
@@ -169,13 +228,19 @@ def analyze_compilation_unit(
         _resolve_references(
             unit.procedure,
             symbol_table,
-            diagnostics,
+            context,
         )
 
     return SemanticAnalysisResult(
         symbol_table=symbol_table,
         diagnostics=tuple(
-            diagnostics,
+            context.diagnostics,
+        ),
+        data_references=tuple(
+            context.data_references,
+        ),
+        procedure_references=tuple(
+            context.procedure_references,
         ),
     )
 
@@ -346,7 +411,7 @@ def _build_procedure_symbols(
 def _resolve_references(
     procedure: ProcedureDivisionNode,
     symbol_table: SymbolTable,
-    diagnostics: list[ParseDiagnostic],
+    context: _AnalysisContext,
 ) -> None:
     """Resolve MOVE targets and PERFORM targets against the symbol table."""
 
@@ -354,7 +419,7 @@ def _resolve_references(
         _resolve_statements(
             paragraph.statements,
             symbol_table,
-            diagnostics,
+            context,
         )
 
     for section in procedure.sections:
@@ -362,14 +427,14 @@ def _resolve_references(
             _resolve_statements(
                 paragraph.statements,
                 symbol_table,
-                diagnostics,
+                context,
             )
 
 
 def _resolve_statements(
     statements: tuple[object, ...],
     symbol_table: SymbolTable,
-    diagnostics: list[ParseDiagnostic],
+    context: _AnalysisContext,
 ) -> None:
     """Recursively resolve references within a statement list."""
 
@@ -382,12 +447,12 @@ def _resolve_statements(
                 statement.target_names,
                 statement.span.start,
                 symbol_table,
-                diagnostics,
+                context,
             )
             _resolve_identifier_tokens(
                 statement.source_tokens,
                 symbol_table,
-                diagnostics,
+                context,
             )
         elif isinstance(
             statement,
@@ -396,7 +461,7 @@ def _resolve_statements(
             _resolve_identifier_tokens(
                 statement.operand_tokens,
                 symbol_table,
-                diagnostics,
+                context,
             )
         elif isinstance(
             statement,
@@ -406,23 +471,23 @@ def _resolve_statements(
                 statement.target_name,
                 statement.span.start,
                 symbol_table,
-                diagnostics,
+                context,
             )
             _resolve_procedure_name(
                 statement.through_name,
                 statement.span.start,
                 symbol_table,
-                diagnostics,
+                context,
             )
             _resolve_identifier_tokens(
                 statement.modifier_tokens,
                 symbol_table,
-                diagnostics,
+                context,
             )
             _resolve_statements(
                 statement.body,
                 symbol_table,
-                diagnostics,
+                context,
             )
         elif isinstance(
             statement,
@@ -431,17 +496,17 @@ def _resolve_statements(
             _resolve_identifier_tokens(
                 statement.condition_tokens,
                 symbol_table,
-                diagnostics,
+                context,
             )
             _resolve_statements(
                 statement.then_statements,
                 symbol_table,
-                diagnostics,
+                context,
             )
             _resolve_statements(
                 statement.else_statements,
                 symbol_table,
-                diagnostics,
+                context,
             )
         elif isinstance(
             statement,
@@ -450,19 +515,19 @@ def _resolve_statements(
             _resolve_identifier_tokens(
                 statement.subject_tokens,
                 symbol_table,
-                diagnostics,
+                context,
             )
 
             for branch in statement.branches:
                 _resolve_identifier_tokens(
                     branch.condition_tokens,
                     symbol_table,
-                    diagnostics,
+                    context,
                 )
                 _resolve_statements(
                     branch.statements,
                     symbol_table,
-                    diagnostics,
+                    context,
                 )
         elif isinstance(
             statement,
@@ -473,7 +538,7 @@ def _resolve_statements(
             _resolve_identifier_tokens(
                 statement.tokens,
                 symbol_table,
-                diagnostics,
+                context,
             )
 
 
@@ -481,7 +546,7 @@ def _resolve_data_names(
     names: tuple[str, ...],
     position: SourcePosition,
     symbol_table: SymbolTable,
-    diagnostics: list[ParseDiagnostic],
+    context: _AnalysisContext,
 ) -> None:
     """Resolve a list of data name references, reporting problems."""
 
@@ -491,31 +556,39 @@ def _resolve_data_names(
         )
 
         if not matches:
-            diagnostics.append(
+            context.diagnostics.append(
                 ParseDiagnostic(
                     severity=DiagnosticSeverity.ERROR,
                     message=f"Undefined data name: {name}",
                     position=position,
                 ),
             )
-        elif len(
-            matches,
-        ) > 1:
-            diagnostics.append(
-                ParseDiagnostic(
-                    severity=DiagnosticSeverity.WARNING,
-                    message=(
-                        f"Ambiguous reference to data name: {name}"
-                    ),
+        else:
+            context.data_references.append(
+                DataNameReference(
+                    name=name,
                     position=position,
                 ),
             )
+
+            if len(
+                matches,
+            ) > 1:
+                context.diagnostics.append(
+                    ParseDiagnostic(
+                        severity=DiagnosticSeverity.WARNING,
+                        message=(
+                            f"Ambiguous reference to data name: {name}"
+                        ),
+                        position=position,
+                    ),
+                )
 
 
 def _resolve_identifier_tokens(
     tokens: tuple[Token, ...],
     symbol_table: SymbolTable,
-    diagnostics: list[ParseDiagnostic],
+    context: _AnalysisContext,
 ) -> None:
     """Best-effort resolve IDENTIFIER tokens in a raw token list.
 
@@ -536,7 +609,7 @@ def _resolve_identifier_tokens(
         )
 
         if not matches:
-            diagnostics.append(
+            context.diagnostics.append(
                 ParseDiagnostic(
                     severity=DiagnosticSeverity.WARNING,
                     message=(
@@ -545,26 +618,34 @@ def _resolve_identifier_tokens(
                     position=token.span.start,
                 ),
             )
-        elif len(
-            matches,
-        ) > 1:
-            diagnostics.append(
-                ParseDiagnostic(
-                    severity=DiagnosticSeverity.WARNING,
-                    message=(
-                        "Ambiguous reference to data name: "
-                        f"{token.text}"
-                    ),
+        else:
+            context.data_references.append(
+                DataNameReference(
+                    name=token.text,
                     position=token.span.start,
                 ),
             )
+
+            if len(
+                matches,
+            ) > 1:
+                context.diagnostics.append(
+                    ParseDiagnostic(
+                        severity=DiagnosticSeverity.WARNING,
+                        message=(
+                            "Ambiguous reference to data name: "
+                            f"{token.text}"
+                        ),
+                        position=token.span.start,
+                    ),
+                )
 
 
 def _resolve_procedure_name(
     name: str | None,
     position: SourcePosition,
     symbol_table: SymbolTable,
-    diagnostics: list[ParseDiagnostic],
+    context: _AnalysisContext,
 ) -> None:
     """Resolve one PERFORM target/through name, reporting problems."""
 
@@ -574,13 +655,20 @@ def _resolve_procedure_name(
     if symbol_table.find_procedure_symbol(
         name,
     ) is None:
-        diagnostics.append(
+        context.diagnostics.append(
             ParseDiagnostic(
                 severity=DiagnosticSeverity.ERROR,
                 message=(
                     "Undefined paragraph or section: "
                     f"{name}"
                 ),
+                position=position,
+            ),
+        )
+    else:
+        context.procedure_references.append(
+            ProcedureNameReference(
+                name=name,
                 position=position,
             ),
         )
