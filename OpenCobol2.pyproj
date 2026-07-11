@@ -624,6 +624,8 @@
     <Compile Include="src\opencobol2\language\diagnostics.py" />
     <Compile Include="src\opencobol2\language\keywords.py" />
     <Compile Include="src\opencobol2\language\lexer.py" />
+    <Compile Include="src\opencobol2\language\parser.py" />
+    <Compile Include="src\opencobol2\language\semantic.py" />
     <Compile Include="src\opencobol2\language\tokens.py" />
     <Compile Include="src\opencobol2\language\__init__.py" />
     <Compile Include="src\opencobol2\project\models.py" />
@@ -661,6 +663,7 @@
     <Compile Include="tests\unit\test_builtin_tool_windows.py" />
     <Compile Include="tests\unit\test_cobol_lexer.py" />
     <Compile Include="tests\unit\test_cobol_parser.py" />
+    <Compile Include="tests\unit\test_cobol_semantic.py" />
     <Compile Include="tests\unit\test_command_contributions.py" />
     <Compile Include="tests\unit\test_command_contribution_registry.py" />
     <Compile Include="tests\unit\test_command_models.py" />

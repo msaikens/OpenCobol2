@@ -178,14 +178,15 @@ OpenCobol2 has a persisted project model that stays independent of any specific 
 
 Project persistence uses the same schema-versioned, atomic-replacement JSON storage pattern as application settings. The Project Explorer tree widget itself is not built yet; it depends on the future GUI shell.
 
-### COBOL language services (lexer and parser)
+### COBOL language services (lexer, parser, semantic analysis)
 
 OpenCobol2 has begun in-house COBOL language services, independent of the GnuCOBOL compiler process:
 
 * A COBOL lexer supporting both fixed and free source format, with fixed-format sequence area/indicator column/Area A/B handling, continuation of alphanumeric literals across source lines, whole-line and inline (`*>`) comments, a curated reserved-word table, and diagnostics for unterminated literals, malformed continuations, and unrecognized characters.
 * A recursive-descent parser building a real AST for program identity, data description entries (including FILE SECTION `FD`/`SD` entries), and procedure division structure (paragraphs, sections). It gives full structure to IF/ELSE/END-IF, PERFORM (out-of-line, inline, `VARYING`/`UNTIL`/`TIMES`), and EVALUATE/WHEN, including COBOL's implicit period-based scope termination (a lone `.` can close every enclosing IF/PERFORM/EVALUATE at once). Every other statement verb (ADD, CALL, STRING, and so on) is captured as a generic statement (verb plus raw tokens) rather than being deeply modeled yet; a verb's nested-statement clauses (`ON SIZE ERROR`, `AT END`, `ON OVERFLOW`) are a known, documented gap. The environment division is recognized but parsed opaquely.
+* A first semantic analysis pass: a symbol table for data items (respecting level-number nesting, including 66 RENAMES, 77 standalone items, and 88 condition names) and for procedure division paragraphs/sections (flagging duplicate names), plus reference resolution for MOVE targets and PERFORM targets (undefined-name and ambiguous-name diagnostics). Broader reference resolution (MOVE source expressions, IF/EVALUATE conditions, unmodeled-verb operands) awaits deeper per-verb grammar.
 
-Both are tested against synthetic COBOL source and against the real `.cbl` files preserved under `legacy/opencobolide/tests/testfiles/`. Semantic analysis and higher-level language services (outline, hover, navigation, completion) are not yet implemented.
+All three are tested against synthetic COBOL source and against the real `.cbl` files preserved under `legacy/opencobolide/tests/testfiles/`. Higher-level language services (outline, hover, go-to-definition, completion) are not yet implemented.
 
 ## Planned architecture milestones
 
@@ -216,20 +217,19 @@ Help
 * Docked tool window widgets (Project Explorer, Git, Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, Extensions) backed by the existing tool window registry.
 * A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set).
 
-### COBOL semantic analysis and deeper language services
+### Deeper COBOL language services
 
-With the lexer and parser in place, the next COBOL language milestones are:
+With a lexer, parser, and first semantic pass in place, the next COBOL language milestones are:
 
 * Deeper per-verb statement grammar (ADD/SUBTRACT/MULTIPLY/DIVIDE/COMPUTE operand structure, STRING/UNSTRING, nested `ON SIZE ERROR`/`AT END`/`ON OVERFLOW` clauses) and structural parsing of the environment division (SELECT/ASSIGN, SOURCE-COMPUTER, and so on).
-* Semantic analysis and symbol tables.
+* Broader reference resolution (MOVE source expressions, IF/EVALUATE conditions) once that deeper grammar exists.
 * Cross references, outline, hover, go-to-definition, find references, rename.
-* Diagnostics beyond lexical/parse errors, quick fixes.
 * Configurable syntax highlighting driven by the token stream.
 * Fixed-format column and coding-area guides (sequence area, indicator column, Area A/B, reference margin visualization) in the editor.
 * Automatic indentation and division/section/paragraph/data-group/structured-statement folding.
 * Code completion, snippets, signature help, documentation lookup.
 
-These language services will be testable independently from the Qt editor widget, following the same pattern as the lexer and parser.
+These language services will be testable independently from the Qt editor widget, following the same pattern as the lexer, parser, and semantic analysis.
 
 ### GitHub integration
 
@@ -347,7 +347,7 @@ Integration tests that require a real GnuCOBOL installation skip cleanly when no
 
 OpenCobol2 is currently focused on architecture and foundation work.
 
-Compiler, document, settings, command/menu/tool-window, source-control (Git), project-model, and COBOL language-service (lexer and parser) boundaries are now implemented and extensively unit tested, Qt-independent from the start. The GUI shell that will actually render all of this — menu bar, toolbar, editor widget, docked panels — has not been built yet, nor has COBOL semantic analysis, the plugin system, debugger, or remote/mainframe resource layer.
+Compiler, document, settings, command/menu/tool-window, source-control (Git), project-model, and COBOL language-service (lexer, parser, first semantic pass) boundaries are now implemented and extensively unit tested, Qt-independent from the start. The GUI shell that will actually render all of this — menu bar, toolbar, editor widget, docked panels — has not been built yet, nor has deeper COBOL semantic analysis, the plugin system, debugger, or remote/mainframe resource layer.
 
 This build-the-core-first order is intended to prevent the successor application from becoming a thin modern shell around decade-old implementation patterns.
 

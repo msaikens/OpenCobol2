@@ -1,0 +1,479 @@
+"""Semantic analysis over a parsed COBOL compilation unit.
+
+Builds a symbol table for data items (respecting level-number nesting,
+including 66 RENAMES, 77 standalone items, and 88 condition names) and
+for procedure division paragraphs/sections, then resolves the name
+references a `GenericStatement`-free statement can express unambiguously
+today: MOVE targets and PERFORM targets. Everything else (unmodeled
+verbs, MOVE source expressions, IF/EVALUATE condition tokens) is not
+resolved yet — those require deeper per-verb grammar than the parser
+currently builds.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+
+from opencobol2.compiler.diagnostics import (
+    DiagnosticSeverity,
+)
+from opencobol2.language.ast_nodes import (
+    CompilationUnitNode,
+    DataItemNode,
+    MoveStatement,
+    PerformStatement,
+    ProcedureDivisionNode,
+)
+from opencobol2.language.diagnostics import (
+    ParseDiagnostic,
+)
+from opencobol2.language.tokens import (
+    SourcePosition,
+    SourceSpan,
+)
+
+
+class ProcedureSymbolKind(StrEnum):
+    """Distinguishes a procedure division section from a paragraph."""
+
+    SECTION = "section"
+    PARAGRAPH = "paragraph"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DataSymbol:
+    """One named data item, condition name, or renames entry."""
+
+    name: str
+    level_number: int
+    item: DataItemNode
+    parent_name: str | None
+    is_condition_name: bool
+    is_renames: bool
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProcedureSymbol:
+    """One named paragraph or section in the procedure division."""
+
+    name: str
+    kind: ProcedureSymbolKind
+    span: SourceSpan
+
+
+@dataclass(slots=True)
+class SymbolTable:
+    """Data and procedure division symbols for one compilation unit."""
+
+    data_symbols: tuple[DataSymbol, ...]
+    procedure_symbols: tuple[ProcedureSymbol, ...]
+
+    def find_data_symbols(
+        self,
+        name: str,
+    ) -> tuple[DataSymbol, ...]:
+        """Return every data symbol matching a name, case-insensitively."""
+
+        normalized = name.upper()
+
+        return tuple(
+            symbol
+            for symbol in self.data_symbols
+            if symbol.name.upper() == normalized
+        )
+
+    def find_procedure_symbol(
+        self,
+        name: str,
+    ) -> ProcedureSymbol | None:
+        """Return the first procedure symbol matching a name, if any."""
+
+        normalized = name.upper()
+
+        for symbol in self.procedure_symbols:
+            if symbol.name.upper() == normalized:
+                return symbol
+
+        return None
+
+
+@dataclass(slots=True)
+class SemanticAnalysisResult:
+    """The symbol table and diagnostics produced by semantic analysis."""
+
+    symbol_table: SymbolTable
+    diagnostics: tuple[ParseDiagnostic, ...] = ()
+
+    @property
+    def has_errors(
+        self,
+    ) -> bool:
+        """Return whether any diagnostic is an error."""
+
+        return any(
+            diagnostic.severity is DiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+
+def analyze_compilation_unit(
+    unit: CompilationUnitNode,
+) -> SemanticAnalysisResult:
+    """Build a symbol table and resolve name references for one unit."""
+
+    if not isinstance(
+        unit,
+        CompilationUnitNode,
+    ):
+        raise TypeError(
+            "Compilation unit must be CompilationUnitNode."
+        )
+
+    diagnostics: list[ParseDiagnostic] = []
+
+    data_symbols = (
+        _build_data_symbols(
+            unit,
+        )
+        if unit.data is not None
+        else ()
+    )
+    procedure_symbols = (
+        _build_procedure_symbols(
+            unit.procedure,
+            diagnostics,
+        )
+        if unit.procedure is not None
+        else ()
+    )
+    symbol_table = SymbolTable(
+        data_symbols=data_symbols,
+        procedure_symbols=procedure_symbols,
+    )
+
+    if unit.procedure is not None:
+        _resolve_references(
+            unit.procedure,
+            symbol_table,
+            diagnostics,
+        )
+
+    return SemanticAnalysisResult(
+        symbol_table=symbol_table,
+        diagnostics=tuple(
+            diagnostics,
+        ),
+    )
+
+
+def _build_data_symbols(
+    unit: CompilationUnitNode,
+) -> tuple[DataSymbol, ...]:
+    """Build the data item symbol table, respecting level-number nesting."""
+
+    symbols: list[DataSymbol] = []
+
+    for section in unit.data.sections:
+        stack: list[tuple[int, str | None]] = []
+        last_non_condition_name: str | None = None
+
+        for item in section.items:
+            level = item.level_number
+
+            if level == 88:
+                if item.name is not None:
+                    symbols.append(
+                        DataSymbol(
+                            name=item.name,
+                            level_number=level,
+                            item=item,
+                            parent_name=last_non_condition_name,
+                            is_condition_name=True,
+                            is_renames=False,
+                        ),
+                    )
+
+                continue
+
+            if level == 66:
+                parent_name = (
+                    stack[-1][1]
+                    if stack
+                    else None
+                )
+
+                if item.name is not None:
+                    symbols.append(
+                        DataSymbol(
+                            name=item.name,
+                            level_number=level,
+                            item=item,
+                            parent_name=parent_name,
+                            is_condition_name=False,
+                            is_renames=True,
+                        ),
+                    )
+                    last_non_condition_name = item.name
+
+                continue
+
+            if level == 77:
+                stack = []
+                parent_name = None
+            else:
+                while (
+                    stack
+                    and stack[-1][0] >= level
+                ):
+                    stack.pop()
+
+                parent_name = (
+                    stack[-1][1]
+                    if stack
+                    else None
+                )
+
+            if item.name is not None:
+                symbols.append(
+                    DataSymbol(
+                        name=item.name,
+                        level_number=level,
+                        item=item,
+                        parent_name=parent_name,
+                        is_condition_name=False,
+                        is_renames=False,
+                    ),
+                )
+                last_non_condition_name = item.name
+            else:
+                last_non_condition_name = None
+
+            if level != 77:
+                stack.append(
+                    (
+                        level,
+                        item.name,
+                    ),
+                )
+
+    return tuple(
+        symbols,
+    )
+
+
+def _build_procedure_symbols(
+    procedure: ProcedureDivisionNode,
+    diagnostics: list[ParseDiagnostic],
+) -> tuple[ProcedureSymbol, ...]:
+    """Build the paragraph/section symbol table, flagging duplicate names."""
+
+    symbols: list[ProcedureSymbol] = []
+    seen_names: set[str] = set()
+
+    def _add(
+        name: str | None,
+        kind: ProcedureSymbolKind,
+        span: object,
+    ) -> None:
+        if name is None:
+            return
+
+        normalized = name.upper()
+
+        if normalized in seen_names:
+            diagnostics.append(
+                ParseDiagnostic(
+                    severity=DiagnosticSeverity.ERROR,
+                    message=(
+                        f"Duplicate procedure division name: {name}"
+                    ),
+                    position=span.start,
+                ),
+            )
+        else:
+            seen_names.add(
+                normalized,
+            )
+
+        symbols.append(
+            ProcedureSymbol(
+                name=name,
+                kind=kind,
+                span=span,
+            ),
+        )
+
+    for paragraph in procedure.paragraphs:
+        _add(
+            paragraph.name,
+            ProcedureSymbolKind.PARAGRAPH,
+            paragraph.span,
+        )
+
+    for section in procedure.sections:
+        _add(
+            section.name,
+            ProcedureSymbolKind.SECTION,
+            section.span,
+        )
+
+        for paragraph in section.paragraphs:
+            _add(
+                paragraph.name,
+                ProcedureSymbolKind.PARAGRAPH,
+                paragraph.span,
+            )
+
+    return tuple(
+        symbols,
+    )
+
+
+def _resolve_references(
+    procedure: ProcedureDivisionNode,
+    symbol_table: SymbolTable,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    """Resolve MOVE targets and PERFORM targets against the symbol table."""
+
+    for paragraph in procedure.paragraphs:
+        _resolve_statements(
+            paragraph.statements,
+            symbol_table,
+            diagnostics,
+        )
+
+    for section in procedure.sections:
+        for paragraph in section.paragraphs:
+            _resolve_statements(
+                paragraph.statements,
+                symbol_table,
+                diagnostics,
+            )
+
+
+def _resolve_statements(
+    statements: tuple[object, ...],
+    symbol_table: SymbolTable,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    """Recursively resolve references within a statement list."""
+
+    for statement in statements:
+        if isinstance(
+            statement,
+            MoveStatement,
+        ):
+            _resolve_data_names(
+                statement.target_names,
+                statement.span.start,
+                symbol_table,
+                diagnostics,
+            )
+        elif isinstance(
+            statement,
+            PerformStatement,
+        ):
+            _resolve_procedure_name(
+                statement.target_name,
+                statement.span.start,
+                symbol_table,
+                diagnostics,
+            )
+            _resolve_procedure_name(
+                statement.through_name,
+                statement.span.start,
+                symbol_table,
+                diagnostics,
+            )
+            _resolve_statements(
+                statement.body,
+                symbol_table,
+                diagnostics,
+            )
+        elif hasattr(
+            statement,
+            "then_statements",
+        ):
+            _resolve_statements(
+                statement.then_statements,
+                symbol_table,
+                diagnostics,
+            )
+            _resolve_statements(
+                statement.else_statements,
+                symbol_table,
+                diagnostics,
+            )
+        elif hasattr(
+            statement,
+            "branches",
+        ):
+            for branch in statement.branches:
+                _resolve_statements(
+                    branch.statements,
+                    symbol_table,
+                    diagnostics,
+                )
+
+
+def _resolve_data_names(
+    names: tuple[str, ...],
+    position: SourcePosition,
+    symbol_table: SymbolTable,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    """Resolve a list of data name references, reporting problems."""
+
+    for name in names:
+        matches = symbol_table.find_data_symbols(
+            name,
+        )
+
+        if not matches:
+            diagnostics.append(
+                ParseDiagnostic(
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"Undefined data name: {name}",
+                    position=position,
+                ),
+            )
+        elif len(
+            matches,
+        ) > 1:
+            diagnostics.append(
+                ParseDiagnostic(
+                    severity=DiagnosticSeverity.WARNING,
+                    message=(
+                        f"Ambiguous reference to data name: {name}"
+                    ),
+                    position=position,
+                ),
+            )
+
+
+def _resolve_procedure_name(
+    name: str | None,
+    position: SourcePosition,
+    symbol_table: SymbolTable,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    """Resolve one PERFORM target/through name, reporting problems."""
+
+    if name is None:
+        return
+
+    if symbol_table.find_procedure_symbol(
+        name,
+    ) is None:
+        diagnostics.append(
+            ParseDiagnostic(
+                severity=DiagnosticSeverity.ERROR,
+                message=(
+                    "Undefined paragraph or section: "
+                    f"{name}"
+                ),
+                position=position,
+            ),
+        )
