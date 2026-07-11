@@ -20,7 +20,9 @@ from opencobol2.settings.models import (
     DEFAULT_GNUCOBOL_PROFILE_ID,
     EditorSettings,
     ExternalToolSettings,
+    ThemeSettings,
 )
+from opencobol2.theming import DEFAULT_THEME_ID
 
 
 def test_application_settings_have_typed_defaults() -> None:
@@ -54,6 +56,14 @@ def test_application_settings_have_typed_defaults() -> None:
     assert (
         settings.cobol.guides.show_sequence_area
         is True
+    )
+    assert isinstance(
+        settings.theme,
+        ThemeSettings,
+    )
+    assert (
+        settings.theme.active_theme_id
+        == DEFAULT_THEME_ID
     )
 
 
@@ -300,4 +310,38 @@ def test_cobol_guide_settings_validate_booleans() -> None:
     ):
         CobolGuideSettings(
             show_area_a="yes",  # type: ignore[arg-type]
+        )
+
+
+def test_theme_settings_default_to_builtin_dark_theme() -> None:
+    settings = ThemeSettings()
+
+    assert settings.active_theme_id == DEFAULT_THEME_ID
+
+
+def test_theme_settings_normalize_active_theme_id() -> None:
+    settings = ThemeSettings(
+        active_theme_id="  light  ",
+    )
+
+    assert settings.active_theme_id == "light"
+
+
+def test_theme_settings_reject_empty_active_theme_id() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Active theme ID must not be empty",
+    ):
+        ThemeSettings(
+            active_theme_id="   ",
+        )
+
+
+def test_theme_settings_reject_non_string_active_theme_id() -> None:
+    with pytest.raises(
+        TypeError,
+        match="Active theme ID must be a string",
+    ):
+        ThemeSettings(
+            active_theme_id=1,  # type: ignore[arg-type]
         )

@@ -134,6 +134,7 @@ OpenCobol2 has a typed, schema-versioned application settings model with JSON pe
 * External tool paths (for example, an explicit Git executable path).
 * Editor font, spacing, and indentation preferences.
 * COBOL fixed-format guide visibility preferences.
+* A selected color theme (see "Color theme system" below).
 * Atomic, same-directory replacement saves.
 
 A settings service exposes the current settings snapshot and supports reload and partial updates.
@@ -146,6 +147,17 @@ OpenCobol2 has a Qt-independent command and contribution framework:
 * Menu, toolbar, and status bar contribution registries, including submenu and dynamic menu support.
 * A tool window registry describing docked panels (id, title, default dock area, default visibility, accessibility description) ahead of any concrete widget implementation.
 * Accessibility preference profiles.
+
+### Color theme system
+
+OpenCobol2 has a Qt-independent color theme model, independent of any rendered stylesheet:
+
+* `Theme`, `ThemeColors`, and `ThemeKind` models describing a named palette (background, foreground, accent, selection, editor, line-number, current-line, and diagnostic-severity colors) validated as `#RRGGBB` hex values.
+* A `ThemeRegistry` for registering and resolving themes by ID, plus a built-in catalog of four themes: Light, Dark, High Contrast Light, and High Contrast Dark.
+* A `ThemeService` that tracks the active theme against a registry and validates theme switches.
+* The active theme selection is persisted as part of application settings.
+
+No stylesheet or palette is actually applied to any widget yet; that depends on the future GUI shell.
 
 These registries are fully unit tested independently of Qt. No menu bar, toolbar, or docked panel is rendered yet; that depends on the future GUI shell.
 

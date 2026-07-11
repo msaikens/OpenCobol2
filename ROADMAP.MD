@@ -4,7 +4,7 @@ This is the phase-by-phase build roadmap for OpenCobol2. It is reconciled agains
 
 Status legend: ✅ done · 🔶 partially done · ⬜ not started · 🚫 intentionally out of scope
 
-## Phase 1 — Foundation (~90–95% complete)
+## Phase 1 — Foundation (core application complete; Git foundation complete except deliberately deferred items)
 
 Everything in "Core application" below is a Qt-independent registry/model. It is fully unit tested, but nothing is rendered by a GUI yet — that is Phase 7.
 
@@ -17,7 +17,7 @@ Everything in "Core application" below is a Qt-independent registry/model. It is
 * ✅ Toolbar contribution framework
 * ✅ Status bar contributions
 * ✅ Tool-window/docking registry (id, title, default dock area, default visibility — metadata only, no rendered docking widget yet)
-* ⬜ Theme system (no light/dark palette or stylesheet engine exists yet)
+* ✅ Theme system (`Theme`/`ThemeColors`/`ThemeKind` models, a `ThemeRegistry`, a built-in catalog of four themes — Light, Dark, High Contrast Light, High Contrast Dark — a `ThemeService` for active-theme selection, and a persisted `ThemeSettings` section; no rendered stylesheet/palette application yet, since that depends on the GUI shell)
 * ✅ Accent color normalization (per-tool-window accent override, scoped to the accessibility profile below)
 * ✅ Accessibility preference profiles (color-vision assistance strategies, tool-window accent overrides)
 * ✅ Settings framework

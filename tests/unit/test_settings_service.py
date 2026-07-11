@@ -18,6 +18,7 @@ from opencobol2.settings import (
     ExternalToolSettings,
     SettingsService,
     SettingsStorage,
+    ThemeSettings,
 )
 
 
@@ -265,6 +266,38 @@ def test_update_cobol_preserves_other_settings(
     )
     assert updated_settings.editor is original_editor
     assert updated_settings.cobol is cobol
+    assert storage.load() == updated_settings
+
+
+def test_update_theme_preserves_other_settings(
+    tmp_path: Path,
+) -> None:
+    storage = SettingsStorage(
+        tmp_path / "settings.json",
+    )
+    service = SettingsService(
+        storage,
+    )
+
+    original_compilers = service.current.compilers
+    original_editor = service.current.editor
+    original_cobol = service.current.cobol
+
+    theme = ThemeSettings(
+        active_theme_id="light",
+    )
+
+    updated_settings = service.update_theme(
+        theme,
+    )
+
+    assert (
+        updated_settings.compilers
+        is original_compilers
+    )
+    assert updated_settings.editor is original_editor
+    assert updated_settings.cobol is original_cobol
+    assert updated_settings.theme is theme
     assert storage.load() == updated_settings
 
 

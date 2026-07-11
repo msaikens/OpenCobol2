@@ -9,6 +9,7 @@ from opencobol2.settings.models import (
     DEFAULT_GNUCOBOL_PROFILE_ID,
     EditorSettings,
     ExternalToolSettings,
+    ThemeSettings,
 )
 from opencobol2.settings.service import (
     SettingsService,
@@ -34,5 +35,6 @@ __all__ = [
     "SettingsFormatError",
     "SettingsService",
     "SettingsStorage",
+    "ThemeSettings",
     "UnsupportedSettingsVersionError",
 ]

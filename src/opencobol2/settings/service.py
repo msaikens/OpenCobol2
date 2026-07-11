@@ -10,6 +10,7 @@ from opencobol2.settings.models import (
     CompilerSettings,
     EditorSettings,
     ExternalToolSettings,
+    ThemeSettings,
 )
 from opencobol2.settings.storage import (
     SettingsStorage,
@@ -161,6 +162,28 @@ class SettingsService:
         settings = replace(
             self._current,
             cobol=cobol,
+        )
+
+        return self.apply(
+            settings,
+        )
+
+    def update_theme(
+        self,
+        theme: ThemeSettings,
+    ) -> ApplicationSettings:
+        """Persist replacement theme settings."""
+        if not isinstance(
+            theme,
+            ThemeSettings,
+        ):
+            raise TypeError(
+                "Theme settings must be ThemeSettings."
+            )
+
+        settings = replace(
+            self._current,
+            theme=theme,
         )
 
         return self.apply(

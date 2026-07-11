@@ -640,6 +640,7 @@
     <Compile Include="src\opencobol2\services\compiler_runtimes.py" />
     <Compile Include="src\opencobol2\services\git.py" />
     <Compile Include="src\opencobol2\services\project.py" />
+    <Compile Include="src\opencobol2\services\theming.py" />
     <Compile Include="src\opencobol2\services\toolchains.py" />
     <Compile Include="src\opencobol2\services\tool_windows.py" />
     <Compile Include="src\opencobol2\services\__init__.py" />
@@ -647,6 +648,10 @@
     <Compile Include="src\opencobol2\settings\service.py" />
     <Compile Include="src\opencobol2\settings\storage.py" />
     <Compile Include="src\opencobol2\settings\__init__.py" />
+    <Compile Include="src\opencobol2\theming\builtins.py" />
+    <Compile Include="src\opencobol2\theming\models.py" />
+    <Compile Include="src\opencobol2\theming\registry.py" />
+    <Compile Include="src\opencobol2\theming\__init__.py" />
     <Compile Include="src\opencobol2\tool_windows\builtins.py" />
     <Compile Include="src\opencobol2\tool_windows\models.py" />
     <Compile Include="src\opencobol2\tool_windows\registry.py" />
@@ -727,6 +732,10 @@
     <Compile Include="tests\unit\test_settings_model.py" />
     <Compile Include="tests\unit\test_settings_storage.py" />
     <Compile Include="tests\unit\test_settings_service.py" />
+    <Compile Include="tests\unit\test_theme_service.py" />
+    <Compile Include="tests\unit\test_theming_builtins.py" />
+    <Compile Include="tests\unit\test_theming_models.py" />
+    <Compile Include="tests\unit\test_theming_registry.py" />
     <Compile Include="tests\unit\test_tool_window_models.py" />
     <Compile Include="tests\unit\test_tool_window_registry.py" />
     <Compile Include="tests\unit\test_tool_window_service.py" />
@@ -915,6 +924,10 @@
     <Content Include="src\opencobol2\language\__pycache__\lexer.cpython-314.pyc" />
     <Content Include="src\opencobol2\language\__pycache__\tokens.cpython-314.pyc" />
     <Content Include="src\opencobol2\language\__pycache__\__init__.cpython-314.pyc" />
+    <Content Include="src\opencobol2\theming\__pycache__\builtins.cpython-314.pyc" />
+    <Content Include="src\opencobol2\theming\__pycache__\models.cpython-314.pyc" />
+    <Content Include="src\opencobol2\theming\__pycache__\registry.cpython-314.pyc" />
+    <Content Include="src\opencobol2\theming\__pycache__\__init__.cpython-314.pyc" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="docs\" />
@@ -1027,6 +1040,8 @@
     <Folder Include="src\opencobol2\language\" />
     <Folder Include="src\opencobol2\language\__pycache__\" />
     <Folder Include="src\opencobol2\project\" />
+    <Folder Include="src\opencobol2\theming\" />
+    <Folder Include="src\opencobol2\theming\__pycache__\" />
     <Folder Include="src\opencobol2\tool_windows\" />
     <Folder Include="src\opencobol2\services\" />
     <Folder Include="src\opencobol2\settings\" />

@@ -20,6 +20,7 @@ from opencobol2.settings import (
     ExternalToolSettings,
     SettingsFormatError,
     SettingsStorage,
+    ThemeSettings,
     UnsupportedSettingsVersionError,
 )
 
@@ -99,6 +100,9 @@ def test_settings_round_trip_preserves_custom_configuration(
                 shade_areas=False,
             ),
         ),
+        theme=ThemeSettings(
+            active_theme_id="light",
+        ),
     )
 
     saved_path = storage.save(
@@ -138,6 +142,10 @@ def test_settings_round_trip_preserves_custom_configuration(
         .cobol
         .default_source_format
         is CobolSourceFormat.FREE
+    )
+    assert (
+        loaded_settings.theme.active_theme_id
+        == "light"
     )
 
 
@@ -342,6 +350,7 @@ def test_saved_json_uses_compiler_and_external_tool_groups(
 
     assert "compilers" in raw_settings
     assert "external_tools" in raw_settings
+    assert "theme" in raw_settings
     assert "toolchains" not in raw_settings
 
 
@@ -375,6 +384,7 @@ def test_partial_settings_file_uses_current_defaults(
         == ExternalToolSettings()
     )
     assert settings.cobol == CobolSettings()
+    assert settings.theme == ThemeSettings()
 
 
 def test_compiler_profile_uuid_round_trip(

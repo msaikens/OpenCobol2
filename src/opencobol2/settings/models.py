@@ -11,6 +11,7 @@ from opencobol2.compiler.providers import (
     CompilerProfile,
     GNUCOBOL_PROVIDER_ID,
 )
+from opencobol2.theming import DEFAULT_THEME_ID
 
 
 CURRENT_SETTINGS_SCHEMA_VERSION = 1
@@ -273,6 +274,24 @@ class CobolSettings:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ThemeSettings:
+    """Selected color-theme preference."""
+
+    active_theme_id: str = DEFAULT_THEME_ID
+
+    def __post_init__(self) -> None:
+        """Validate and normalize the selected theme ID."""
+        object.__setattr__(
+            self,
+            "active_theme_id",
+            _require_non_empty_string(
+                self.active_theme_id,
+                "Active theme ID",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ApplicationSettings:
     """Complete persisted OpenCobol2 settings state."""
 
@@ -288,6 +307,9 @@ class ApplicationSettings:
     )
     cobol: CobolSettings = field(
         default_factory=CobolSettings,
+    )
+    theme: ThemeSettings = field(
+        default_factory=ThemeSettings,
     )
 
     def __post_init__(self) -> None:
@@ -344,6 +366,14 @@ class ApplicationSettings:
                 "COBOL settings must be CobolSettings."
             )
 
+        if not isinstance(
+            self.theme,
+            ThemeSettings,
+        ):
+            raise TypeError(
+                "Theme settings must be ThemeSettings."
+            )
+
 
 def _normalize_optional_path(
     path: Path | str | None,
@@ -394,3 +424,26 @@ def _require_boolean(
         raise TypeError(
             f"{name} must be a boolean."
         )
+
+
+def _require_non_empty_string(
+    value: str,
+    name: str,
+) -> str:
+    """Require and normalize one non-empty string."""
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            f"{name} must be a string."
+        )
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise ValueError(
+            f"{name} must not be empty."
+        )
+
+    return normalized_value

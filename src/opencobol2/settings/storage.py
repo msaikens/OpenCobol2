@@ -25,6 +25,7 @@ from opencobol2.settings.models import (
     CURRENT_SETTINGS_SCHEMA_VERSION,
     EditorSettings,
     ExternalToolSettings,
+    ThemeSettings,
 )
 
 
@@ -212,6 +213,11 @@ def _encode_settings(
                 ),
             },
         },
+        "theme": {
+            "active_theme_id": (
+                settings.theme.active_theme_id
+            ),
+        },
     }
 
 
@@ -352,6 +358,12 @@ def _decode_settings(
                 {},
             )
         )
+        theme = _decode_theme_settings(
+            root.get(
+                "theme",
+                {},
+            )
+        )
 
         return ApplicationSettings(
             schema_version=schema_version,
@@ -359,6 +371,7 @@ def _decode_settings(
             external_tools=external_tools,
             editor=editor,
             cobol=cobol,
+            theme=theme,
         )
     except SettingsFormatError:
         raise
@@ -646,6 +659,27 @@ def _decode_cobol_guide_settings(
                 defaults.shade_areas,
             ),
             "COBOL area shading",
+        ),
+    )
+
+
+def _decode_theme_settings(
+    raw_settings: Any,
+) -> ThemeSettings:
+    """Decode selected color-theme settings."""
+    settings = _require_mapping(
+        raw_settings,
+        "Theme settings",
+    )
+    defaults = ThemeSettings()
+
+    return ThemeSettings(
+        active_theme_id=_require_string(
+            settings.get(
+                "active_theme_id",
+                defaults.active_theme_id,
+            ),
+            "Active theme ID",
         ),
     )
 
