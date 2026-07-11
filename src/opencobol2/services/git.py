@@ -916,7 +916,7 @@ def _validate_new_repository_destination(
 _CLONE_SOURCE_FAILURE_MARKERS: tuple[str, ...] = (
     "does not appear to be a git repository",
     "could not read from remote repository",
-    "repository not found",
+    "not found",
     "unable to access",
     "does not exist",
 )
