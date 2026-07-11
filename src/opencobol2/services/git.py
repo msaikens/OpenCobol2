@@ -7,19 +7,49 @@ import os
 from os import PathLike
 from pathlib import Path
 
+from opencobol2.git.branches import (
+    BRANCH_FOR_EACH_REF_FORMAT,
+    parse_git_branch_for_each_ref_output,
+)
+from opencobol2.git.history import (
+    LOG_FORMAT,
+    parse_git_log_output,
+)
 from opencobol2.git.models import (
+    GitBranch,
+    GitBranchCreateResult,
+    GitBranchDeleteResult,
+    GitBranchSwitchResult,
     GitCommandExecutionStatus,
     GitCommandResult,
+    GitCommitLogEntry,
     GitCommitResult,
+    GitFetchResult,
+    GitPullResult,
+    GitPushResult,
+    GitRemote,
+    GitRemoteAddResult,
+    GitRemoteRemoveResult,
+    GitRemoteRenameResult,
     GitRepositoryCloneResult,
     GitRepositoryCreateResult,
     GitRepositoryStatus,
+    GitTag,
+    GitTagCreateResult,
+    GitTagDeleteResult,
 )
 from opencobol2.git.process import (
     invoke_git_process,
 )
+from opencobol2.git.remotes import (
+    parse_git_remote_v_output,
+)
 from opencobol2.git.status import (
     parse_git_status_porcelain_v2,
+)
+from opencobol2.git.tags import (
+    TAG_FOR_EACH_REF_FORMAT,
+    parse_git_tag_for_each_ref_output,
 )
 
 
@@ -89,6 +119,46 @@ class GitCloneDestinationNotEmptyError(FileExistsError):
 
 class GitCloneSourceError(RuntimeError):
     """Raised when a Git clone source is blank or cannot be read."""
+
+
+class GitRemoteNameError(ValueError):
+    """Raised when a Git remote name is invalid."""
+
+
+class GitRemoteUrlError(ValueError):
+    """Raised when a Git remote URL is invalid."""
+
+
+class GitRemoteNotFoundError(LookupError):
+    """Raised when a referenced Git remote is not configured."""
+
+
+class GitRemoteAlreadyExistsError(FileExistsError):
+    """Raised when a Git remote name is already configured."""
+
+
+class GitPullConflictError(RuntimeError):
+    """Raised when a Git pull results in merge conflicts."""
+
+
+class GitBranchNotFoundError(LookupError):
+    """Raised when a referenced Git branch does not exist."""
+
+
+class GitBranchAlreadyExistsError(FileExistsError):
+    """Raised when a Git branch name is already configured."""
+
+
+class GitCannotDeleteCurrentBranchError(RuntimeError):
+    """Raised when deletion of the currently checked-out branch is requested."""
+
+
+class GitTagNotFoundError(LookupError):
+    """Raised when a referenced Git tag does not exist."""
+
+
+class GitTagAlreadyExistsError(FileExistsError):
+    """Raised when a Git tag name is already configured."""
 
 
 class GitService:
@@ -596,6 +666,798 @@ class GitService:
             repository_status=status,
         )
 
+    def get_remotes(
+        self,
+        path: Path | str,
+    ) -> tuple[GitRemote, ...]:
+        """Return configured remotes for a Git worktree."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        return self._get_remotes(
+            repository_root,
+        )
+
+    def add_remote(
+        self,
+        path: Path | str,
+        name: str,
+        url: str,
+    ) -> GitRemoteAddResult:
+        """Add a new Git remote and return the refreshed remote list."""
+
+        normalized_name = _require_remote_name(
+            name,
+            "Git remote name",
+        )
+        normalized_url = _require_remote_url(
+            url,
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_remotes = self._get_remotes(
+            repository_root,
+        )
+
+        if any(
+            remote.name == normalized_name
+            for remote in current_remotes
+        ):
+            raise GitRemoteAlreadyExistsError(
+                f"Git remote already exists: {normalized_name}"
+            )
+
+        result = self._invoke(
+            arguments=(
+                "remote",
+                "add",
+                "--",
+                normalized_name,
+                normalized_url,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_remotes = self._get_remotes(
+            repository_root,
+        )
+        added_remote = _find_remote(
+            refreshed_remotes,
+            normalized_name,
+            fallback_result=result,
+        )
+
+        return GitRemoteAddResult(
+            remote=added_remote,
+            remotes=refreshed_remotes,
+        )
+
+    def remove_remote(
+        self,
+        path: Path | str,
+        name: str,
+    ) -> GitRemoteRemoveResult:
+        """Remove a Git remote and return the refreshed remote list."""
+
+        normalized_name = _require_remote_name(
+            name,
+            "Git remote name",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_remotes = self._get_remotes(
+            repository_root,
+        )
+
+        if not any(
+            remote.name == normalized_name
+            for remote in current_remotes
+        ):
+            raise GitRemoteNotFoundError(
+                f"Git remote does not exist: {normalized_name}"
+            )
+
+        result = self._invoke(
+            arguments=(
+                "remote",
+                "remove",
+                "--",
+                normalized_name,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_remotes = self._get_remotes(
+            repository_root,
+        )
+
+        return GitRemoteRemoveResult(
+            removed_name=normalized_name,
+            remotes=refreshed_remotes,
+        )
+
+    def rename_remote(
+        self,
+        path: Path | str,
+        name: str,
+        new_name: str,
+    ) -> GitRemoteRenameResult:
+        """Rename a Git remote and return the refreshed remote list."""
+
+        normalized_name = _require_remote_name(
+            name,
+            "Git remote name",
+        )
+        normalized_new_name = _require_remote_name(
+            new_name,
+            "Git remote new name",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_remotes = self._get_remotes(
+            repository_root,
+        )
+
+        if not any(
+            remote.name == normalized_name
+            for remote in current_remotes
+        ):
+            raise GitRemoteNotFoundError(
+                f"Git remote does not exist: {normalized_name}"
+            )
+
+        if (
+            normalized_new_name != normalized_name
+            and any(
+                remote.name == normalized_new_name
+                for remote in current_remotes
+            )
+        ):
+            raise GitRemoteAlreadyExistsError(
+                f"Git remote already exists: {normalized_new_name}"
+            )
+
+        result = self._invoke(
+            arguments=(
+                "remote",
+                "rename",
+                "--",
+                normalized_name,
+                normalized_new_name,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_remotes = self._get_remotes(
+            repository_root,
+        )
+        renamed_remote = _find_remote(
+            refreshed_remotes,
+            normalized_new_name,
+            fallback_result=result,
+        )
+
+        return GitRemoteRenameResult(
+            remote=renamed_remote,
+            previous_name=normalized_name,
+            remotes=refreshed_remotes,
+        )
+
+    def fetch(
+        self,
+        path: Path | str,
+        remote: str | None = None,
+    ) -> GitFetchResult:
+        """Fetch from a Git remote and return refreshed status."""
+
+        normalized_remote = _normalize_optional_ref_name(
+            remote,
+            "Git fetch remote name",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        arguments: tuple[str, ...] = (
+            "fetch",
+        )
+
+        if normalized_remote is not None:
+            arguments += (
+                "--",
+                normalized_remote,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitFetchResult(
+            remote=normalized_remote,
+            repository_status=status,
+        )
+
+    def pull(
+        self,
+        path: Path | str,
+        remote: str | None = None,
+        branch: str | None = None,
+    ) -> GitPullResult:
+        """Pull from a Git remote branch and return refreshed status."""
+
+        normalized_remote = _normalize_optional_ref_name(
+            remote,
+            "Git pull remote name",
+        )
+        normalized_branch = _normalize_optional_ref_name(
+            branch,
+            "Git pull branch name",
+        )
+
+        if (
+            normalized_branch is not None
+            and normalized_remote is None
+        ):
+            raise ValueError(
+                "Git pull branch requires an explicit remote."
+            )
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        arguments: tuple[str, ...] = (
+            "pull",
+        )
+
+        if normalized_remote is not None:
+            arguments += (
+                "--",
+                normalized_remote,
+            )
+
+            if normalized_branch is not None:
+                arguments += (
+                    normalized_branch,
+                )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_pull_result(
+            result,
+        )
+
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitPullResult(
+            remote=normalized_remote,
+            branch=normalized_branch,
+            repository_status=status,
+        )
+
+    def push(
+        self,
+        path: Path | str,
+        remote: str | None = None,
+        branch: str | None = None,
+    ) -> GitPushResult:
+        """Push to a Git remote branch and return refreshed status."""
+
+        normalized_remote = _normalize_optional_ref_name(
+            remote,
+            "Git push remote name",
+        )
+        normalized_branch = _normalize_optional_ref_name(
+            branch,
+            "Git push branch name",
+        )
+
+        if (
+            normalized_branch is not None
+            and normalized_remote is None
+        ):
+            raise ValueError(
+                "Git push branch requires an explicit remote."
+            )
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        arguments: tuple[str, ...] = (
+            "push",
+        )
+
+        if normalized_remote is not None:
+            arguments += (
+                "--",
+                normalized_remote,
+            )
+
+            if normalized_branch is not None:
+                arguments += (
+                    normalized_branch,
+                )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitPushResult(
+            remote=normalized_remote,
+            branch=normalized_branch,
+            repository_status=status,
+        )
+
+    def list_branches(
+        self,
+        path: Path | str,
+    ) -> tuple[GitBranch, ...]:
+        """Return local branches for a Git worktree."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        return self._get_branches(
+            repository_root,
+        )
+
+    def create_branch(
+        self,
+        path: Path | str,
+        name: str,
+        *,
+        start_point: str | None = None,
+    ) -> GitBranchCreateResult:
+        """Create a new local branch and return the refreshed list."""
+
+        normalized_name = _require_ref_name(
+            name,
+            "Git branch name",
+        )
+        normalized_start_point = _normalize_optional_ref_name(
+            start_point,
+            "Git branch start point",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_branches = self._get_branches(
+            repository_root,
+        )
+
+        if any(
+            branch.name == normalized_name
+            for branch in current_branches
+        ):
+            raise GitBranchAlreadyExistsError(
+                f"Git branch already exists: {normalized_name}"
+            )
+
+        arguments: tuple[str, ...] = (
+            "branch",
+            "--",
+            normalized_name,
+        )
+
+        if normalized_start_point is not None:
+            arguments += (
+                normalized_start_point,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_branches = self._get_branches(
+            repository_root,
+        )
+        created_branch = _find_branch(
+            refreshed_branches,
+            normalized_name,
+            fallback_result=result,
+        )
+
+        return GitBranchCreateResult(
+            branch=created_branch,
+            branches=refreshed_branches,
+        )
+
+    def delete_branch(
+        self,
+        path: Path | str,
+        name: str,
+        *,
+        force: bool = False,
+    ) -> GitBranchDeleteResult:
+        """Delete a local branch and return the refreshed list."""
+
+        normalized_name = _require_ref_name(
+            name,
+            "Git branch name",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_branches = self._get_branches(
+            repository_root,
+        )
+        matched_branch = next(
+            (
+                branch
+                for branch in current_branches
+                if branch.name == normalized_name
+            ),
+            None,
+        )
+
+        if matched_branch is None:
+            raise GitBranchNotFoundError(
+                f"Git branch does not exist: {normalized_name}"
+            )
+
+        if matched_branch.is_current:
+            raise GitCannotDeleteCurrentBranchError(
+                f"Git branch is currently checked out: {normalized_name}"
+            )
+
+        arguments: tuple[str, ...] = (
+            (
+                "branch",
+                "--delete",
+                "--force",
+            )
+            if force
+            else (
+                "branch",
+                "--delete",
+            )
+        )
+        arguments += (
+            "--",
+            normalized_name,
+        )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_branches = self._get_branches(
+            repository_root,
+        )
+
+        return GitBranchDeleteResult(
+            deleted_name=normalized_name,
+            branches=refreshed_branches,
+        )
+
+    def switch_branch(
+        self,
+        path: Path | str,
+        name: str,
+        *,
+        create: bool = False,
+    ) -> GitBranchSwitchResult:
+        """Switch the current branch and return refreshed state."""
+
+        normalized_name = _require_ref_name(
+            name,
+            "Git branch name",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_branches = self._get_branches(
+            repository_root,
+        )
+        branch_exists = any(
+            branch.name == normalized_name
+            for branch in current_branches
+        )
+
+        if create:
+            if branch_exists:
+                raise GitBranchAlreadyExistsError(
+                    f"Git branch already exists: {normalized_name}"
+                )
+
+            arguments = (
+                "switch",
+                "--create",
+                "--",
+                normalized_name,
+            )
+        else:
+            if not branch_exists:
+                raise GitBranchNotFoundError(
+                    f"Git branch does not exist: {normalized_name}"
+                )
+
+            arguments = (
+                "switch",
+                "--",
+                normalized_name,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_branches = self._get_branches(
+            repository_root,
+        )
+        switched_branch = _find_branch(
+            refreshed_branches,
+            normalized_name,
+            fallback_result=result,
+        )
+        refreshed_status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitBranchSwitchResult(
+            branch=switched_branch,
+            branches=refreshed_branches,
+            repository_status=refreshed_status,
+        )
+
+    def list_tags(
+        self,
+        path: Path | str,
+    ) -> tuple[GitTag, ...]:
+        """Return local tags for a Git worktree."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        return self._get_tags(
+            repository_root,
+        )
+
+    def create_tag(
+        self,
+        path: Path | str,
+        name: str,
+        *,
+        target: str | None = None,
+        message: str | None = None,
+    ) -> GitTagCreateResult:
+        """Create a new local tag and return the refreshed list."""
+
+        normalized_name = _require_ref_name(
+            name,
+            "Git tag name",
+        )
+        normalized_target = _normalize_optional_ref_name(
+            target,
+            "Git tag target",
+        )
+        normalized_message = _normalize_optional_ref_name(
+            message,
+            "Git tag message",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_tags = self._get_tags(
+            repository_root,
+        )
+
+        if any(
+            tag.name == normalized_name
+            for tag in current_tags
+        ):
+            raise GitTagAlreadyExistsError(
+                f"Git tag already exists: {normalized_name}"
+            )
+
+        arguments: tuple[str, ...] = (
+            "tag",
+        )
+
+        if normalized_message is not None:
+            arguments += (
+                "--annotate",
+                "--message",
+                normalized_message,
+            )
+
+        arguments += (
+            "--",
+            normalized_name,
+        )
+
+        if normalized_target is not None:
+            arguments += (
+                normalized_target,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_tags = self._get_tags(
+            repository_root,
+        )
+        created_tag = _find_tag(
+            refreshed_tags,
+            normalized_name,
+            fallback_result=result,
+        )
+
+        return GitTagCreateResult(
+            tag=created_tag,
+            tags=refreshed_tags,
+        )
+
+    def delete_tag(
+        self,
+        path: Path | str,
+        name: str,
+    ) -> GitTagDeleteResult:
+        """Delete a local tag and return the refreshed list."""
+
+        normalized_name = _require_ref_name(
+            name,
+            "Git tag name",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_tags = self._get_tags(
+            repository_root,
+        )
+
+        if not any(
+            tag.name == normalized_name
+            for tag in current_tags
+        ):
+            raise GitTagNotFoundError(
+                f"Git tag does not exist: {normalized_name}"
+            )
+
+        result = self._invoke(
+            arguments=(
+                "tag",
+                "--delete",
+                "--",
+                normalized_name,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_tags = self._get_tags(
+            repository_root,
+        )
+
+        return GitTagDeleteResult(
+            deleted_name=normalized_name,
+            tags=refreshed_tags,
+        )
+
+    def get_history(
+        self,
+        path: Path | str,
+        *,
+        ref: str | None = None,
+        max_count: int | None = None,
+    ) -> tuple[GitCommitLogEntry, ...]:
+        """Return commit history for a Git worktree."""
+
+        normalized_ref = _normalize_optional_ref_name(
+            ref,
+            "Git history ref",
+        )
+        normalized_max_count = _require_positive_optional_int(
+            max_count,
+            "Git history max count",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        if normalized_ref is None:
+            status = self._get_repository_status(
+                repository_root,
+            )
+
+            if status.head_oid is None:
+                return ()
+
+        arguments: tuple[str, ...] = (
+            "log",
+            f"--format={LOG_FORMAT}",
+        )
+
+        if normalized_max_count is not None:
+            arguments += (
+                f"--max-count={normalized_max_count}",
+            )
+
+        if normalized_ref is not None:
+            arguments += (
+                normalized_ref,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return parse_git_log_output(
+            result.stdout,
+        )
+
     def _get_repository_status(
         self,
         repository_root: Path,
@@ -659,6 +1521,74 @@ class GitService:
             )
 
         return commit_oid
+
+    def _get_remotes(
+        self,
+        repository_root: Path,
+    ) -> tuple[GitRemote, ...]:
+        """Read configured remotes for an already-discovered root."""
+
+        result = self._invoke(
+            arguments=(
+                "remote",
+                "-v",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return parse_git_remote_v_output(
+            result.stdout,
+        )
+
+    def _get_branches(
+        self,
+        repository_root: Path,
+    ) -> tuple[GitBranch, ...]:
+        """Read local branches for an already-discovered root."""
+
+        result = self._invoke(
+            arguments=(
+                "for-each-ref",
+                f"--format={BRANCH_FOR_EACH_REF_FORMAT}",
+                "refs/heads",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return parse_git_branch_for_each_ref_output(
+            result.stdout,
+        )
+
+    def _get_tags(
+        self,
+        repository_root: Path,
+    ) -> tuple[GitTag, ...]:
+        """Read local tags for an already-discovered root."""
+
+        result = self._invoke(
+            arguments=(
+                "for-each-ref",
+                f"--format={TAG_FOR_EACH_REF_FORMAT}",
+                "refs/tags",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return parse_git_tag_for_each_ref_output(
+            result.stdout,
+        )
 
     def _invoke(
         self,
@@ -962,6 +1892,261 @@ def _require_successful_clone_result(
 
     _require_successful_result(
         result,
+    )
+
+
+_PULL_CONFLICT_MARKERS: tuple[str, ...] = (
+    "conflict",
+    "automatic merge failed",
+)
+
+
+def _looks_like_pull_conflict(
+    result: GitCommandResult,
+) -> bool:
+    """Return whether a failed pull result looks conflict-related."""
+
+    combined_output = (
+        f"{result.stdout}\n{result.stderr}"
+    ).lower()
+
+    return any(
+        marker in combined_output
+        for marker in _PULL_CONFLICT_MARKERS
+    )
+
+
+def _require_successful_pull_result(
+    result: GitCommandResult,
+) -> None:
+    """Raise the appropriate service exception for pull failure."""
+
+    if (
+        result.status
+        is GitCommandExecutionStatus.COMPLETED
+        and not result.succeeded
+        and _looks_like_pull_conflict(
+            result,
+        )
+    ):
+        detail = (
+            result.stdout.strip()
+            or result.stderr.strip()
+            or "Git pull resulted in merge conflicts."
+        )
+
+        raise GitPullConflictError(
+            detail,
+        )
+
+    _require_successful_result(
+        result,
+    )
+
+
+def _require_positive_optional_int(
+    value: int | None,
+    name: str,
+) -> int | None:
+    """Validate an optional positive integer."""
+
+    if value is None:
+        return None
+
+    if (
+        not isinstance(
+            value,
+            int,
+        )
+        or isinstance(
+            value,
+            bool,
+        )
+    ):
+        raise TypeError(
+            f"{name} must be an integer or None."
+        )
+
+    if value <= 0:
+        raise ValueError(
+            f"{name} must be greater than zero."
+        )
+
+    return value
+
+
+def _require_ref_name(
+    value: str,
+    name: str,
+) -> str:
+    """Validate and normalize a required Git ref name."""
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            f"{name} must be a string."
+        )
+
+    if "\0" in value:
+        raise ValueError(
+            f"{name} must not contain NUL characters."
+        )
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise ValueError(
+            f"{name} must not be empty."
+        )
+
+    return normalized_value
+
+
+def _find_branch(
+    branches: tuple[GitBranch, ...],
+    name: str,
+    *,
+    fallback_result: GitCommandResult,
+) -> GitBranch:
+    """Find one branch by name after a successful Git operation."""
+
+    for branch in branches:
+        if branch.name == name:
+            return branch
+
+    raise GitCommandFailedError(
+        result=GitCommandResult(
+            command=fallback_result.command,
+            status=fallback_result.status,
+            return_code=fallback_result.return_code,
+            stdout=fallback_result.stdout,
+            stderr=fallback_result.stderr,
+            elapsed_seconds=fallback_result.elapsed_seconds,
+            error_message=(
+                f"Git did not report the expected branch: {name}"
+            ),
+        ),
+    )
+
+
+def _find_tag(
+    tags: tuple[GitTag, ...],
+    name: str,
+    *,
+    fallback_result: GitCommandResult,
+) -> GitTag:
+    """Find one tag by name after a successful Git operation."""
+
+    for tag in tags:
+        if tag.name == name:
+            return tag
+
+    raise GitCommandFailedError(
+        result=GitCommandResult(
+            command=fallback_result.command,
+            status=fallback_result.status,
+            return_code=fallback_result.return_code,
+            stdout=fallback_result.stdout,
+            stderr=fallback_result.stderr,
+            elapsed_seconds=fallback_result.elapsed_seconds,
+            error_message=(
+                f"Git did not report the expected tag: {name}"
+            ),
+        ),
+    )
+
+
+def _require_remote_name(
+    value: str,
+    name: str,
+) -> str:
+    """Validate and normalize a Git remote name."""
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            f"{name} must be a string."
+        )
+
+    if "\0" in value:
+        raise GitRemoteNameError(
+            f"{name} must not contain NUL characters."
+        )
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise GitRemoteNameError(
+            f"{name} must not be empty."
+        )
+
+    if any(
+        character.isspace()
+        for character in normalized_value
+    ):
+        raise GitRemoteNameError(
+            f"{name} must not contain whitespace."
+        )
+
+    return normalized_value
+
+
+def _require_remote_url(
+    value: str,
+) -> str:
+    """Validate and normalize a Git remote URL."""
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            "Git remote URL must be a string."
+        )
+
+    if "\0" in value:
+        raise GitRemoteUrlError(
+            "Git remote URL must not contain NUL characters."
+        )
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise GitRemoteUrlError(
+            "Git remote URL must not be empty."
+        )
+
+    return normalized_value
+
+
+def _find_remote(
+    remotes: tuple[GitRemote, ...],
+    name: str,
+    *,
+    fallback_result: GitCommandResult,
+) -> GitRemote:
+    """Find one remote by name after a successful Git operation."""
+
+    for remote in remotes:
+        if remote.name == name:
+            return remote
+
+    raise GitCommandFailedError(
+        result=GitCommandResult(
+            command=fallback_result.command,
+            status=fallback_result.status,
+            return_code=fallback_result.return_code,
+            stdout=fallback_result.stdout,
+            stderr=fallback_result.stderr,
+            elapsed_seconds=fallback_result.elapsed_seconds,
+            error_message=(
+                f"Git did not report the expected remote: {name}"
+            ),
+        ),
     )
 
 

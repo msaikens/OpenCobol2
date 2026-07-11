@@ -598,6 +598,857 @@ class GitRepositoryCloneResult:
         )
 
 
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRemote:
+    """One configured Git remote and its fetch/push URLs."""
+
+    name: str
+    fetch_url: str
+    push_url: str
+
+    def __post_init__(self) -> None:
+        """Normalize and validate remote configuration."""
+
+        name = _require_non_empty_string(
+            self.name,
+            "Git remote name",
+        )
+        fetch_url = _require_non_empty_string(
+            self.fetch_url,
+            "Git remote fetch URL",
+        )
+        push_url = _require_non_empty_string(
+            self.push_url,
+            "Git remote push URL",
+        )
+
+        object.__setattr__(
+            self,
+            "name",
+            name,
+        )
+        object.__setattr__(
+            self,
+            "fetch_url",
+            fetch_url,
+        )
+        object.__setattr__(
+            self,
+            "push_url",
+            push_url,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRemoteAddResult:
+    """Result of adding one new Git remote."""
+
+    remote: GitRemote
+    remotes: tuple[GitRemote, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate added remote state."""
+
+        if not isinstance(
+            self.remote,
+            GitRemote,
+        ):
+            raise TypeError(
+                "Git remote add result remote must be GitRemote."
+            )
+
+        remotes = _require_remote_tuple(
+            self.remotes,
+            "Git remote add result remotes",
+        )
+
+        if not any(
+            remote == self.remote
+            for remote in remotes
+        ):
+            raise ValueError(
+                "Git remote add result must appear in the refreshed "
+                "remote list."
+            )
+
+        object.__setattr__(
+            self,
+            "remotes",
+            remotes,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRemoteRemoveResult:
+    """Result of removing one Git remote."""
+
+    removed_name: str
+    remotes: tuple[GitRemote, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate removed remote state."""
+
+        removed_name = _require_non_empty_string(
+            self.removed_name,
+            "Git remote removed name",
+        )
+        remotes = _require_remote_tuple(
+            self.remotes,
+            "Git remote remove result remotes",
+        )
+
+        if any(
+            remote.name == removed_name
+            for remote in remotes
+        ):
+            raise ValueError(
+                "Git remote remove result must not include the "
+                "removed remote in the refreshed remote list."
+            )
+
+        object.__setattr__(
+            self,
+            "removed_name",
+            removed_name,
+        )
+        object.__setattr__(
+            self,
+            "remotes",
+            remotes,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRemoteRenameResult:
+    """Result of renaming one Git remote."""
+
+    remote: GitRemote
+    previous_name: str
+    remotes: tuple[GitRemote, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate renamed remote state."""
+
+        if not isinstance(
+            self.remote,
+            GitRemote,
+        ):
+            raise TypeError(
+                "Git remote rename result remote must be GitRemote."
+            )
+
+        previous_name = _require_non_empty_string(
+            self.previous_name,
+            "Git remote previous name",
+        )
+        remotes = _require_remote_tuple(
+            self.remotes,
+            "Git remote rename result remotes",
+        )
+
+        if not any(
+            remote == self.remote
+            for remote in remotes
+        ):
+            raise ValueError(
+                "Git remote rename result must appear in the "
+                "refreshed remote list."
+            )
+
+        if (
+            previous_name != self.remote.name
+            and any(
+                remote.name == previous_name
+                for remote in remotes
+            )
+        ):
+            raise ValueError(
+                "Git remote rename result must not include the "
+                "previous remote name in the refreshed remote list."
+            )
+
+        object.__setattr__(
+            self,
+            "previous_name",
+            previous_name,
+        )
+        object.__setattr__(
+            self,
+            "remotes",
+            remotes,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitFetchResult:
+    """Result of fetching from one Git remote."""
+
+    remote: str | None
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate fetched repository state."""
+
+        remote = _normalize_optional_string(
+            self.remote,
+            "Git fetch remote",
+        )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git fetch repository status must be "
+                "GitRepositoryStatus."
+            )
+
+        object.__setattr__(
+            self,
+            "remote",
+            remote,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitPullResult:
+    """Result of pulling from one Git remote branch."""
+
+    remote: str | None
+    branch: str | None
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate pulled repository state."""
+
+        remote = _normalize_optional_string(
+            self.remote,
+            "Git pull remote",
+        )
+        branch = _normalize_optional_string(
+            self.branch,
+            "Git pull branch",
+        )
+
+        if (
+            branch is not None
+            and remote is None
+        ):
+            raise ValueError(
+                "Git pull result branch requires a remote."
+            )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git pull repository status must be "
+                "GitRepositoryStatus."
+            )
+
+        object.__setattr__(
+            self,
+            "remote",
+            remote,
+        )
+        object.__setattr__(
+            self,
+            "branch",
+            branch,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitPushResult:
+    """Result of pushing to one Git remote branch."""
+
+    remote: str | None
+    branch: str | None
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate pushed repository state."""
+
+        remote = _normalize_optional_string(
+            self.remote,
+            "Git push remote",
+        )
+        branch = _normalize_optional_string(
+            self.branch,
+            "Git push branch",
+        )
+
+        if (
+            branch is not None
+            and remote is None
+        ):
+            raise ValueError(
+                "Git push result branch requires a remote."
+            )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git push repository status must be "
+                "GitRepositoryStatus."
+            )
+
+        object.__setattr__(
+            self,
+            "remote",
+            remote,
+        )
+        object.__setattr__(
+            self,
+            "branch",
+            branch,
+        )
+
+
+def _require_remote_tuple(
+    remotes: tuple[GitRemote, ...],
+    name: str,
+) -> tuple[GitRemote, ...]:
+    """Require a tuple of GitRemote instances."""
+
+    normalized_remotes = tuple(
+        remotes,
+    )
+
+    if not all(
+        isinstance(
+            remote,
+            GitRemote,
+        )
+        for remote in normalized_remotes
+    ):
+        raise TypeError(
+            f"{name} must contain GitRemote instances."
+        )
+
+    return normalized_remotes
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitBranch:
+    """One local Git branch reference."""
+
+    name: str
+    head_oid: str
+    is_current: bool
+    upstream: str | None
+
+    def __post_init__(self) -> None:
+        """Normalize and validate branch reference state."""
+
+        name = _require_non_empty_string(
+            self.name,
+            "Git branch name",
+        )
+        head_oid = _require_non_empty_string(
+            self.head_oid,
+            "Git branch HEAD OID",
+        )
+        upstream = _normalize_optional_string(
+            self.upstream,
+            "Git branch upstream",
+        )
+
+        if not isinstance(
+            self.is_current,
+            bool,
+        ):
+            raise TypeError(
+                "Git branch current flag must be a boolean."
+            )
+
+        object.__setattr__(
+            self,
+            "name",
+            name,
+        )
+        object.__setattr__(
+            self,
+            "head_oid",
+            head_oid,
+        )
+        object.__setattr__(
+            self,
+            "upstream",
+            upstream,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitBranchCreateResult:
+    """Result of creating one new local Git branch."""
+
+    branch: GitBranch
+    branches: tuple[GitBranch, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate created branch state."""
+
+        if not isinstance(
+            self.branch,
+            GitBranch,
+        ):
+            raise TypeError(
+                "Git branch create result branch must be GitBranch."
+            )
+
+        branches = _require_branch_tuple(
+            self.branches,
+            "Git branch create result branches",
+        )
+
+        if not any(
+            branch == self.branch
+            for branch in branches
+        ):
+            raise ValueError(
+                "Git branch create result must appear in the "
+                "refreshed branch list."
+            )
+
+        object.__setattr__(
+            self,
+            "branches",
+            branches,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitBranchDeleteResult:
+    """Result of deleting one local Git branch."""
+
+    deleted_name: str
+    branches: tuple[GitBranch, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate deleted branch state."""
+
+        deleted_name = _require_non_empty_string(
+            self.deleted_name,
+            "Git branch deleted name",
+        )
+        branches = _require_branch_tuple(
+            self.branches,
+            "Git branch delete result branches",
+        )
+
+        if any(
+            branch.name == deleted_name
+            for branch in branches
+        ):
+            raise ValueError(
+                "Git branch delete result must not include the "
+                "deleted branch in the refreshed branch list."
+            )
+
+        object.__setattr__(
+            self,
+            "deleted_name",
+            deleted_name,
+        )
+        object.__setattr__(
+            self,
+            "branches",
+            branches,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitBranchSwitchResult:
+    """Result of switching the current local Git branch."""
+
+    branch: GitBranch
+    branches: tuple[GitBranch, ...]
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate switched branch state."""
+
+        if not isinstance(
+            self.branch,
+            GitBranch,
+        ):
+            raise TypeError(
+                "Git branch switch result branch must be GitBranch."
+            )
+
+        branches = _require_branch_tuple(
+            self.branches,
+            "Git branch switch result branches",
+        )
+
+        if not any(
+            branch == self.branch
+            for branch in branches
+        ):
+            raise ValueError(
+                "Git branch switch result must appear in the "
+                "refreshed branch list."
+            )
+
+        if not self.branch.is_current:
+            raise ValueError(
+                "Git branch switch result branch must be the "
+                "current branch."
+            )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git branch switch repository status must be "
+                "GitRepositoryStatus."
+            )
+
+        if (
+            self.repository_status.branch_name
+            != self.branch.name
+        ):
+            raise ValueError(
+                "Git branch switch result must match the refreshed "
+                "repository status branch name."
+            )
+
+        if (
+            self.repository_status.head_oid
+            != self.branch.head_oid
+        ):
+            raise ValueError(
+                "Git branch switch result must match the refreshed "
+                "repository status HEAD OID."
+            )
+
+
+def _require_branch_tuple(
+    branches: tuple[GitBranch, ...],
+    name: str,
+) -> tuple[GitBranch, ...]:
+    """Require a tuple of GitBranch instances."""
+
+    normalized_branches = tuple(
+        branches,
+    )
+
+    if not all(
+        isinstance(
+            branch,
+            GitBranch,
+        )
+        for branch in normalized_branches
+    ):
+        raise TypeError(
+            f"{name} must contain GitBranch instances."
+        )
+
+    return normalized_branches
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitTag:
+    """One local Git tag reference."""
+
+    name: str
+    target_oid: str
+    annotated: bool
+
+    def __post_init__(self) -> None:
+        """Normalize and validate tag reference state."""
+
+        name = _require_non_empty_string(
+            self.name,
+            "Git tag name",
+        )
+        target_oid = _require_non_empty_string(
+            self.target_oid,
+            "Git tag target OID",
+        )
+
+        if not isinstance(
+            self.annotated,
+            bool,
+        ):
+            raise TypeError(
+                "Git tag annotated flag must be a boolean."
+            )
+
+        object.__setattr__(
+            self,
+            "name",
+            name,
+        )
+        object.__setattr__(
+            self,
+            "target_oid",
+            target_oid,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitTagCreateResult:
+    """Result of creating one new local Git tag."""
+
+    tag: GitTag
+    tags: tuple[GitTag, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate created tag state."""
+
+        if not isinstance(
+            self.tag,
+            GitTag,
+        ):
+            raise TypeError(
+                "Git tag create result tag must be GitTag."
+            )
+
+        tags = _require_tag_tuple(
+            self.tags,
+            "Git tag create result tags",
+        )
+
+        if not any(
+            tag == self.tag
+            for tag in tags
+        ):
+            raise ValueError(
+                "Git tag create result must appear in the refreshed "
+                "tag list."
+            )
+
+        object.__setattr__(
+            self,
+            "tags",
+            tags,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitTagDeleteResult:
+    """Result of deleting one local Git tag."""
+
+    deleted_name: str
+    tags: tuple[GitTag, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate deleted tag state."""
+
+        deleted_name = _require_non_empty_string(
+            self.deleted_name,
+            "Git tag deleted name",
+        )
+        tags = _require_tag_tuple(
+            self.tags,
+            "Git tag delete result tags",
+        )
+
+        if any(
+            tag.name == deleted_name
+            for tag in tags
+        ):
+            raise ValueError(
+                "Git tag delete result must not include the "
+                "deleted tag in the refreshed tag list."
+            )
+
+        object.__setattr__(
+            self,
+            "deleted_name",
+            deleted_name,
+        )
+        object.__setattr__(
+            self,
+            "tags",
+            tags,
+        )
+
+
+def _require_tag_tuple(
+    tags: tuple[GitTag, ...],
+    name: str,
+) -> tuple[GitTag, ...]:
+    """Require a tuple of GitTag instances."""
+
+    normalized_tags = tuple(
+        tags,
+    )
+
+    if not all(
+        isinstance(
+            tag,
+            GitTag,
+        )
+        for tag in normalized_tags
+    ):
+        raise TypeError(
+            f"{name} must contain GitTag instances."
+        )
+
+    return normalized_tags
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitCommitLogEntry:
+    """One entry in a Git commit history log."""
+
+    commit_oid: str
+    parent_oids: tuple[str, ...]
+    author_name: str
+    author_email: str
+    authored_at: str
+    committer_name: str
+    committer_email: str
+    committed_at: str
+    subject: str
+    body: str
+
+    def __post_init__(self) -> None:
+        """Normalize and validate commit log entry state."""
+
+        commit_oid = _require_non_empty_string(
+            self.commit_oid,
+            "Git commit log OID",
+        )
+
+        parent_oids = tuple(
+            self.parent_oids,
+        )
+
+        if not all(
+            isinstance(
+                parent_oid,
+                str,
+            )
+            and parent_oid.strip()
+            for parent_oid in parent_oids
+        ):
+            raise ValueError(
+                "Git commit log parent OIDs must be non-empty "
+                "strings."
+            )
+
+        for field_label, field_value in (
+            (
+                "author name",
+                self.author_name,
+            ),
+            (
+                "author email",
+                self.author_email,
+            ),
+            (
+                "authored date",
+                self.authored_at,
+            ),
+            (
+                "committer name",
+                self.committer_name,
+            ),
+            (
+                "committer email",
+                self.committer_email,
+            ),
+            (
+                "committed date",
+                self.committed_at,
+            ),
+            (
+                "subject",
+                self.subject,
+            ),
+            (
+                "body",
+                self.body,
+            ),
+        ):
+            if not isinstance(
+                field_value,
+                str,
+            ):
+                raise TypeError(
+                    f"Git commit log {field_label} must be a string."
+                )
+
+        object.__setattr__(
+            self,
+            "commit_oid",
+            commit_oid,
+        )
+        object.__setattr__(
+            self,
+            "parent_oids",
+            parent_oids,
+        )
+
+
 def _normalize_optional_string(
     value: str | None,
     name: str,
