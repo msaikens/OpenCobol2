@@ -20,6 +20,7 @@ from opencobol2.git.models import (
     GitBranchCreateResult,
     GitBranchDeleteResult,
     GitBranchSwitchResult,
+    GitCherryPickResult,
     GitCommandExecutionStatus,
     GitCommandResult,
     GitCommitLogEntry,
@@ -34,6 +35,11 @@ from opencobol2.git.models import (
     GitRepositoryCloneResult,
     GitRepositoryCreateResult,
     GitRepositoryStatus,
+    GitRevertResult,
+    GitStashApplyResult,
+    GitStashDropResult,
+    GitStashEntry,
+    GitStashPushResult,
     GitTag,
     GitTagCreateResult,
     GitTagDeleteResult,
@@ -43,6 +49,10 @@ from opencobol2.git.process import (
 )
 from opencobol2.git.remotes import (
     parse_git_remote_v_output,
+)
+from opencobol2.git.stash import (
+    STASH_LIST_FORMAT,
+    parse_git_stash_list_output,
 )
 from opencobol2.git.status import (
     parse_git_status_porcelain_v2,
@@ -159,6 +169,26 @@ class GitTagNotFoundError(LookupError):
 
 class GitTagAlreadyExistsError(FileExistsError):
     """Raised when a Git tag name is already configured."""
+
+
+class GitNothingToStashError(RuntimeError):
+    """Raised when a stash is requested without any changes to stash."""
+
+
+class GitStashNotFoundError(LookupError):
+    """Raised when a referenced stash entry does not exist."""
+
+
+class GitStashConflictError(RuntimeError):
+    """Raised when applying or popping a stash results in conflicts."""
+
+
+class GitRevertConflictError(RuntimeError):
+    """Raised when reverting a commit results in conflicts."""
+
+
+class GitCherryPickConflictError(RuntimeError):
+    """Raised when cherry-picking a commit results in conflicts."""
 
 
 class GitService:
@@ -952,8 +982,10 @@ class GitService:
             working_directory=repository_root,
         )
 
-        _require_successful_pull_result(
+        _require_successful_conflict_aware_result(
             result,
+            conflict_error_type=GitPullConflictError,
+            default_message="Git pull resulted in merge conflicts.",
         )
 
         status = self._get_repository_status(
@@ -1458,6 +1490,409 @@ class GitService:
             result.stdout,
         )
 
+    def list_stashes(
+        self,
+        path: Path | str,
+    ) -> tuple[GitStashEntry, ...]:
+        """Return stash entries for a Git worktree."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        return self._get_stashes(
+            repository_root,
+        )
+
+    def stash_changes(
+        self,
+        path: Path | str,
+        *,
+        message: str | None = None,
+        include_untracked: bool = False,
+    ) -> GitStashPushResult:
+        """Stash worktree changes and return the new stash entry."""
+
+        normalized_message = _normalize_optional_ref_name(
+            message,
+            "Git stash message",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        if status.clean:
+            raise GitNothingToStashError(
+                "Git repository has no changes to stash."
+            )
+
+        arguments: tuple[str, ...] = (
+            "stash",
+            "push",
+        )
+
+        if include_untracked:
+            arguments += (
+                "--include-untracked",
+            )
+
+        if normalized_message is not None:
+            arguments += (
+                "--message",
+                normalized_message,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        refreshed_stashes = self._get_stashes(
+            repository_root,
+        )
+
+        if not refreshed_stashes:
+            raise GitCommandFailedError(
+                result=GitCommandResult(
+                    command=result.command,
+                    status=result.status,
+                    return_code=result.return_code,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    elapsed_seconds=result.elapsed_seconds,
+                    error_message=(
+                        "Git did not report the expected new stash "
+                        "entry."
+                    ),
+                ),
+            )
+
+        refreshed_status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitStashPushResult(
+            entry=refreshed_stashes[0],
+            repository_status=refreshed_status,
+        )
+
+    def apply_stash(
+        self,
+        path: Path | str,
+        *,
+        index: int = 0,
+        pop: bool = False,
+    ) -> GitStashApplyResult:
+        """Apply or pop a stash entry and return refreshed status."""
+
+        normalized_index = _require_non_negative_int(
+            index,
+            "Git stash index",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_stashes = self._get_stashes(
+            repository_root,
+        )
+
+        if not any(
+            entry.index == normalized_index
+            for entry in current_stashes
+        ):
+            raise GitStashNotFoundError(
+                f"Git stash entry does not exist: stash@{{{normalized_index}}}"
+            )
+
+        result = self._invoke(
+            arguments=(
+                "stash",
+                "pop" if pop else "apply",
+                f"stash@{{{normalized_index}}}",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_conflict_aware_result(
+            result,
+            conflict_error_type=GitStashConflictError,
+            default_message="Git stash apply resulted in merge conflicts.",
+        )
+
+        refreshed_status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitStashApplyResult(
+            repository_status=refreshed_status,
+        )
+
+    def drop_stash(
+        self,
+        path: Path | str,
+        index: int = 0,
+    ) -> GitStashDropResult:
+        """Drop a stash entry and return the remaining entries."""
+
+        normalized_index = _require_non_negative_int(
+            index,
+            "Git stash index",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        current_stashes = self._get_stashes(
+            repository_root,
+        )
+
+        if not any(
+            entry.index == normalized_index
+            for entry in current_stashes
+        ):
+            raise GitStashNotFoundError(
+                f"Git stash entry does not exist: stash@{{{normalized_index}}}"
+            )
+
+        result = self._invoke(
+            arguments=(
+                "stash",
+                "drop",
+                f"stash@{{{normalized_index}}}",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        remaining = self._get_stashes(
+            repository_root,
+        )
+
+        return GitStashDropResult(
+            dropped_index=normalized_index,
+            remaining=remaining,
+        )
+
+    def reset(
+        self,
+        path: Path | str,
+        target: str = "HEAD",
+        *,
+        mode: str = "mixed",
+    ) -> GitRepositoryStatus:
+        """Reset the current branch to a target and return refreshed status."""
+
+        normalized_target = _require_ref_name(
+            target,
+            "Git reset target",
+        )
+
+        if mode not in (
+            "soft",
+            "mixed",
+            "hard",
+        ):
+            raise ValueError(
+                "Git reset mode must be 'soft', 'mixed', or 'hard'."
+            )
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        result = self._invoke(
+            arguments=(
+                "reset",
+                f"--{mode}",
+                normalized_target,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return self._get_repository_status(
+            repository_root,
+        )
+
+    def revert_commit(
+        self,
+        path: Path | str,
+        commit: str,
+        *,
+        no_commit: bool = False,
+    ) -> GitRevertResult:
+        """Revert a commit and return refreshed status."""
+
+        normalized_commit = _require_ref_name(
+            commit,
+            "Git revert commit",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        arguments: tuple[str, ...] = (
+            "revert",
+        )
+
+        if no_commit:
+            arguments += (
+                "--no-commit",
+            )
+
+        arguments += (
+            normalized_commit,
+        )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_conflict_aware_result(
+            result,
+            conflict_error_type=GitRevertConflictError,
+            default_message="Git revert resulted in merge conflicts.",
+        )
+
+        return GitRevertResult(
+            repository_status=self._get_repository_status(
+                repository_root,
+            ),
+        )
+
+    def cherry_pick_commit(
+        self,
+        path: Path | str,
+        commit: str,
+        *,
+        no_commit: bool = False,
+    ) -> GitCherryPickResult:
+        """Cherry-pick a commit and return refreshed status."""
+
+        normalized_commit = _require_ref_name(
+            commit,
+            "Git cherry-pick commit",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        arguments: tuple[str, ...] = (
+            "cherry-pick",
+        )
+
+        if no_commit:
+            arguments += (
+                "--no-commit",
+            )
+
+        arguments += (
+            normalized_commit,
+        )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_conflict_aware_result(
+            result,
+            conflict_error_type=GitCherryPickConflictError,
+            default_message="Git cherry-pick resulted in merge conflicts.",
+        )
+
+        return GitCherryPickResult(
+            repository_status=self._get_repository_status(
+                repository_root,
+            ),
+        )
+
+    def get_diff(
+        self,
+        path: Path | str,
+        *,
+        staged: bool = False,
+        repository_paths: Sequence[str | PathLike[str]] | None = None,
+    ) -> str:
+        """Return raw unified diff text for worktree or staged changes."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        arguments: tuple[str, ...] = (
+            "diff",
+        )
+
+        if staged:
+            arguments += (
+                "--cached",
+            )
+
+        if repository_paths is not None:
+            normalized_paths = _normalize_repository_paths(
+                repository_paths,
+            )
+            arguments += (
+                "--",
+                *normalized_paths,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return result.stdout
+
+    def get_commit_diff(
+        self,
+        path: Path | str,
+        commit: str,
+    ) -> str:
+        """Return raw unified diff text introduced by one commit."""
+
+        normalized_commit = _require_ref_name(
+            commit,
+            "Git commit",
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        result = self._invoke(
+            arguments=(
+                "show",
+                "--format=",
+                "--patch",
+                normalized_commit,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return result.stdout
+
     def _get_repository_status(
         self,
         repository_root: Path,
@@ -1587,6 +2022,29 @@ class GitService:
         )
 
         return parse_git_tag_for_each_ref_output(
+            result.stdout,
+        )
+
+    def _get_stashes(
+        self,
+        repository_root: Path,
+    ) -> tuple[GitStashEntry, ...]:
+        """Read stash entries for an already-discovered root."""
+
+        result = self._invoke(
+            arguments=(
+                "stash",
+                "list",
+                f"--format={STASH_LIST_FORMAT}",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return parse_git_stash_list_output(
             result.stdout,
         )
 
@@ -1895,16 +2353,18 @@ def _require_successful_clone_result(
     )
 
 
-_PULL_CONFLICT_MARKERS: tuple[str, ...] = (
+_MERGE_CONFLICT_MARKERS: tuple[str, ...] = (
     "conflict",
     "automatic merge failed",
+    "could not revert",
+    "could not apply",
 )
 
 
-def _looks_like_pull_conflict(
+def _looks_like_merge_conflict(
     result: GitCommandResult,
 ) -> bool:
-    """Return whether a failed pull result looks conflict-related."""
+    """Return whether a failed result looks conflict-related."""
 
     combined_output = (
         f"{result.stdout}\n{result.stderr}"
@@ -1912,36 +2372,67 @@ def _looks_like_pull_conflict(
 
     return any(
         marker in combined_output
-        for marker in _PULL_CONFLICT_MARKERS
+        for marker in _MERGE_CONFLICT_MARKERS
     )
 
 
-def _require_successful_pull_result(
+def _require_successful_conflict_aware_result(
     result: GitCommandResult,
+    *,
+    conflict_error_type: type[Exception],
+    default_message: str,
 ) -> None:
-    """Raise the appropriate service exception for pull failure."""
+    """Raise a conflict-specific error, else the usual Git failure error."""
 
     if (
         result.status
         is GitCommandExecutionStatus.COMPLETED
         and not result.succeeded
-        and _looks_like_pull_conflict(
+        and _looks_like_merge_conflict(
             result,
         )
     ):
         detail = (
             result.stdout.strip()
             or result.stderr.strip()
-            or "Git pull resulted in merge conflicts."
+            or default_message
         )
 
-        raise GitPullConflictError(
+        raise conflict_error_type(
             detail,
         )
 
     _require_successful_result(
         result,
     )
+
+
+def _require_non_negative_int(
+    value: int,
+    name: str,
+) -> int:
+    """Validate a required non-negative integer."""
+
+    if (
+        not isinstance(
+            value,
+            int,
+        )
+        or isinstance(
+            value,
+            bool,
+        )
+    ):
+        raise TypeError(
+            f"{name} must be an integer."
+        )
+
+    if value < 0:
+        raise ValueError(
+            f"{name} must not be negative."
+        )
+
+    return value
 
 
 def _require_positive_optional_int(

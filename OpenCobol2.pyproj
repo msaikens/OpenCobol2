@@ -616,6 +616,7 @@
     <Compile Include="src\opencobol2\git\models.py" />
     <Compile Include="src\opencobol2\git\process.py" />
     <Compile Include="src\opencobol2\git\remotes.py" />
+    <Compile Include="src\opencobol2\git\stash.py" />
     <Compile Include="src\opencobol2\git\status.py" />
     <Compile Include="src\opencobol2\git\tags.py" />
     <Compile Include="src\opencobol2\git\__init__.py" />
@@ -672,11 +673,14 @@
     <Compile Include="tests\unit\test_document_workspace.py" />
     <Compile Include="tests\unit\test_git_branches.py" />
     <Compile Include="tests\unit\test_git_commit.py" />
+    <Compile Include="tests\unit\test_git_diff.py" />
     <Compile Include="tests\unit\test_git_history.py" />
     <Compile Include="tests\unit\test_git_process.py" />
     <Compile Include="tests\unit\test_git_remotes.py" />
     <Compile Include="tests\unit\test_git_repository.py" />
+    <Compile Include="tests\unit\test_git_reset_revert_cherrypick.py" />
     <Compile Include="tests\unit\test_git_service.py" />
+    <Compile Include="tests\unit\test_git_stash.py" />
     <Compile Include="tests\unit\test_git_status.py" />
     <Compile Include="tests\unit\test_git_sync.py" />
     <Compile Include="tests\unit\test_git_tags.py" />

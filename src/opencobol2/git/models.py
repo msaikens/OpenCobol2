@@ -1449,6 +1449,188 @@ class GitCommitLogEntry:
         )
 
 
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitStashEntry:
+    """One entry in the local Git stash list."""
+
+    index: int
+    commit_oid: str
+    message: str
+
+    def __post_init__(self) -> None:
+        """Normalize and validate stash entry state."""
+
+        _require_non_negative_integer(
+            self.index,
+            "Git stash index",
+        )
+        commit_oid = _require_non_empty_string(
+            self.commit_oid,
+            "Git stash commit OID",
+        )
+
+        if not isinstance(
+            self.message,
+            str,
+        ):
+            raise TypeError(
+                "Git stash message must be a string."
+            )
+
+        object.__setattr__(
+            self,
+            "commit_oid",
+            commit_oid,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitStashPushResult:
+    """Result of creating one new stash entry."""
+
+    entry: GitStashEntry
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Validate created stash entry state."""
+
+        if not isinstance(
+            self.entry,
+            GitStashEntry,
+        ):
+            raise TypeError(
+                "Git stash push result entry must be GitStashEntry."
+            )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git stash push repository status must be "
+                "GitRepositoryStatus."
+            )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitStashApplyResult:
+    """Result of applying or popping one stash entry."""
+
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Validate applied stash repository state."""
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git stash apply repository status must be "
+                "GitRepositoryStatus."
+            )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitStashDropResult:
+    """Result of dropping one stash entry."""
+
+    dropped_index: int
+    remaining: tuple[GitStashEntry, ...]
+
+    def __post_init__(self) -> None:
+        """Normalize and validate dropped stash state."""
+
+        _require_non_negative_integer(
+            self.dropped_index,
+            "Git stash dropped index",
+        )
+
+        remaining = tuple(
+            self.remaining,
+        )
+
+        if not all(
+            isinstance(
+                entry,
+                GitStashEntry,
+            )
+            for entry in remaining
+        ):
+            raise TypeError(
+                "Git stash drop result remaining entries must "
+                "contain GitStashEntry instances."
+            )
+
+        object.__setattr__(
+            self,
+            "remaining",
+            remaining,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRevertResult:
+    """Result of reverting one commit."""
+
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Validate reverted repository state."""
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git revert repository status must be "
+                "GitRepositoryStatus."
+            )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitCherryPickResult:
+    """Result of cherry-picking one commit."""
+
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Validate cherry-picked repository state."""
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git cherry-pick repository status must be "
+                "GitRepositoryStatus."
+            )
+
+
 def _normalize_optional_string(
     value: str | None,
     name: str,

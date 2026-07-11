@@ -13,6 +13,7 @@ from opencobol2.git.models import (
     GitBranchSwitchResult,
     GitChange,
     GitChangeStatus,
+    GitCherryPickResult,
     GitCommandExecutionStatus,
     GitCommandResult,
     GitCommitLogEntry,
@@ -27,6 +28,11 @@ from opencobol2.git.models import (
     GitRepositoryCloneResult,
     GitRepositoryCreateResult,
     GitRepositoryStatus,
+    GitRevertResult,
+    GitStashApplyResult,
+    GitStashDropResult,
+    GitStashEntry,
+    GitStashPushResult,
     GitTag,
     GitTagCreateResult,
     GitTagDeleteResult,
@@ -36,6 +42,9 @@ from opencobol2.git.process import (
 )
 from opencobol2.git.remotes import (
     parse_git_remote_v_output,
+)
+from opencobol2.git.stash import (
+    parse_git_stash_list_output,
 )
 from opencobol2.git.status import (
     parse_git_status_porcelain_v2,
@@ -52,6 +61,7 @@ __all__ = [
     "GitBranchSwitchResult",
     "GitChange",
     "GitChangeStatus",
+    "GitCherryPickResult",
     "GitCommandExecutionStatus",
     "GitCommandResult",
     "GitCommitLogEntry",
@@ -66,6 +76,11 @@ __all__ = [
     "GitRepositoryCloneResult",
     "GitRepositoryCreateResult",
     "GitRepositoryStatus",
+    "GitRevertResult",
+    "GitStashApplyResult",
+    "GitStashDropResult",
+    "GitStashEntry",
+    "GitStashPushResult",
     "GitTag",
     "GitTagCreateResult",
     "GitTagDeleteResult",
@@ -73,6 +88,7 @@ __all__ = [
     "parse_git_branch_for_each_ref_output",
     "parse_git_log_output",
     "parse_git_remote_v_output",
+    "parse_git_stash_list_output",
     "parse_git_status_porcelain_v2",
     "parse_git_tag_for_each_ref_output",
 ]
