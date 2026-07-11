@@ -620,6 +620,11 @@
     <Compile Include="src\opencobol2\git\status.py" />
     <Compile Include="src\opencobol2\git\tags.py" />
     <Compile Include="src\opencobol2\git\__init__.py" />
+    <Compile Include="src\opencobol2\language\diagnostics.py" />
+    <Compile Include="src\opencobol2\language\keywords.py" />
+    <Compile Include="src\opencobol2\language\lexer.py" />
+    <Compile Include="src\opencobol2\language\tokens.py" />
+    <Compile Include="src\opencobol2\language\__init__.py" />
     <Compile Include="src\opencobol2\project\models.py" />
     <Compile Include="src\opencobol2\project\process.py" />
     <Compile Include="src\opencobol2\project\service.py" />
@@ -723,6 +728,8 @@
   <ItemGroup>
     <Content Include=".gitignore" />
     <Content Include=".gitmodules" />
+    <Content Include="AUTHORS AND CoC.MD" />
+    <Content Include="CONTRIBUTING.MD" />
     <Content Include="legacy\opencobolide\build-support\.gitignore" />
     <Content Include="legacy\opencobolide\build-support\.gitmodules" />
     <Content Include="legacy\opencobolide\build-support\AUTHORS.rst" />
@@ -876,12 +883,14 @@
     <Content Include="legacy\opencobolide\tests\__pycache__\__init__.cpython-314.pyc" />
     <Content Include="legacy\opencobolide\build-support\LICENSE" />
     <Content Include="legacy\opencobolide\build-support\MANIFEST.in" />
+    <Content Include="LICENSE" />
     <Content Include="OpenCobol2.slnx" />
     <Content Include="pyproject.toml" />
     <Content Include="legacy\opencobolide\build-support\pytest.legacy.ini" />
     <Content Include="legacy\opencobolide\build-support\pyuic.cfg" />
     <Content Include="legacy\opencobolide\build-support\README.rst" />
     <Content Include="legacy\opencobolide\build-support\requirements.legacy.txt" />
+    <Content Include="README.MD" />
     <Content Include="scripts\git-hooks\post-commit" />
     <Content Include="scripts\git-hooks\pre-commit" />
     <Content Include="scripts\git-hooks\readme.rst" />
@@ -895,6 +904,11 @@
     <Content Include="share\OpenCobolIDE.png" />
     <Content Include="share\silex-icon.icns" />
     <Content Include="legacy\opencobolide\build-support\stdeb.cfg" />
+    <Content Include="src\opencobol2\language\__pycache__\diagnostics.cpython-314.pyc" />
+    <Content Include="src\opencobol2\language\__pycache__\keywords.cpython-314.pyc" />
+    <Content Include="src\opencobol2\language\__pycache__\lexer.cpython-314.pyc" />
+    <Content Include="src\opencobol2\language\__pycache__\tokens.cpython-314.pyc" />
+    <Content Include="src\opencobol2\language\__pycache__\__init__.cpython-314.pyc" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="docs\" />
@@ -1004,6 +1018,8 @@
     <Folder Include="src\opencobol2\commands\" />
     <Folder Include="src\opencobol2\accessibility\" />
     <Folder Include="src\opencobol2\git\" />
+    <Folder Include="src\opencobol2\language\" />
+    <Folder Include="src\opencobol2\language\__pycache__\" />
     <Folder Include="src\opencobol2\project\" />
     <Folder Include="src\opencobol2\tool_windows\" />
     <Folder Include="src\opencobol2\services\" />
