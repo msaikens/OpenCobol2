@@ -11,6 +11,8 @@ from opencobol2.git.models import (
     GitCommandExecutionStatus,
     GitCommandResult,
     GitCommitResult,
+    GitRepositoryCloneResult,
+    GitRepositoryCreateResult,
     GitRepositoryStatus,
 )
 from opencobol2.git.process import (
@@ -75,6 +77,18 @@ class GitCommitMessageError(ValueError):
 
 class GitNothingToCommitError(RuntimeError):
     """Raised when a staged commit is requested without staged changes."""
+
+
+class GitRepositoryAlreadyExistsError(FileExistsError):
+    """Raised when a new repository destination already has content."""
+
+
+class GitCloneDestinationNotEmptyError(FileExistsError):
+    """Raised when a Git clone destination already has content."""
+
+
+class GitCloneSourceError(RuntimeError):
+    """Raised when a Git clone source is blank or cannot be read."""
 
 
 class GitService:
@@ -463,6 +477,125 @@ class GitService:
             repository_status=refreshed_status,
         )
 
+    def create_repository(
+        self,
+        path: Path | str,
+        *,
+        initial_branch: str | None = None,
+    ) -> GitRepositoryCreateResult:
+        """Create a new local Git repository and return its state."""
+
+        normalized_branch = _normalize_optional_ref_name(
+            initial_branch,
+            "Git initial branch name",
+        )
+        destination = _validate_new_repository_destination(
+            path,
+            occupied_error=GitRepositoryAlreadyExistsError,
+        )
+
+        arguments: tuple[str, ...] = (
+            "init",
+        )
+
+        if normalized_branch is not None:
+            arguments += (
+                "--initial-branch",
+                normalized_branch,
+            )
+
+        arguments += (
+            "--",
+            str(
+                destination,
+            ),
+        )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=Path.cwd(),
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        repository_root = self.discover_repository(
+            destination,
+        )
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitRepositoryCreateResult(
+            repository_root=repository_root,
+            branch_name=status.branch_name,
+            head_oid=status.head_oid,
+            repository_status=status,
+        )
+
+    def clone_repository(
+        self,
+        source: str,
+        destination: Path | str,
+        *,
+        branch: str | None = None,
+    ) -> GitRepositoryCloneResult:
+        """Clone a Git repository into a new destination directory."""
+
+        normalized_source = _require_clone_source(
+            source,
+        )
+        normalized_branch = _normalize_optional_ref_name(
+            branch,
+            "Git clone branch name",
+        )
+        validated_destination = _validate_new_repository_destination(
+            destination,
+            occupied_error=GitCloneDestinationNotEmptyError,
+        )
+
+        arguments: tuple[str, ...] = (
+            "clone",
+        )
+
+        if normalized_branch is not None:
+            arguments += (
+                "--branch",
+                normalized_branch,
+            )
+
+        arguments += (
+            "--",
+            normalized_source,
+            str(
+                validated_destination,
+            ),
+        )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=Path.cwd(),
+        )
+
+        _require_successful_clone_result(
+            result,
+        )
+
+        repository_root = self.discover_repository(
+            validated_destination,
+        )
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitRepositoryCloneResult(
+            repository_root=repository_root,
+            default_branch=status.branch_name,
+            head_oid=status.head_oid,
+            repository_status=status,
+        )
+
     def _get_repository_status(
         self,
         repository_root: Path,
@@ -678,6 +811,158 @@ def _normalize_commit_message(
         )
 
     return normalized_message
+
+
+def _normalize_optional_ref_name(
+    value: str | None,
+    name: str,
+) -> str | None:
+    """Normalize an optional Git branch or ref name."""
+
+    if value is None:
+        return None
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            f"{name} must be a string or None."
+        )
+
+    if "\0" in value:
+        raise ValueError(
+            f"{name} must not contain NUL characters."
+        )
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise ValueError(
+            f"{name} must not be empty."
+        )
+
+    return normalized_value
+
+
+def _require_clone_source(
+    source: str,
+) -> str:
+    """Validate and normalize a Git clone source."""
+
+    if not isinstance(
+        source,
+        str,
+    ):
+        raise TypeError(
+            "Git clone source must be a string."
+        )
+
+    if "\0" in source:
+        raise GitCloneSourceError(
+            "Git clone source must not contain NUL characters."
+        )
+
+    normalized_source = source.strip()
+
+    if not normalized_source:
+        raise GitCloneSourceError(
+            "Git clone source must not be empty."
+        )
+
+    return normalized_source
+
+
+def _validate_new_repository_destination(
+    path: Path | str,
+    *,
+    occupied_error: type[Exception],
+) -> Path:
+    """Validate a filesystem destination for repository creation."""
+
+    destination = Path(
+        path,
+    )
+
+    if destination.exists():
+        if destination.is_dir():
+            if any(
+                destination.iterdir(),
+            ):
+                raise occupied_error(
+                    "Git repository destination already exists and "
+                    f"is not empty: {destination}"
+                )
+        else:
+            raise occupied_error(
+                "Git repository destination already exists and is "
+                f"not a directory: {destination}"
+            )
+    else:
+        parent = destination.parent
+
+        if (
+            not parent.exists()
+            or not parent.is_dir()
+        ):
+            raise GitRepositoryPathError(
+                "Git repository destination parent directory does "
+                f"not exist: {parent}"
+            )
+
+    return destination
+
+
+_CLONE_SOURCE_FAILURE_MARKERS: tuple[str, ...] = (
+    "does not appear to be a git repository",
+    "could not read from remote repository",
+    "repository not found",
+    "unable to access",
+    "does not exist",
+)
+
+
+def _looks_like_clone_source_failure(
+    result: GitCommandResult,
+) -> bool:
+    """Return whether a failed clone result looks source-related."""
+
+    combined_output = (
+        f"{result.stderr}\n{result.stdout}"
+    ).lower()
+
+    return any(
+        marker in combined_output
+        for marker in _CLONE_SOURCE_FAILURE_MARKERS
+    )
+
+
+def _require_successful_clone_result(
+    result: GitCommandResult,
+) -> None:
+    """Raise the appropriate service exception for clone failure."""
+
+    if (
+        result.status
+        is GitCommandExecutionStatus.COMPLETED
+        and not result.succeeded
+        and _looks_like_clone_source_failure(
+            result,
+        )
+    ):
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or "Git clone source is invalid or unreachable."
+        )
+
+        raise GitCloneSourceError(
+            detail,
+        )
+
+    _require_successful_result(
+        result,
+    )
 
 
 def _require_successful_result(

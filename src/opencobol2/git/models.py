@@ -436,6 +436,168 @@ class GitCommitResult:
         )
 
 
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRepositoryCreateResult:
+    """Result of creating one new local Git repository."""
+
+    repository_root: Path
+    branch_name: str | None
+    head_oid: str | None
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate created repository state."""
+
+        repository_root = Path(
+            self.repository_root,
+        )
+        branch_name = _normalize_optional_string(
+            self.branch_name,
+            "Git repository create branch name",
+        )
+        head_oid = _normalize_optional_string(
+            self.head_oid,
+            "Git repository create HEAD OID",
+        )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git repository create status must be "
+                "GitRepositoryStatus."
+            )
+
+        if (
+            self.repository_status.repository_root
+            != repository_root
+        ):
+            raise ValueError(
+                "Git repository create root must match the refreshed "
+                "repository status root."
+            )
+
+        if (
+            self.repository_status.branch_name
+            != branch_name
+        ):
+            raise ValueError(
+                "Git repository create branch name must match the "
+                "refreshed repository status branch name."
+            )
+
+        if (
+            self.repository_status.head_oid
+            != head_oid
+        ):
+            raise ValueError(
+                "Git repository create HEAD OID must match the "
+                "refreshed repository status HEAD OID."
+            )
+
+        object.__setattr__(
+            self,
+            "repository_root",
+            repository_root,
+        )
+        object.__setattr__(
+            self,
+            "branch_name",
+            branch_name,
+        )
+        object.__setattr__(
+            self,
+            "head_oid",
+            head_oid,
+        )
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitRepositoryCloneResult:
+    """Result of cloning one local Git repository from a source."""
+
+    repository_root: Path
+    default_branch: str | None
+    head_oid: str | None
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate cloned repository state."""
+
+        repository_root = Path(
+            self.repository_root,
+        )
+        default_branch = _normalize_optional_string(
+            self.default_branch,
+            "Git repository clone default branch",
+        )
+        head_oid = _normalize_optional_string(
+            self.head_oid,
+            "Git repository clone HEAD OID",
+        )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git repository clone status must be "
+                "GitRepositoryStatus."
+            )
+
+        if (
+            self.repository_status.repository_root
+            != repository_root
+        ):
+            raise ValueError(
+                "Git repository clone root must match the refreshed "
+                "repository status root."
+            )
+
+        if (
+            self.repository_status.branch_name
+            != default_branch
+        ):
+            raise ValueError(
+                "Git repository clone default branch must match the "
+                "refreshed repository status branch name."
+            )
+
+        if (
+            self.repository_status.head_oid
+            != head_oid
+        ):
+            raise ValueError(
+                "Git repository clone HEAD OID must match the "
+                "refreshed repository status HEAD OID."
+            )
+
+        object.__setattr__(
+            self,
+            "repository_root",
+            repository_root,
+        )
+        object.__setattr__(
+            self,
+            "default_branch",
+            default_branch,
+        )
+        object.__setattr__(
+            self,
+            "head_oid",
+            head_oid,
+        )
+
+
 def _normalize_optional_string(
     value: str | None,
     name: str,
