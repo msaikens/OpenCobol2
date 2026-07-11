@@ -620,6 +620,7 @@
     <Compile Include="src\opencobol2\git\status.py" />
     <Compile Include="src\opencobol2\git\tags.py" />
     <Compile Include="src\opencobol2\git\__init__.py" />
+    <Compile Include="src\opencobol2\language\ast_nodes.py" />
     <Compile Include="src\opencobol2\language\diagnostics.py" />
     <Compile Include="src\opencobol2\language\keywords.py" />
     <Compile Include="src\opencobol2\language\lexer.py" />
@@ -658,6 +659,8 @@
     <Compile Include="tests\unit\test_builtin_commands.py" />
     <Compile Include="tests\unit\test_builtin_compiler_providers.py" />
     <Compile Include="tests\unit\test_builtin_tool_windows.py" />
+    <Compile Include="tests\unit\test_cobol_lexer.py" />
+    <Compile Include="tests\unit\test_cobol_parser.py" />
     <Compile Include="tests\unit\test_command_contributions.py" />
     <Compile Include="tests\unit\test_command_contribution_registry.py" />
     <Compile Include="tests\unit\test_command_models.py" />

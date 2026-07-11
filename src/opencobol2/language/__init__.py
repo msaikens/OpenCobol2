@@ -1,7 +1,29 @@
 """OpenCobol2 COBOL language services."""
 
+from opencobol2.language.ast_nodes import (
+    CompilationUnitNode,
+    DataDescriptionClause,
+    DataDivisionNode,
+    DataItemNode,
+    DataSectionNode,
+    DisplayStatement,
+    EnvironmentDivisionNode,
+    EvaluateStatement,
+    EvaluateWhenBranch,
+    GenericStatement,
+    GobackStatement,
+    IdentificationDivisionNode,
+    IfStatement,
+    MoveStatement,
+    ParagraphNode,
+    PerformStatement,
+    ProcedureDivisionNode,
+    ProcedureSectionNode,
+    StopRunStatement,
+)
 from opencobol2.language.diagnostics import (
     LexDiagnostic,
+    ParseDiagnostic,
 )
 from opencobol2.language.keywords import (
     RESERVED_WORDS,
@@ -11,6 +33,11 @@ from opencobol2.language.lexer import (
     CobolLexer,
     LexResult,
     tokenize_cobol_source,
+)
+from opencobol2.language.parser import (
+    CobolParser,
+    ParseResult,
+    parse_cobol_tokens,
 )
 from opencobol2.language.tokens import (
     SourcePosition,
@@ -23,12 +50,35 @@ from opencobol2.language.tokens import (
 __all__ = [
     "RESERVED_WORDS",
     "CobolLexer",
+    "CobolParser",
+    "CompilationUnitNode",
+    "DataDescriptionClause",
+    "DataDivisionNode",
+    "DataItemNode",
+    "DataSectionNode",
+    "DisplayStatement",
+    "EnvironmentDivisionNode",
+    "EvaluateStatement",
+    "EvaluateWhenBranch",
+    "GenericStatement",
+    "GobackStatement",
+    "IdentificationDivisionNode",
+    "IfStatement",
     "LexDiagnostic",
     "LexResult",
+    "MoveStatement",
+    "ParagraphNode",
+    "ParseDiagnostic",
+    "ParseResult",
+    "PerformStatement",
+    "ProcedureDivisionNode",
+    "ProcedureSectionNode",
     "SourcePosition",
     "SourceSpan",
+    "StopRunStatement",
     "Token",
     "TokenKind",
     "is_reserved_word",
+    "parse_cobol_tokens",
     "tokenize_cobol_source",
 ]

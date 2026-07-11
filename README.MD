@@ -126,32 +126,78 @@ The document subsystem currently provides:
 
 The document core does not depend on Qt widgets.
 
+### Settings framework
+
+OpenCobol2 has a typed, schema-versioned application settings model with JSON persistence:
+
+* Configured compiler profiles, including a default profile selection.
+* External tool paths (for example, an explicit Git executable path).
+* Editor font, spacing, and indentation preferences.
+* COBOL fixed-format guide visibility preferences.
+* Atomic, same-directory replacement saves.
+
+A settings service exposes the current settings snapshot and supports reload and partial updates.
+
+### Command, menu, and tool window framework
+
+OpenCobol2 has a Qt-independent command and contribution framework:
+
+* A command registry with declarative command definitions, an extensible built-in command catalog, and placeholder commands reserved for future GUI wiring.
+* Menu, toolbar, and status bar contribution registries, including submenu and dynamic menu support.
+* A tool window registry describing docked panels (id, title, default dock area, default visibility, accessibility description) ahead of any concrete widget implementation.
+* Accessibility preference profiles.
+
+These registries are fully unit tested independently of Qt. No menu bar, toolbar, or docked panel is rendered yet; that depends on the future GUI shell.
+
+### Git integration
+
+OpenCobol2 wraps the local `git` executable directly (no third-party Git library) behind a Qt-independent service layer:
+
+* Repository discovery, `status --porcelain=v2` parsing, staging, unstaging, and commits.
+* Repository creation and cloning.
+* Remote management: list, add, remove, rename.
+* Fetch, pull, and push, with merge-conflict-aware error reporting.
+* Local branch management: list, create, delete, switch.
+* Local tag management: list, create (lightweight and annotated), delete.
+* Stash management: list, push, apply/pop, drop.
+* Commit history retrieval.
+* Reset (soft/mixed/hard), revert, and cherry-pick.
+* Raw unified diff retrieval for the worktree, the index, and individual commits.
+
+Every operation is unit tested against a mocked process layer and additionally verified against a real `git` executable in an isolated throwaway repository. Blame, merge, rebase, worktrees, and submodules are intentionally not yet implemented — GitHub-specific workflows (authentication, pull requests, issues) are a separate, not-yet-started integration.
+
+### Project system
+
+OpenCobol2 has a persisted project model that stays independent of any specific compiler dialect beyond the compiler profile it references:
+
+* Project identity, root path, and build/launch default properties.
+* Virtual (logical) folders, independent of physical directory layout.
+* Linked files sourced from outside the project root.
+* Excluded file patterns and project-level environment variable overrides.
+* User-defined tasks and launch configurations, directly executable as local processes with layered environment resolution (ambient OS environment, then project overrides, then task/launch overrides).
+
+Project persistence uses the same schema-versioned, atomic-replacement JSON storage pattern as application settings. The Project Explorer tree widget itself is not built yet; it depends on the future GUI shell.
+
+### COBOL language services (lexer and parser)
+
+OpenCobol2 has begun in-house COBOL language services, independent of the GnuCOBOL compiler process:
+
+* A COBOL lexer supporting both fixed and free source format, with fixed-format sequence area/indicator column/Area A/B handling, continuation of alphanumeric literals across source lines, whole-line and inline (`*>`) comments, a curated reserved-word table, and diagnostics for unterminated literals, malformed continuations, and unrecognized characters.
+* A recursive-descent parser building a real AST for program identity, data description entries (including FILE SECTION `FD`/`SD` entries), and procedure division structure (paragraphs, sections). It gives full structure to IF/ELSE/END-IF, PERFORM (out-of-line, inline, `VARYING`/`UNTIL`/`TIMES`), and EVALUATE/WHEN, including COBOL's implicit period-based scope termination (a lone `.` can close every enclosing IF/PERFORM/EVALUATE at once). Every other statement verb (ADD, CALL, STRING, and so on) is captured as a generic statement (verb plus raw tokens) rather than being deeply modeled yet; a verb's nested-statement clauses (`ON SIZE ERROR`, `AT END`, `ON OVERFLOW`) are a known, documented gap. The environment division is recognized but parsed opaquely.
+
+Both are tested against synthetic COBOL source and against the real `.cbl` files preserved under `legacy/opencobolide/tests/testfiles/`. Semantic analysis and higher-level language services (outline, hover, navigation, completion) are not yet implemented.
+
 ## Planned architecture milestones
 
-Before committing the application structure to a GUI, OpenCobol2 is establishing contracts for the following systems.
+Before committing the application structure to a GUI, OpenCobol2 is establishing contracts for the following systems. Settings, the command/menu/tool-window registries, Git, the project model, and a COBOL lexer/parser are already implemented (see "Current foundation" above); this section covers what still sits ahead of them.
 
-### Settings
+### GUI shell
 
-Persistent, typed settings will cover:
+No Qt/PySide6 widget code exists yet anywhere in the codebase — every subsystem above is deliberately Qt-independent so far. The GUI shell still needs to be built, including:
 
-* Explicit compiler and toolchain paths.
-* Toolchain environment overrides.
-* Editor fonts and spacing.
-* Automatic indentation preferences.
-* Code folding preferences.
-* COBOL fixed-format guide visibility.
-* Syntax theme customization.
-* Git behavior.
-* Plugin enablement.
-* Non-secret remote connection profiles.
-
-Secrets and authentication tokens will not be stored as plain application settings.
-
-### Commands and menus
-
-OpenCobol2 will use a command registry rather than hardcoding application behavior directly into menus.
-
-The planned primary menu surface is:
+* An actual menu bar and toolbar rendering the existing command/menu contribution registries.
+* A command search interface over registered commands.
+* The planned primary menu surface:
 
 ```text
 File
@@ -167,31 +213,35 @@ Window
 Help
 ```
 
-Application commands and plugin-contributed commands will also be searchable through a command search interface.
+* Docked tool window widgets (Project Explorer, Git, Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, Extensions) backed by the existing tool window registry.
+* A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set).
 
-### COBOL editor services
+### COBOL semantic analysis and deeper language services
 
-Planned COBOL language and editor services include:
+With the lexer and parser in place, the next COBOL language milestones are:
 
-* Configurable syntax highlighting.
-* Fixed-format column and coding-area guides.
-* Sequence-area visualization.
-* Indicator-column visualization.
-* Area A and Area B visualization.
-* Reference-margin visibility.
-* Automatic indentation.
-* Division, section, paragraph, data-group, and structured-statement folding.
-* COBOL-aware source navigation.
+* Deeper per-verb statement grammar (ADD/SUBTRACT/MULTIPLY/DIVIDE/COMPUTE operand structure, STRING/UNSTRING, nested `ON SIZE ERROR`/`AT END`/`ON OVERFLOW` clauses) and structural parsing of the environment division (SELECT/ASSIGN, SOURCE-COMPUTER, and so on).
+* Semantic analysis and symbol tables.
+* Cross references, outline, hover, go-to-definition, find references, rename.
+* Diagnostics beyond lexical/parse errors, quick fixes.
+* Configurable syntax highlighting driven by the token stream.
+* Fixed-format column and coding-area guides (sequence area, indicator column, Area A/B, reference margin visualization) in the editor.
+* Automatic indentation and division/section/paragraph/data-group/structured-statement folding.
+* Code completion, snippets, signature help, documentation lookup.
 
-These language services will be testable independently from the Qt editor widget.
+These language services will be testable independently from the Qt editor widget, following the same pattern as the lexer and parser.
 
-### Git and GitHub
+### GitHub integration
 
-Git and GitHub are planned as separate but integrated subsystems.
+GitHub integration is a separate, not-yet-started layer on top of the existing Git service: authenticated GitHub account and repository workflows, with pull request and issue integration planned as the project develops.
 
-Git support is expected to include repository discovery, status, branches, staging, commits, diffs, history, remotes, fetch, pull, and push workflows.
+### Compiler integration (remaining)
 
-GitHub integration is expected to include authenticated GitHub account and repository workflows, with pull request and issue integration planned as the project develops.
+The compiler subsystem already supports GnuCOBOL and a generic custom local compiler profile. Not yet built: build pipelines, incremental build, and dedicated warning/listing parsers beyond the existing diagnostic parsing. Additional vendor providers (Micro Focus, IBM Enterprise COBOL, ACUCOBOL, Visual COBOL) are explicitly out of scope for now — the project is intentionally scoped to GnuCOBOL and custom compiler profiles.
+
+### Debugger
+
+Not yet started: a debugger abstraction, a GDB adapter, breakpoints, watch window, locals, call stack, memory, registers, threads, and expression evaluation.
 
 ### Plugins
 
@@ -297,9 +347,9 @@ Integration tests that require a real GnuCOBOL installation skip cleanly when no
 
 OpenCobol2 is currently focused on architecture and foundation work.
 
-The project is deliberately building compiler, document, settings, command, language-service, plugin, source-control, and remote-resource boundaries before committing those systems to a desktop GUI architecture.
+Compiler, document, settings, command/menu/tool-window, source-control (Git), project-model, and COBOL language-service (lexer and parser) boundaries are now implemented and extensively unit tested, Qt-independent from the start. The GUI shell that will actually render all of this — menu bar, toolbar, editor widget, docked panels — has not been built yet, nor has COBOL semantic analysis, the plugin system, debugger, or remote/mainframe resource layer.
 
-This is intended to prevent the successor application from becoming a thin modern shell around decade-old implementation patterns.
+This build-the-core-first order is intended to prevent the successor application from becoming a thin modern shell around decade-old implementation patterns.
 
 ## Contributing
 
