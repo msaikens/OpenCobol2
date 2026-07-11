@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import os
+from os import PathLike
 from pathlib import Path
 
 from opencobol2.git.models import (
     GitCommandExecutionStatus,
     GitCommandResult,
+    GitCommitResult,
     GitRepositoryStatus,
 )
 from opencobol2.git.process import (
@@ -63,8 +65,20 @@ class GitRepositoryNotFoundError(LookupError):
     """Raised when a path is not inside a Git worktree."""
 
 
+class GitRepositoryPathError(ValueError):
+    """Raised when an invalid repository-relative path is requested."""
+
+
+class GitCommitMessageError(ValueError):
+    """Raised when a Git commit message is invalid."""
+
+
+class GitNothingToCommitError(RuntimeError):
+    """Raised when a staged commit is requested without staged changes."""
+
+
 class GitService:
-    """Reads local Git repository state."""
+    """Reads and updates local Git repository state."""
 
     def __init__(
         self,
@@ -248,6 +262,213 @@ class GitService:
             path,
         )
 
+        return self._get_repository_status(
+            repository_root,
+        )
+
+    def stage_paths(
+        self,
+        path: Path | str,
+        repository_paths: Sequence[
+            str | PathLike[str]
+        ],
+    ) -> GitRepositoryStatus:
+        """Stage repository-relative paths and return refreshed status."""
+
+        normalized_paths = _normalize_repository_paths(
+            repository_paths,
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        result = self._invoke(
+            arguments=(
+                "add",
+                "--",
+                *normalized_paths,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return self._get_repository_status(
+            repository_root,
+        )
+
+    def unstage_paths(
+        self,
+        path: Path | str,
+        repository_paths: Sequence[
+            str | PathLike[str]
+        ],
+    ) -> GitRepositoryStatus:
+        """Unstage repository-relative paths and return refreshed status."""
+
+        normalized_paths = _normalize_repository_paths(
+            repository_paths,
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        if status.head_oid is None:
+            arguments = (
+                "rm",
+                "--cached",
+                "--ignore-unmatch",
+                "--",
+                *normalized_paths,
+            )
+        else:
+            arguments = (
+                "restore",
+                "--staged",
+                "--",
+                *normalized_paths,
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return self._get_repository_status(
+            repository_root,
+        )
+
+    def stage_all(
+        self,
+        path: Path | str,
+    ) -> GitRepositoryStatus:
+        """Stage all worktree changes and return refreshed status."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+
+        result = self._invoke(
+            arguments=(
+                "add",
+                "--all",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return self._get_repository_status(
+            repository_root,
+        )
+
+    def unstage_all(
+        self,
+        path: Path | str,
+    ) -> GitRepositoryStatus:
+        """Unstage all index changes and return refreshed status."""
+
+        repository_root = self.discover_repository(
+            path,
+        )
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        if status.head_oid is None:
+            arguments = (
+                "rm",
+                "--cached",
+                "--recursive",
+                "--ignore-unmatch",
+                "--",
+                ".",
+            )
+        else:
+            arguments = (
+                "restore",
+                "--staged",
+                "--",
+                ".",
+            )
+
+        result = self._invoke(
+            arguments=arguments,
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        return self._get_repository_status(
+            repository_root,
+        )
+
+    def commit_staged(
+        self,
+        path: Path | str,
+        message: str,
+    ) -> GitCommitResult:
+        """Commit current staged index content and return refreshed state."""
+
+        normalized_message = _normalize_commit_message(
+            message,
+        )
+        repository_root = self.discover_repository(
+            path,
+        )
+        status = self._get_repository_status(
+            repository_root,
+        )
+
+        if not status.has_staged_changes:
+            raise GitNothingToCommitError(
+                "Git repository has no staged changes to commit."
+            )
+
+        result = self._invoke(
+            arguments=(
+                "commit",
+                "--message",
+                normalized_message,
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        commit_oid = self._resolve_head_oid(
+            repository_root,
+        )
+        refreshed_status = self._get_repository_status(
+            repository_root,
+        )
+
+        return GitCommitResult(
+            commit_oid=commit_oid,
+            repository_status=refreshed_status,
+        )
+
+    def _get_repository_status(
+        self,
+        repository_root: Path,
+    ) -> GitRepositoryStatus:
+        """Read status for an already-discovered repository root."""
+
         result = self._invoke(
             arguments=(
                 "--no-optional-locks",
@@ -267,6 +488,44 @@ class GitService:
             repository_root=repository_root,
             output=result.stdout,
         )
+
+    def _resolve_head_oid(
+        self,
+        repository_root: Path,
+    ) -> str:
+        """Resolve the current full HEAD object identifier."""
+
+        result = self._invoke(
+            arguments=(
+                "--no-optional-locks",
+                "rev-parse",
+                "HEAD",
+            ),
+            working_directory=repository_root,
+        )
+
+        _require_successful_result(
+            result,
+        )
+
+        commit_oid = result.stdout.strip()
+
+        if not commit_oid:
+            raise GitCommandFailedError(
+                result=GitCommandResult(
+                    command=result.command,
+                    status=result.status,
+                    return_code=result.return_code,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    elapsed_seconds=result.elapsed_seconds,
+                    error_message=(
+                        "Git did not return the current HEAD OID."
+                    ),
+                ),
+            )
+
+        return commit_oid
 
     def _invoke(
         self,
@@ -307,6 +566,118 @@ def _resolve_working_directory(
         return candidate.parent
 
     return candidate
+
+
+def _normalize_repository_paths(
+    repository_paths: Sequence[
+        str | PathLike[str]
+    ],
+) -> tuple[str, ...]:
+    """Validate repository-relative Git pathspec values."""
+
+    if isinstance(
+        repository_paths,
+        (
+            str,
+            bytes,
+            PathLike,
+        ),
+    ):
+        raise TypeError(
+            "Git repository paths must be a sequence of paths."
+        )
+
+    if not isinstance(
+        repository_paths,
+        Sequence,
+    ):
+        raise TypeError(
+            "Git repository paths must be a sequence of paths."
+        )
+
+    normalized_paths: list[str] = []
+
+    for repository_path in repository_paths:
+        try:
+            path_text = os.fspath(
+                repository_path,
+            )
+        except TypeError as error:
+            raise TypeError(
+                "Git repository paths must contain string or "
+                "path-like values."
+            ) from error
+
+        if not isinstance(
+            path_text,
+            str,
+        ):
+            raise TypeError(
+                "Git repository paths must resolve to strings."
+            )
+
+        normalized_path = path_text.strip()
+
+        if not normalized_path:
+            raise GitRepositoryPathError(
+                "Git repository path must not be empty."
+            )
+
+        path = Path(
+            normalized_path,
+        )
+
+        if path.is_absolute():
+            raise GitRepositoryPathError(
+                "Git repository path must be relative."
+            )
+
+        if ".." in path.parts:
+            raise GitRepositoryPathError(
+                "Git repository path must not traverse outside "
+                "the repository."
+            )
+
+        normalized_paths.append(
+            normalized_path,
+        )
+
+    if not normalized_paths:
+        raise GitRepositoryPathError(
+            "At least one Git repository path is required."
+        )
+
+    return tuple(
+        normalized_paths,
+    )
+
+
+def _normalize_commit_message(
+    message: str,
+) -> str:
+    """Normalize and validate one Git commit message."""
+
+    if not isinstance(
+        message,
+        str,
+    ):
+        raise TypeError(
+            "Git commit message must be a string."
+        )
+
+    if "\0" in message:
+        raise GitCommitMessageError(
+            "Git commit message must not contain NUL characters."
+        )
+
+    normalized_message = message.strip()
+
+    if not normalized_message:
+        raise GitCommitMessageError(
+            "Git commit message must not be empty."
+        )
+
+    return normalized_message
 
 
 def _require_successful_result(

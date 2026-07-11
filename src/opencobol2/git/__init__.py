@@ -5,6 +5,7 @@ from opencobol2.git.models import (
     GitChangeStatus,
     GitCommandExecutionStatus,
     GitCommandResult,
+    GitCommitResult,
     GitRepositoryStatus,
 )
 from opencobol2.git.process import (
@@ -20,6 +21,7 @@ __all__ = [
     "GitChangeStatus",
     "GitCommandExecutionStatus",
     "GitCommandResult",
+    "GitCommitResult",
     "GitRepositoryStatus",
     "invoke_git_process",
     "parse_git_status_porcelain_v2",

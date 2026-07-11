@@ -392,6 +392,50 @@ class GitRepositoryStatus:
         )
 
 
+@dataclass(
+    frozen=True,
+    slots=True,
+    kw_only=True,
+)
+class GitCommitResult:
+    """Result of creating one commit from staged index content."""
+
+    commit_oid: str
+    repository_status: GitRepositoryStatus
+
+    def __post_init__(self) -> None:
+        """Normalize and validate committed repository state."""
+
+        commit_oid = _require_non_empty_string(
+            self.commit_oid,
+            "Git commit OID",
+        )
+
+        if not isinstance(
+            self.repository_status,
+            GitRepositoryStatus,
+        ):
+            raise TypeError(
+                "Git commit repository status must be "
+                "GitRepositoryStatus."
+            )
+
+        if (
+            self.repository_status.head_oid
+            != commit_oid
+        ):
+            raise ValueError(
+                "Git commit OID must match the refreshed repository "
+                "HEAD OID."
+            )
+
+        object.__setattr__(
+            self,
+            "commit_oid",
+            commit_oid,
+        )
+
+
 def _normalize_optional_string(
     value: str | None,
     name: str,
@@ -413,6 +457,30 @@ def _normalize_optional_string(
 
     if not normalized_value:
         return None
+
+    return normalized_value
+
+
+def _require_non_empty_string(
+    value: str,
+    name: str,
+) -> str:
+    """Require and normalize one non-empty string."""
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise TypeError(
+            f"{name} must be a string."
+        )
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise ValueError(
+            f"{name} must not be empty."
+        )
 
     return normalized_value
 
