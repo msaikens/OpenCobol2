@@ -144,8 +144,8 @@ A settings service exposes the current settings snapshot and supports reload and
 OpenCobol2 has a Qt-independent command and contribution framework:
 
 * A command registry with declarative command definitions, an extensible built-in command catalog, and placeholder commands reserved for future GUI wiring.
-* Menu, toolbar, and status bar contribution registries, including submenu and dynamic menu support.
-* A tool window registry describing docked panels (id, title, default dock area, default visibility, accessibility description) ahead of any concrete widget implementation.
+* Menu and toolbar contribution registries, including submenu and dynamic menu support. There is no contribution-registry-backed status bar item model yet — the Phase 7 shell renders a plain, non-contribution-driven status bar (see "Application shell" below).
+* A tool window registry describing docked panels (id, title, default dock area, default visibility, accessibility description). The Phase 7 shell now renders these as real docked panels.
 * Accessibility preference profiles.
 
 ### Color theme system
@@ -157,9 +157,20 @@ OpenCobol2 has a Qt-independent color theme model, independent of any rendered s
 * A `ThemeService` that tracks the active theme against a registry and validates theme switches.
 * The active theme selection is persisted as part of application settings.
 
-No stylesheet or palette is actually applied to any widget yet; that depends on the future GUI shell.
+The Phase 7 application shell (below) now applies the active theme's palette to real widgets.
 
-These registries are fully unit tested independently of Qt. No menu bar, toolbar, or docked panel is rendered yet; that depends on the future GUI shell.
+The command, menu, tool-window, and theme registries above are fully unit tested independently of Qt, in addition to their Phase 7 rendering.
+
+### Application shell
+
+OpenCobol2 has a real, launchable Qt application shell (`src/opencobol2/gui/`), independent from — and built entirely on top of — the Qt-independent registries above:
+
+* `MainWindow` builds a live menu bar and toolbars from command surface contributions. Menus rebuild themselves from current command/dynamic-menu state every time they open, so enabled/checked state and dynamic entries (like a future recent-files list) are never stale.
+* Every registered tool window is rendered as a real `QDockWidget`: initial dock area and visibility come from `ToolWindowService`, and visibility changes made through the real widget (closing a panel, for example) are synced back into that service. Pinning/auto-hide and floating-geometry restoration are not implemented yet; panels use plain `QDockWidget` floating/closable behavior as-is. Each panel's content is a placeholder — the shell renders real, correctly-labeled, correctly-docked panels, but Project Explorer, Output, Problems, and the rest don't have their real widgets yet.
+* The active color theme is applied to the shell as a real `QPalette`.
+* `create_main_window()` (`opencobol2.gui.application`) wires the real built-in command, tool-window, and theme registries together into a working window. The application launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`[project.gui-scripts]`).
+
+The shell is unit tested against a real, offscreen (`QT_QPA_PLATFORM=offscreen`) `QApplication` — no display server is required to run these tests.
 
 ### Git integration
 
@@ -188,7 +199,7 @@ OpenCobol2 has a persisted project model that stays independent of any specific 
 * Excluded file patterns and project-level environment variable overrides.
 * User-defined tasks and launch configurations, directly executable as local processes with layered environment resolution (ambient OS environment, then project overrides, then task/launch overrides).
 
-Project persistence uses the same schema-versioned, atomic-replacement JSON storage pattern as application settings. The Project Explorer tree widget itself is not built yet; it depends on the future GUI shell.
+Project persistence uses the same schema-versioned, atomic-replacement JSON storage pattern as application settings. A Project Explorer dock panel now renders as part of the application shell (see "Application shell" above), but with placeholder content — the actual tree widget itself is not built yet.
 
 ### COBOL language services (lexer, parser, semantic analysis)
 
@@ -202,34 +213,19 @@ All three are tested against synthetic COBOL source and against the real `.cbl` 
 
 ## Planned architecture milestones
 
-Before committing the application structure to a GUI, OpenCobol2 is establishing contracts for the following systems. Settings, the command/menu/tool-window registries, Git, the project model, and a COBOL lexer/parser are already implemented (see "Current foundation" above); this section covers what still sits ahead of them.
+OpenCobol2 has established contracts for most core systems, and a first real GUI shell now sits on top of them. Settings, the command/menu/tool-window registries, Git, the project model, a COBOL lexer/parser, and the application shell described below are already implemented (see "Current foundation" above); this section covers what still sits ahead of them.
 
 For a detailed, phase-by-phase status of every planned subsystem (including what's fully done, partially done, or intentionally out of scope), see [ROADMAP.MD](ROADMAP.MD).
 
 ### GUI shell
 
-No Qt/PySide6 widget code exists yet anywhere in the codebase — every subsystem above is deliberately Qt-independent so far. The GUI shell still needs to be built, including:
+The application shell exists and runs (see "Application shell" under "Current foundation" above: a live menu bar and toolbars rendered from the command/menu contribution registries, and docked tool-window panels backed by the tool window registry). What's still ahead:
 
-* An actual menu bar and toolbar rendering the existing command/menu contribution registries.
 * A command search interface over registered commands.
-* The planned primary menu surface:
-
-```text
-File
-Edit
-Git
-Project
-Build
-Debug
-Test
-Tools
-Plugins
-Window
-Help
-```
-
-* Docked tool window widgets (Project Explorer, Git, Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, Extensions) backed by the existing tool window registry.
-* A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set).
+* Real content for each docked tool-window panel — Project Explorer, Git, Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, and Extensions panels currently render as placeholders.
+* A Welcome page, a recent-projects list, and preferences dialogs.
+* A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set) — the biggest remaining piece, and a prerequisite for docking anything into the shell's document area.
+* Tool-window pinning/auto-hide and floating-geometry persistence, which the current dock manager doesn't implement yet.
 
 ### Deeper COBOL language services
 
@@ -361,7 +357,7 @@ Integration tests that require a real GnuCOBOL installation skip cleanly when no
 
 OpenCobol2 is currently focused on architecture and foundation work.
 
-Compiler, document, settings, command/menu/tool-window, source-control (Git), project-model, and COBOL language-service (lexer, parser, first semantic pass) boundaries are now implemented and extensively unit tested, Qt-independent from the start. The GUI shell that will actually render all of this — menu bar, toolbar, editor widget, docked panels — has not been built yet, nor has deeper COBOL semantic analysis, the plugin system, debugger, or remote/mainframe resource layer.
+Compiler, document, settings, command/menu/tool-window, source-control (Git), project-model, and COBOL language-service (lexer, parser, first semantic pass) boundaries are now implemented and extensively unit tested, Qt-independent from the start. A first real GUI shell now renders a live menu bar, toolbars, and docked tool-window panels on top of that foundation, though each panel's actual content (Project Explorer, Output, Git, and the rest) is still a placeholder, and the text editor widget has not been built yet. Deeper COBOL semantic analysis, the plugin system, debugger, and remote/mainframe resource layer also remain ahead.
 
 This build-the-core-first order is intended to prevent the successor application from becoming a thin modern shell around decade-old implementation patterns.
 

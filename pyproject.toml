@@ -56,6 +56,9 @@ dependencies = [
     "platformdirs>=4"
 ]
 
+[project.gui-scripts]
+opencobol2 = "opencobol2.gui.application:main"
+
 [project.urls]
 Homepage = "https://github.com/msaikens/OpenCobol2"
 Repository = "https://github.com/msaikens/OpenCobol2"

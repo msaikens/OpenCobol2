@@ -15,9 +15,9 @@ Everything in "Core application" below is a Qt-independent registry/model. It is
 * ✅ Command framework
 * ✅ Menu contribution framework (including submenus and dynamic menus)
 * ✅ Toolbar contribution framework
-* ✅ Status bar contributions
-* ✅ Tool-window/docking registry (id, title, default dock area, default visibility — metadata only, no rendered docking widget yet)
-* ✅ Theme system (`Theme`/`ThemeColors`/`ThemeKind` models, a `ThemeRegistry`, a built-in catalog of four themes — Light, Dark, High Contrast Light, High Contrast Dark — a `ThemeService` for active-theme selection, and a persisted `ThemeSettings` section; no rendered stylesheet/palette application yet, since that depends on the GUI shell)
+* 🔶 Status bar (a plain `QStatusBar` is now rendered by the Phase 7 shell; unlike menus/toolbars, there is no contribution-registry-backed status-bar-item model yet — this was previously mis-marked as fully done)
+* ✅ Tool-window/docking registry (id, title, default dock area, default visibility; now actually rendered as real `QDockWidget` panels by the Phase 7 shell, see below)
+* ✅ Theme system (`Theme`/`ThemeColors`/`ThemeKind` models, a `ThemeRegistry`, a built-in catalog of four themes — Light, Dark, High Contrast Light, High Contrast Dark — a `ThemeService` for active-theme selection, and a persisted `ThemeSettings` section; the Phase 7 shell now applies the active theme's palette to real widgets)
 * ✅ Accent color normalization (per-tool-window accent override, scoped to the accessibility profile below)
 * ✅ Accessibility preference profiles (color-vision assistance strategies, tool-window accent overrides)
 * ✅ Settings framework
@@ -66,7 +66,7 @@ Most of the non-GUI foundation is done; what remains is almost entirely GUI (Pha
 * ✅ Tasks (user-defined, directly executable)
 * ✅ Launch configurations (directly executable, layered environment resolution)
 * 🔶 Compiler profiles / runtime profiles — the compiler-provider and runtime abstraction exists (Phase 5) and a project can reference a profile by ID, but there is no project-level UI/CRUD for authoring profiles yet
-* ⬜ Project Explorer (the actual tree widget — blocked on Phase 7's GUI shell)
+* ⬜ Project Explorer (a docked panel now renders via Phase 7's shell, but with placeholder content — the actual tree widget still needs to be built)
 
 ## Phase 3 — Editor
 
@@ -150,18 +150,19 @@ Still untouched.
 
 ## Phase 7 — UI
 
-Still untouched — the GUI shell itself. Every registry built in Phase 1 (commands, menus, toolbars, tool windows) and the Project Explorer (Phase 2) are waiting on this phase.
+The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window, and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme registries together). What's still missing is the actual *content* inside each tool-window panel — the shell renders real, correctly-labeled, correctly-docked panels, but Project Explorer, Output, Problems, and the rest are placeholders today.
 
+* ✅ Application shell (`MainWindow`: live menu bar + toolbars rendered from command contributions, theme palette application, a real runnable bootstrap)
+* ✅ Tool windows (rendering the Phase 1 registry: one `QDockWidget` per registered definition, initial dock area + visibility applied, visibility synced bidirectionally with `ToolWindowService`; pinning/auto-hide and floating-geometry restoration are not implemented yet — plain QDockWidget floating/closable behavior is used as-is)
 * ⬜ Welcome page
 * ⬜ Recent projects
 * ⬜ Preferences dialogs
-* ⬜ Tool windows (rendering the Phase 1 registry)
-* ⬜ Project explorer
-* ⬜ Output window
-* ⬜ Problems window
+* ⬜ Project explorer (dock panel renders; real tree content not built)
+* ⬜ Output window (dock panel renders; real content not built)
+* ⬜ Problems window (dock panel renders; real content not built)
 * ⬜ Terminal
-* ⬜ Git window
-* ⬜ Search window
+* ⬜ Git window (Git Changes/Git Repository dock panels render; real content not built)
+* ⬜ Search window (Find Results dock panel renders; real content not built)
 * ⬜ Outline
 * ⬜ Bookmarks
 * ⬜ Task list
@@ -191,7 +192,7 @@ Coverage for the foundation built so far is strong.
 * ✅ Unit tests (800+, covering every implemented subsystem)
 * ✅ Real-executable smoke tests (real `git.exe`, real GnuCOBOL `cobc`, real `.cbl` files under `legacy/opencobolide/tests/testfiles/`)
 * 🔶 Integration tests (`tests/integration/` covers real GnuCOBOL toolchain discovery and diagnostics; broader cross-subsystem integration coverage is still thin)
-* ⬜ GUI tests
+* 🔶 GUI tests (the Phase 7 shell — menus, toolbars, dock widgets, theming, bootstrap — is unit tested against a real offscreen `QApplication`; no interaction-simulation/visual-regression tooling yet)
 * ⬜ End-to-end tests
 * ⬜ Performance tests
 * ⬜ Startup tests
