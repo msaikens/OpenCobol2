@@ -897,6 +897,76 @@ def test_settings_menu_action_applies_theme_to_running_window(
     )
 
 
+def test_settings_menu_action_applies_theme_to_open_editor_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+
+    assert (
+        editor._line_number_color.name().upper()
+        == "#858585"
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        theme_index = (
+            dialog_self._theme_combo.findData(
+                LIGHT_THEME_ID,
+            )
+        )
+        dialog_self._theme_combo.setCurrentIndex(
+            theme_index,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert (
+        editor._line_number_color.name().upper()
+        == "#237893"
+    )
+    assert (
+        editor._current_line_color.name().upper()
+        == "#F3F3F3"
+    )
+
+    # A tab opened after the switch must also use the new theme's colors.
+    editor_tabs.new_file()
+    new_editor = editor_tabs.widget(
+        editor_tabs.count() - 1,
+    )
+    assert (
+        new_editor._line_number_color.name().upper()
+        == "#237893"
+    )
+
+
 def test_bootstrap_uses_configured_git_executable_path(
     qapp,
     tmp_path: Path,

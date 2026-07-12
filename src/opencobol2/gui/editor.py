@@ -5,11 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import (
+    QColor,
+    QPainter,
+    QPaintEvent,
+    QResizeEvent,
+    QTextFormat,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QPlainTextEdit,
     QTabWidget,
+    QTextEdit,
     QWidget,
 )
 
@@ -19,6 +28,37 @@ from opencobol2.documents import (
     TextDocument,
     WorkspaceDocument,
 )
+from opencobol2.theming import Theme
+
+
+class _LineNumberArea(QWidget):
+    """The gutter widget that paints one editor's line numbers."""
+
+    def __init__(
+        self,
+        editor: SourceEditorWidget,
+    ) -> None:
+        super().__init__(
+            editor,
+        )
+
+        self._editor = editor
+
+    def sizeHint(
+        self,
+    ) -> QSize:
+        return QSize(
+            self._editor.line_number_area_width(),
+            0,
+        )
+
+    def paintEvent(
+        self,
+        event: QPaintEvent,
+    ) -> None:
+        self._editor.paint_line_number_area(
+            event,
+        )
 
 
 class SourceEditorWidget(QPlainTextEdit):
@@ -29,6 +69,7 @@ class SourceEditorWidget(QPlainTextEdit):
         *,
         document_id: UUID,
         initial_text: str,
+        theme: Theme,
         parent: QWidget | None = None,
     ) -> None:
         """Build an editor preloaded with one document's text."""
@@ -38,8 +79,203 @@ class SourceEditorWidget(QPlainTextEdit):
         )
 
         self.document_id = document_id
+        self._line_number_color = QColor(
+            theme.colors.line_number_foreground,
+        )
+        self._current_line_color = QColor(
+            theme.colors.current_line_highlight,
+        )
+        self._line_number_area = _LineNumberArea(
+            self,
+        )
+
+        self.blockCountChanged.connect(
+            self._update_line_number_area_width,
+        )
+        self.updateRequest.connect(
+            self._update_line_number_area,
+        )
+        self.cursorPositionChanged.connect(
+            self._highlight_current_line,
+        )
+
         self.setPlainText(
             initial_text,
+        )
+        self._update_line_number_area_width()
+        self._highlight_current_line()
+
+    def apply_theme(
+        self,
+        theme: Theme,
+    ) -> None:
+        """Recolor the line-number gutter and current-line highlight."""
+
+        self._line_number_color = QColor(
+            theme.colors.line_number_foreground,
+        )
+        self._current_line_color = QColor(
+            theme.colors.current_line_highlight,
+        )
+        self._highlight_current_line()
+        self._line_number_area.update()
+
+    def line_number_area_width(
+        self,
+    ) -> int:
+        """Return the gutter width needed for the current line count."""
+
+        digits = len(
+            str(
+                max(
+                    1,
+                    self.blockCount(),
+                ),
+            )
+        )
+
+        return (
+            12
+            + self.fontMetrics().horizontalAdvance(
+                "9",
+            )
+            * digits
+        )
+
+    def paint_line_number_area(
+        self,
+        event: QPaintEvent,
+    ) -> None:
+        """Paint every visible block's line number into the gutter."""
+
+        painter = QPainter(
+            self._line_number_area,
+        )
+        painter.fillRect(
+            event.rect(),
+            self.palette().color(
+                self.backgroundRole(),
+            ),
+        )
+
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = round(
+            self.blockBoundingGeometry(
+                block,
+            )
+            .translated(
+                self.contentOffset(),
+            )
+            .top()
+        )
+        bottom = top + round(
+            self.blockBoundingRect(
+                block,
+            ).height()
+        )
+        painter.setPen(
+            self._line_number_color,
+        )
+
+        while (
+            block.isValid()
+            and top <= event.rect().bottom()
+        ):
+            if (
+                block.isVisible()
+                and bottom >= event.rect().top()
+            ):
+                painter.drawText(
+                    0,
+                    top,
+                    self._line_number_area.width() - 4,
+                    self.fontMetrics().height(),
+                    Qt.AlignmentFlag.AlignRight,
+                    str(
+                        block_number + 1,
+                    ),
+                )
+
+            block = block.next()
+            top = bottom
+            bottom = top + round(
+                self.blockBoundingRect(
+                    block,
+                ).height()
+            )
+            block_number += 1
+
+    def resizeEvent(
+        self,
+        event: QResizeEvent,
+    ) -> None:
+        super().resizeEvent(
+            event,
+        )
+
+        contents_rect = self.contentsRect()
+        self._line_number_area.setGeometry(
+            QRect(
+                contents_rect.left(),
+                contents_rect.top(),
+                self.line_number_area_width(),
+                contents_rect.height(),
+            )
+        )
+
+    def _update_line_number_area_width(
+        self,
+        _new_block_count: int = 0,
+    ) -> None:
+        self.setViewportMargins(
+            self.line_number_area_width(),
+            0,
+            0,
+            0,
+        )
+
+    def _update_line_number_area(
+        self,
+        rect: QRect,
+        scrolled_by: int,
+    ) -> None:
+        if scrolled_by:
+            self._line_number_area.scroll(
+                0,
+                scrolled_by,
+            )
+        else:
+            self._line_number_area.update(
+                0,
+                rect.y(),
+                self._line_number_area.width(),
+                rect.height(),
+            )
+
+        if rect.contains(
+            self.viewport().rect(),
+        ):
+            self._update_line_number_area_width()
+
+    def _highlight_current_line(
+        self,
+    ) -> None:
+        selection = QTextEdit.ExtraSelection()
+        selection.format.setBackground(
+            self._current_line_color,
+        )
+        selection.format.setProperty(
+            QTextFormat.Property.FullWidthSelection,
+            True,
+        )
+        selection.cursor = self.textCursor()
+        selection.cursor.clearSelection()
+
+        self.setExtraSelections(
+            [
+                selection,
+            ]
         )
 
 
@@ -50,6 +286,7 @@ class EditorTabsWidget(QTabWidget):
         self,
         *,
         document_service: DocumentService,
+        theme: Theme,
         parent: QWidget | None = None,
     ) -> None:
         """Build an empty editor tab area backed by a document service."""
@@ -66,7 +303,16 @@ class EditorTabsWidget(QTabWidget):
                 "Editor tabs document service must be DocumentService."
             )
 
+        if not isinstance(
+            theme,
+            Theme,
+        ):
+            raise TypeError(
+                "Editor tabs theme must be Theme."
+            )
+
         self._document_service = document_service
+        self._theme = theme
 
         self.setTabsClosable(
             True,
@@ -82,6 +328,29 @@ class EditorTabsWidget(QTabWidget):
         """Return the document service backing this editor area."""
 
         return self._document_service
+
+    def apply_theme(
+        self,
+        theme: Theme,
+    ) -> None:
+        """Recolor every open tab's line-number gutter and current line."""
+
+        if not isinstance(
+            theme,
+            Theme,
+        ):
+            raise TypeError(
+                "Editor tabs theme must be Theme."
+            )
+
+        self._theme = theme
+
+        for index in range(self.count()):
+            self._editor_at(
+                index,
+            ).apply_theme(
+                theme,
+            )
 
     def open_path(
         self,
@@ -217,6 +486,7 @@ class EditorTabsWidget(QTabWidget):
         editor = SourceEditorWidget(
             document_id=workspace_document.document_id,
             initial_text=workspace_document.document.text,
+            theme=self._theme,
         )
         document_id = workspace_document.document_id
         editor.textChanged.connect(

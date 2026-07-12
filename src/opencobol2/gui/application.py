@@ -262,6 +262,20 @@ def create_main_window(
         tool_window_service=tool_window_service,
     )
 
+    # Built before the editor and command registry below (unlike most other
+    # services) because nothing about it depends on them, and both the
+    # editor's initial colors and the Settings dialog's handler need a live
+    # ThemeService to read and switch themes.
+    theme_service = ThemeService(
+        registry=create_builtin_theme_registry(),
+        initial_theme_id=(
+            resolved_settings_service
+            .current
+            .theme
+            .active_theme_id
+        ),
+    )
+
     project_explorer = ProjectExplorerWidget(
         project,
     )
@@ -269,6 +283,7 @@ def create_main_window(
     document_service = DocumentService()
     editor_tabs_widget = EditorTabsWidget(
         document_service=document_service,
+        theme=theme_service.active_theme,
     )
     project_explorer.file_double_clicked.connect(
         editor_tabs_widget.open_path,
@@ -322,19 +337,6 @@ def create_main_window(
         )
     )
 
-    # Built before the command registry (unlike CommandService/MainWindow
-    # below) because nothing about it depends on that registry, and the
-    # Settings dialog's handler needs a live ThemeService to switch themes.
-    theme_service = ThemeService(
-        registry=create_builtin_theme_registry(),
-        initial_theme_id=(
-            resolved_settings_service
-            .current
-            .theme
-            .active_theme_id
-        ),
-    )
-
     # MainWindow doesn't exist until after the command registry below, but
     # the Open Project dialog needs it as a parent; this cell is filled in
     # once construction finishes and only read later, when a user actually
@@ -358,6 +360,9 @@ def create_main_window(
             settings.theme.active_theme_id,
         )
         main_window_holder[0].apply_active_theme()
+        editor_tabs_widget.apply_theme(
+            theme_service.active_theme,
+        )
 
         git_service.set_executable_path(
             _resolve_git_executable_path(

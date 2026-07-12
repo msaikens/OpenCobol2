@@ -10,6 +10,33 @@ from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.documents import DocumentService
 from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.theming import (
+    create_builtin_theme_registry,
+    DARK_THEME_ID,
+    LIGHT_THEME_ID,
+    Theme,
+)
+
+
+def _build_theme(
+    theme_id: str = DARK_THEME_ID,
+) -> Theme:
+    return create_builtin_theme_registry().get(
+        theme_id,
+    )
+
+
+def _build_tabs(
+    document_service: DocumentService | None = None,
+) -> EditorTabsWidget:
+    return EditorTabsWidget(
+        document_service=(
+            DocumentService()
+            if document_service is None
+            else document_service
+        ),
+        theme=_build_theme(),
+    )
 
 
 def test_open_path_creates_a_tab(
@@ -20,9 +47,7 @@ def test_open_path_creates_a_tab(
     file_path.write_text(
         "IDENTIFICATION DIVISION.\n",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
 
     tabs.open_path(
         file_path,
@@ -48,9 +73,7 @@ def test_open_path_twice_reuses_the_existing_tab(
     file_path.write_text(
         "x",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
 
     tabs.open_path(
         file_path,
@@ -73,8 +96,8 @@ def test_editing_text_marks_the_tab_dirty_and_syncs_the_document(
         "original",
     )
     document_service = DocumentService()
-    tabs = EditorTabsWidget(
-        document_service=document_service,
+    tabs = _build_tabs(
+        document_service,
     )
     tabs.open_path(
         file_path,
@@ -97,9 +120,7 @@ def test_editing_text_marks_the_tab_dirty_and_syncs_the_document(
 def test_new_file_creates_an_untitled_tab(
     qapp,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
 
     tabs.new_file()
 
@@ -116,9 +137,7 @@ def test_open_file_dialog_opens_the_chosen_path(
     file_path.write_text(
         "x",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
 
     with patch(
         "opencobol2.gui.editor.QFileDialog.getOpenFileName",
@@ -136,9 +155,7 @@ def test_open_file_dialog_opens_the_chosen_path(
 def test_open_file_dialog_does_nothing_when_cancelled(
     qapp,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
 
     with patch(
         "opencobol2.gui.editor.QFileDialog.getOpenFileName",
@@ -160,9 +177,7 @@ def test_save_active_document_persists_changes(
     file_path.write_text(
         "original",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.open_path(
         file_path,
     )
@@ -180,9 +195,7 @@ def test_save_active_document_redirects_untitled_to_save_as(
     qapp,
     tmp_path: Path,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.new_file()
     tabs.widget(0).setPlainText(
         "hello",
@@ -211,9 +224,7 @@ def test_save_active_document_as_prompts_even_for_titled_documents(
         "x",
     )
     other_path = tmp_path / "copy.cbl"
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.open_path(
         original_path,
     )
@@ -236,9 +247,7 @@ def test_save_active_document_as_does_nothing_when_cancelled(
     qapp,
     tmp_path: Path,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.new_file()
     tabs.widget(0).setPlainText(
         "hello",
@@ -264,9 +273,7 @@ def test_save_all_documents_skips_untitled_and_saves_the_rest(
     file_path.write_text(
         "original",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.open_path(
         file_path,
     )
@@ -293,9 +300,7 @@ def test_close_active_document_without_changes_removes_the_tab(
     file_path.write_text(
         "x",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.open_path(
         file_path,
     )
@@ -308,9 +313,7 @@ def test_close_active_document_without_changes_removes_the_tab(
 def test_closing_a_modified_document_prompts_and_respects_cancel(
     qapp,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.new_file()
     tabs.widget(0).setPlainText(
         "unsaved",
@@ -330,9 +333,7 @@ def test_closing_a_modified_document_prompts_and_respects_cancel(
 def test_closing_a_modified_document_can_discard_changes(
     qapp,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.new_file()
     tabs.widget(0).setPlainText(
         "unsaved",
@@ -353,9 +354,7 @@ def test_closing_a_modified_document_can_save_first(
     qapp,
     tmp_path: Path,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.new_file()
     tabs.widget(0).setPlainText(
         "unsaved",
@@ -386,9 +385,7 @@ def test_closing_a_modified_document_can_save_first(
 def test_closing_a_modified_untitled_document_save_choice_cancelled_keeps_tab(
     qapp,
 ) -> None:
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.new_file()
     tabs.widget(0).setPlainText(
         "unsaved",
@@ -425,9 +422,7 @@ def test_close_all_documents_closes_every_tab(
     file_path.write_text(
         "x",
     )
-    tabs = EditorTabsWidget(
-        document_service=DocumentService(),
-    )
+    tabs = _build_tabs()
     tabs.open_path(
         file_path,
     )
@@ -449,4 +444,146 @@ def test_rejects_non_document_service(
     ):
         EditorTabsWidget(
             document_service=object(),  # type: ignore[arg-type]
+            theme=_build_theme(),
         )
+
+
+def test_rejects_non_theme(
+    qapp,
+) -> None:
+    with pytest.raises(
+        TypeError,
+        match="Editor tabs theme must be Theme",
+    ):
+        EditorTabsWidget(
+            document_service=DocumentService(),
+            theme=object(),  # type: ignore[arg-type]
+        )
+
+
+def test_new_tab_uses_the_constructor_theme_colors(
+    qapp,
+) -> None:
+    theme = _build_theme(
+        DARK_THEME_ID,
+    )
+    tabs = _build_tabs()
+    tabs.new_file()
+
+    editor = tabs.widget(0)
+
+    assert (
+        editor._line_number_color.name().upper()
+        == theme.colors.line_number_foreground
+    )
+    assert (
+        editor._current_line_color.name().upper()
+        == theme.colors.current_line_highlight
+    )
+
+
+def test_apply_theme_recolors_every_open_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    light_theme = _build_theme(
+        LIGHT_THEME_ID,
+    )
+
+    tabs.apply_theme(
+        light_theme,
+    )
+
+    for index in range(tabs.count()):
+        editor = tabs.widget(index)
+        assert (
+            editor._line_number_color.name().upper()
+            == light_theme.colors.line_number_foreground
+        )
+        assert (
+            editor._current_line_color.name().upper()
+            == light_theme.colors.current_line_highlight
+        )
+
+
+def test_apply_theme_colors_new_tabs_opened_afterward(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    light_theme = _build_theme(
+        LIGHT_THEME_ID,
+    )
+
+    tabs.apply_theme(
+        light_theme,
+    )
+    tabs.new_file()
+
+    editor = tabs.widget(0)
+    assert (
+        editor._line_number_color.name().upper()
+        == light_theme.colors.line_number_foreground
+    )
+
+
+def test_apply_theme_rejects_non_theme(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    with pytest.raises(
+        TypeError,
+        match="Editor tabs theme must be Theme",
+    ):
+        tabs.apply_theme(
+            object(),  # type: ignore[arg-type]
+        )
+
+
+def test_line_number_area_width_grows_with_line_count(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    editor.setPlainText(
+        "one line",
+    )
+    narrow_width = editor.line_number_area_width()
+
+    editor.setPlainText(
+        "\n".join(
+            f"line {i}"
+            for i in range(500)
+        ),
+    )
+    wide_width = editor.line_number_area_width()
+
+    assert wide_width > narrow_width
+
+
+def test_current_line_highlight_uses_full_width_selection(
+    qapp,
+) -> None:
+    from PySide6.QtGui import QTextFormat
+
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    selections = editor.extraSelections()
+
+    assert len(selections) == 1
+    assert (
+        selections[0].format.background().color()
+        == editor._current_line_color
+    )
+    assert (
+        selections[0].format.property(
+            QTextFormat.Property.FullWidthSelection,
+        )
+        is True
+    )
