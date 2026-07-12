@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 
 from PySide6.QtWidgets import QApplication
@@ -17,6 +18,7 @@ from opencobol2.commands.builtins import (
 from opencobol2.gui.command_palette import (
     create_show_command_palette_handler,
 )
+from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.main_window import MainWindow
 from opencobol2.gui.project_commands import (
     create_project_close_handler,
@@ -25,16 +27,29 @@ from opencobol2.gui.project_commands import (
     create_project_save_as_handler,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.gui.settings_dialog import (
+    create_show_settings_handler,
+)
 from opencobol2.project import Project
 from opencobol2.services.accessibility import AccessibilityService
 from opencobol2.services.command_contributions import (
     CommandContributionService,
 )
 from opencobol2.services.commands import CommandService
+from opencobol2.services.git import (
+    GitCommandFailedError,
+    GitCommandTimedOutError,
+    GitExecutableUnavailableError,
+    GitRepositoryNotFoundError,
+    GitService,
+)
 from opencobol2.services.status_bar import StatusBarService
 from opencobol2.services.theming import ThemeService
 from opencobol2.services.tool_windows import ToolWindowService
-from opencobol2.settings import SettingsService
+from opencobol2.settings import (
+    ApplicationSettings,
+    SettingsService,
+)
 from opencobol2.status_bar import (
     StatusBarItemAlignment,
     StatusBarItemContent,
@@ -132,6 +147,33 @@ def _create_status_bar_registry(
     return registry
 
 
+def _discover_repository_path(
+    git_service: GitService,
+    project: Project | None,
+) -> Path | None:
+    """Best-effort discovery of a Git repository at a project's root.
+
+    Returns `None` for no project, a non-repository root, a missing `git`
+    executable, or any other Git command failure — the Git Changes panel
+    degrades to its empty state rather than the bootstrap crashing outright.
+    """
+
+    if project is None:
+        return None
+
+    try:
+        return git_service.discover_repository(
+            project.root_path,
+        )
+    except (
+        GitRepositoryNotFoundError,
+        GitExecutableUnavailableError,
+        GitCommandFailedError,
+        GitCommandTimedOutError,
+    ):
+        return None
+
+
 def create_main_window(
     *,
     settings_service: SettingsService | None = None,
@@ -145,7 +187,10 @@ def create_main_window(
     Project and File > Save Project As are all wired to real handlers that
     create, load, save, or clear a project file and update that panel. The
     status bar shows the open project's name (left) and the active theme
-    (right), refreshing automatically whenever the project changes.
+    (right), refreshing automatically whenever the project changes. The Git
+    Changes panel tracks a Git repository discovered at the open project's
+    root — falling back to its empty state if there is none, or if `git`
+    itself is unavailable — and refreshes automatically alongside it.
     """
 
     resolved_settings_service = (
@@ -166,6 +211,29 @@ def create_main_window(
     project_explorer = ProjectExplorerWidget(
         project,
     )
+
+    git_service = GitService()
+    git_changes_widget = GitChangesWidget(
+        git_service=git_service,
+        repository_path=_discover_repository_path(
+            git_service,
+            project,
+        ),
+    )
+
+    # Built before the command registry (unlike CommandService/MainWindow
+    # below) because nothing about it depends on that registry, and the
+    # Settings dialog's handler needs a live ThemeService to switch themes.
+    theme_service = ThemeService(
+        registry=create_builtin_theme_registry(),
+        initial_theme_id=(
+            resolved_settings_service
+            .current
+            .theme
+            .active_theme_id
+        ),
+    )
+
     # MainWindow doesn't exist until after the command registry below, but
     # the Open Project dialog needs it as a parent; this cell is filled in
     # once construction finishes and only read later, when a user actually
@@ -179,6 +247,16 @@ def create_main_window(
     command_service_holder: list[
         CommandService | None
     ] = [None]
+
+    def _apply_settings_to_running_window(
+        settings: ApplicationSettings,
+    ) -> None:
+        """Reflect newly-saved settings onto the already-built shell."""
+
+        theme_service.set_active_theme(
+            settings.theme.active_theme_id,
+        )
+        main_window_holder[0].apply_active_theme()
 
     command_service = CommandService(
         registry=create_builtin_command_registry(
@@ -225,6 +303,22 @@ def create_main_window(
                             ),
                         )
                     ),
+                    BuiltInCommandIds.TOOLS_SETTINGS: (
+                        create_show_settings_handler(
+                            settings_service=(
+                                resolved_settings_service
+                            ),
+                            theme_registry=(
+                                theme_service.registry
+                            ),
+                            on_applied=(
+                                _apply_settings_to_running_window
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
                 },
             ),
         ),
@@ -239,16 +333,6 @@ def create_main_window(
                 recent_project_provider=lambda context: (),
                 accessibility_service=accessibility_service,
             )
-        ),
-    )
-
-    theme_service = ThemeService(
-        registry=create_builtin_theme_registry(),
-        initial_theme_id=(
-            resolved_settings_service
-            .current
-            .theme
-            .active_theme_id
         ),
     )
 
@@ -268,12 +352,25 @@ def create_main_window(
             BuiltInToolWindowIds.PROJECT_EXPLORER: (
                 lambda: project_explorer
             ),
+            BuiltInToolWindowIds.GIT_CHANGES: (
+                lambda: git_changes_widget
+            ),
         },
         status_bar_service=status_bar_service,
     )
     main_window_holder[0] = window
     project_explorer.project_changed.connect(
         lambda _project: window.refresh_status_bar(),
+    )
+    project_explorer.project_changed.connect(
+        lambda changed_project: (
+            git_changes_widget.set_repository_path(
+                _discover_repository_path(
+                    git_service,
+                    changed_project,
+                )
+            )
+        ),
     )
 
     return window

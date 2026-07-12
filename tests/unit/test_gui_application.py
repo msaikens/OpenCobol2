@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 from PySide6.QtGui import QPalette
@@ -12,15 +13,53 @@ from opencobol2.gui.application import (
     TOP_LEVEL_MENUS,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.gui.settings_dialog import SettingsDialog
 from opencobol2.project import (
     create_project,
     ProjectStorage,
 )
+from opencobol2.theming import LIGHT_THEME_ID
 from opencobol2.settings import (
     SettingsService,
     SettingsStorage,
     ThemeSettings,
 )
+
+
+def _init_repository(
+    path: Path,
+) -> None:
+    """Initialize a real, minimally-configured Git repository for testing."""
+
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "-q",
+        ],
+        cwd=path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "user.email",
+            "test@example.com",
+        ],
+        cwd=path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "user.name",
+            "Test User",
+        ],
+        cwd=path,
+        check=True,
+    )
 
 
 def _find_action(
@@ -48,6 +87,16 @@ def _project_explorer_content(
     return (
         window.dock_manager.get_dock_widget(
             "project-explorer",
+        ).widget()
+    )
+
+
+def _git_changes_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "git-changes",
         ).widget()
     )
 
@@ -521,3 +570,241 @@ def test_command_palette_menu_action_opens_dialog(
         palette_action.trigger()
 
     mock_exec.assert_called_once()
+
+
+def test_git_changes_panel_empty_without_a_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    git_changes = _git_changes_content(
+        window,
+    )
+
+    assert git_changes.repository_path is None
+
+
+def test_git_changes_panel_seeded_with_project_repository(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project_root = (
+        tmp_path / "project"
+    )
+    project_root.mkdir()
+    _init_repository(
+        project_root,
+    )
+    (
+        project_root / "main.cbl"
+    ).write_text(
+        "x",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=project_root,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    git_changes = _git_changes_content(
+        window,
+    )
+
+    assert (
+        git_changes.repository_path
+        == project_root
+    )
+    assert (
+        git_changes._unstaged_list.count()
+        == 1
+    )
+
+
+def test_git_changes_panel_updates_when_project_opened_and_closed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project_root = (
+        tmp_path / "project"
+    )
+    project_root.mkdir()
+    _init_repository(
+        project_root,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=project_root,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    git_changes = _git_changes_content(
+        window,
+    )
+
+    assert git_changes.repository_path is None
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    assert (
+        git_changes.repository_path
+        == project_root
+    )
+
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert git_changes.repository_path is None
+
+
+def test_git_changes_panel_falls_back_to_empty_for_non_repository_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project_root = (
+        tmp_path / "project"
+    )
+    project_root.mkdir()
+    project = create_project(
+        name="Demo",
+        root_path=project_root,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    git_changes = _git_changes_content(
+        window,
+    )
+
+    assert git_changes.repository_path is None
+
+
+def test_settings_menu_action_applies_theme_to_running_window(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_path = (
+        tmp_path / "settings.json"
+    )
+    settings_service = SettingsService(
+        SettingsStorage(
+            settings_path,
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    assert (
+        window.palette().color(
+            QPalette.ColorRole.Window,
+        ).name().upper()
+        == "#1E1E1E"
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        theme_index = (
+            dialog_self._theme_combo.findData(
+                LIGHT_THEME_ID,
+            )
+        )
+        dialog_self._theme_combo.setCurrentIndex(
+            theme_index,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert (
+        window.palette().color(
+            QPalette.ColorRole.Window,
+        ).name().upper()
+        == "#FFFFFF"
+    )
+    assert (
+        window._status_bar_labels[
+            "theme"
+        ].text()
+        == "Theme: Light"
+    )
+
+    reloaded = SettingsService(
+        SettingsStorage(
+            settings_path,
+        )
+    )
+    assert (
+        reloaded.current.theme.active_theme_id
+        == "light"
+    )

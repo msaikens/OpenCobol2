@@ -504,7 +504,7 @@ class GitService:
             arguments = (
                 "rm",
                 "--cached",
-                "--recursive",
+                "-r",
                 "--ignore-unmatch",
                 "--",
                 ".",

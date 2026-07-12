@@ -668,7 +668,7 @@ def test_unstage_all_uses_rm_cached_for_unborn_repository(
         "git",
         "rm",
         "--cached",
-        "--recursive",
+        "-r",
         "--ignore-unmatch",
         "--",
         ".",
