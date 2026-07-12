@@ -633,6 +633,7 @@
     <Compile Include="src\opencobol2\gui\problems_panel.py" />
     <Compile Include="src\opencobol2\gui\project_commands.py" />
     <Compile Include="src\opencobol2\gui\project_explorer.py" />
+    <Compile Include="src\opencobol2\gui\project_properties_dialog.py" />
     <Compile Include="src\opencobol2\gui\settings_dialog.py" />
     <Compile Include="src\opencobol2\gui\status_bar.py" />
     <Compile Include="src\opencobol2\gui\theming.py" />
@@ -760,6 +761,7 @@
     <Compile Include="tests\unit\test_gui_problems_panel.py" />
     <Compile Include="tests\unit\test_gui_project_commands.py" />
     <Compile Include="tests\unit\test_gui_project_explorer.py" />
+    <Compile Include="tests\unit\test_gui_project_properties_dialog.py" />
     <Compile Include="tests\unit\test_gui_settings_dialog.py" />
     <Compile Include="tests\unit\test_gui_status_bar.py" />
     <Compile Include="tests\unit\test_gui_theming.py" />

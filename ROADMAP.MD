@@ -56,7 +56,7 @@ We are not implementing every Git feature immediately. The IDE only needs enough
 
 ## Phase 2 — Project System
 
-Most of the non-GUI foundation is done; what remains is almost entirely GUI (Phase 7).
+Complete. The last remaining gap (a project-level UI for selecting a default compiler profile) closed with `ProjectPropertiesDialog`.
 
 * ✅ Virtual (logical) folders
 * ✅ Linked files
@@ -65,7 +65,7 @@ Most of the non-GUI foundation is done; what remains is almost entirely GUI (Pha
 * ✅ Project-level environment variable overrides
 * ✅ Tasks (user-defined, directly executable)
 * ✅ Launch configurations (directly executable, layered environment resolution)
-* 🔶 Compiler profiles / runtime profiles — the compiler-provider and runtime abstraction exists (Phase 5) and a project can reference a profile by ID; `CompilerProfilesDialog` (Tools > Compiler Profiles, Phase 7) now authors the global `CompilerSettings.profiles` list, but there is still no project-level UI for picking which of those profiles one specific project's `default_compiler_profile_id` should reference
+* ✅ Compiler profiles / runtime profiles — the compiler-provider and runtime abstraction exists (Phase 5), `CompilerProfilesDialog` (Tools > Compiler Profiles, Phase 7) authors the global `CompilerSettings.profiles` list, and `ProjectPropertiesDialog` (`opencobol2.gui.project_properties_dialog`, Phase 7 — right-click the project's root item in Project Explorer > Properties...) now lets one specific project select which of those profiles its `properties.default_compiler_profile_id` should reference (or fall back to the global default). Build Project (Phase 5/7) prefers a project's own profile over the global default when one is set.
 * ✅ Project Explorer (`ProjectExplorerWidget`, Phase 7: a real tree showing the project's physical files honoring `excluded_patterns`, virtual folders with nested members, and linked files not already organized into a virtual folder; all four File > Project commands — New, Open, Save As, Close — are wired to real handlers)
 
 ## Phase 3 — Editor
@@ -85,7 +85,7 @@ A first-cut editor widget now exists (`EditorTabsWidget`/`SourceEditorWidget`, `
 * ⬜ Breakpoints
 * ⬜ Minimap
 * ✅ Line numbers (`SourceEditorWidget`'s gutter, the standard `QPlainTextEdit` line-number-area pattern — width scales with digit count, repainted on scroll/edit, colored from `Theme.colors.line_number_foreground`; also renders current-line highlighting via `setExtraSelections`, colored from `current_line_highlight` — both fields existed in the theme model since Phase 1 with no consumer until now, and both recolor live via `EditorTabsWidget.apply_theme()` on a theme switch)
-* ⬜ Search/replace
+* ✅ Search/replace (`SourceEditorWidget`'s in-editor find bar: forward/backward find with wraparound, an optional match-case toggle, Replace, and Replace All, all driven by Qt's own `QPlainTextEdit.find()` rather than hand-rolled search logic; wired to Edit > Find / Replace, Ctrl+F / Ctrl+H, which were registered commands with menu contributions but no handler until now)
 * ⬜ Multiple cursors
 * ⬜ Column selection
 * ⬜ Printing
@@ -160,8 +160,8 @@ The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindo
 * ✅ Recent projects (`RecentProjectsSettings` persists up to 10 project file paths, newest first, deduplicated on reopen; File > Open Recent Project lists them live via a `DynamicMenuContribution`, skipping any that no longer exist on disk; New/Open/Save-As all record the project file automatically)
 * ✅ Preferences dialog (`SettingsDialog`, `opencobol2.gui.settings_dialog`: Editor/COBOL/Theme/External Tools tabs backed by the real `SettingsService`; wired to Tools > Settings; applying immediately updates the running window's palette, status bar, and `GitService` executable path via an `on_applied` callback, not just the persisted file)
 * ✅ Compiler Profiles dialog (`CompilerProfilesDialog`, `opencobol2.gui.compiler_profiles_dialog`: list/add/remove/rename configured `CompilerProfile`s, pick a registered provider when adding, select the default, and edit each profile's configuration through a form generated from that provider's `CompilerConfigurationField` schema — every field kind: string, path (with a browse button), boolean, string list, string map, integer list, choice; validates every profile against its provider before saving; wired to Tools > Compiler Profiles. No `on_applied` callback needed — Build Project resolves the default profile from `SettingsService.current` fresh on every build)
-* ✅ Project explorer (`ProjectExplorerWidget`: real physical-file tree honoring `excluded_patterns`, virtual folders, and linked files — see Phase 2; all four project file commands — New, Open, Save As, Close (`opencobol2.gui.project_commands`) — are wired to real handlers using stock `QFileDialog`/`QInputDialog` prompts, no custom dialog widgets built yet; double-clicking a physical file item emits `file_double_clicked`, wired to the editor below)
-* ✅ Editor, first cut (`EditorTabsWidget`/`SourceEditorWidget`, `opencobol2.gui.editor`: docked as `MainWindow`'s central widget via a new `central_widget` constructor parameter; one `QPlainTextEdit`-based tab per open document, backed by the Phase 1/3 `DocumentService`; dirty tracking shown as a trailing `*` in the tab title; File > New/Open/Save/Save As/Save All/Close/Close All all wired to real handlers, including unsaved-changes Save/Discard/Cancel prompts on close; a real line-number gutter and current-line highlight, both colored from the active theme and recolored live via `apply_theme()` on a theme switch — see Phase 3. No syntax highlighting, folding, minimap, split editors, or multiple cursors yet)
+* ✅ Project explorer (`ProjectExplorerWidget`: real physical-file tree honoring `excluded_patterns`, virtual folders, and linked files — see Phase 2; all four project file commands — New, Open, Save As, Close (`opencobol2.gui.project_commands`) — are wired to real handlers using stock `QFileDialog`/`QInputDialog` prompts, no custom dialog widgets built yet; double-clicking a physical file item emits `file_double_clicked`, wired to the editor below; right-clicking the project's root item offers Properties..., opening `ProjectPropertiesDialog` — see Phase 2)
+* ✅ Editor, first cut (`EditorTabsWidget`/`SourceEditorWidget`, `opencobol2.gui.editor`: docked as `MainWindow`'s central widget via a new `central_widget` constructor parameter; one `QPlainTextEdit`-based tab per open document, backed by the Phase 1/3 `DocumentService`; dirty tracking shown as a trailing `*` in the tab title; File > New/Open/Save/Save As/Save All/Close/Close All all wired to real handlers, including unsaved-changes Save/Discard/Cancel prompts on close; a real line-number gutter and current-line highlight, both colored from the active theme and recolored live via `apply_theme()` on a theme switch; Edit > Find/Replace (Ctrl+F/Ctrl+H) open a real in-editor find bar — see Phase 3. No syntax highlighting, folding, minimap, split editors, or multiple cursors yet)
 * ✅ Output window (`OutputWidget`, `opencobol2.gui.output_panel`: a read-only, append-only log; Build > Build Project streams compiler process stdout/stderr and per-file status lines into it)
 * ✅ Problems window (`ProblemsWidget`, `opencobol2.gui.problems_panel`: a read-only table of severity/file/line/column/message, replaced with each build's parsed `CompilerDiagnostic`s)
 * ⬜ Terminal

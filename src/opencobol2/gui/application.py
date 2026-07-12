@@ -48,6 +48,9 @@ from opencobol2.gui.project_commands import (
     create_recent_project_provider,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.gui.project_properties_dialog import (
+    ProjectPropertiesDialog,
+)
 from opencobol2.gui.settings_dialog import (
     create_show_settings_handler,
 )
@@ -351,6 +354,29 @@ def create_main_window(
         CommandService | None
     ] = [None]
 
+    def _handle_show_project_properties() -> None:
+        """Open Project Properties for the currently displayed project."""
+
+        current_project = project_explorer.project
+
+        if current_project is None:
+            return
+
+        dialog = ProjectPropertiesDialog(
+            project=current_project,
+            settings_service=resolved_settings_service,
+            parent=main_window_holder[0],
+        )
+
+        if dialog.exec():
+            project_explorer.set_project(
+                dialog.updated_project,
+            )
+
+    project_explorer.project_properties_requested.connect(
+        _handle_show_project_properties,
+    )
+
     def _apply_settings_to_running_window(
         settings: ApplicationSettings,
     ) -> None:
@@ -409,6 +435,16 @@ def create_main_window(
                     BuiltInCommandIds.FILE_CLOSE_ALL: (
                         lambda context: (
                             editor_tabs_widget.close_all_documents()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_FIND: (
+                        lambda context: (
+                            editor_tabs_widget.show_find()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_REPLACE: (
+                        lambda context: (
+                            editor_tabs_widget.show_replace()
                         )
                     ),
                     BuiltInCommandIds.PROJECT_OPEN: (

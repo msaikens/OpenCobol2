@@ -11,14 +11,22 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QResizeEvent,
+    QTextCursor,
+    QTextDocument,
     QTextFormat,
 )
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QTabWidget,
     QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -61,6 +69,210 @@ class _LineNumberArea(QWidget):
         )
 
 
+class _FindReplaceBar(QWidget):
+    """A floating overlay for finding and replacing text in one editor."""
+
+    def __init__(
+        self,
+        editor: SourceEditorWidget,
+    ) -> None:
+        super().__init__(
+            editor,
+        )
+
+        self._editor = editor
+        self.setAutoFillBackground(
+            True,
+        )
+
+        layout = QVBoxLayout(
+            self,
+        )
+        layout.setContentsMargins(
+            6,
+            4,
+            6,
+            4,
+        )
+
+        find_row = QHBoxLayout()
+
+        self.find_edit = QLineEdit()
+        self.find_edit.returnPressed.connect(
+            self._handle_find_next,
+        )
+        find_row.addWidget(
+            self.find_edit,
+        )
+
+        self.case_sensitive_check = QCheckBox(
+            "Match case",
+        )
+        find_row.addWidget(
+            self.case_sensitive_check,
+        )
+
+        previous_button = QPushButton(
+            "Previous",
+        )
+        previous_button.clicked.connect(
+            self._handle_find_previous,
+        )
+        find_row.addWidget(
+            previous_button,
+        )
+
+        next_button = QPushButton(
+            "Next",
+        )
+        next_button.clicked.connect(
+            self._handle_find_next,
+        )
+        find_row.addWidget(
+            next_button,
+        )
+
+        close_button = QPushButton(
+            "Close",
+        )
+        close_button.clicked.connect(
+            self._editor.hide_find_bar,
+        )
+        find_row.addWidget(
+            close_button,
+        )
+
+        layout.addLayout(
+            find_row,
+        )
+
+        self._replace_row_widget = QWidget()
+        replace_row = QHBoxLayout(
+            self._replace_row_widget,
+        )
+        replace_row.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        self.replace_edit = QLineEdit()
+        replace_row.addWidget(
+            self.replace_edit,
+        )
+
+        replace_button = QPushButton(
+            "Replace",
+        )
+        replace_button.clicked.connect(
+            self._handle_replace,
+        )
+        replace_row.addWidget(
+            replace_button,
+        )
+
+        replace_all_button = QPushButton(
+            "Replace All",
+        )
+        replace_all_button.clicked.connect(
+            self._handle_replace_all,
+        )
+        replace_row.addWidget(
+            replace_all_button,
+        )
+
+        layout.addWidget(
+            self._replace_row_widget,
+        )
+
+        self.status_label = QLabel()
+        layout.addWidget(
+            self.status_label,
+        )
+
+    def set_replace_visible(
+        self,
+        visible: bool,
+    ) -> None:
+        """Show or hide the replace row for find-only vs. find-and-replace."""
+
+        self._replace_row_widget.setVisible(
+            visible,
+        )
+
+    def _flags(
+        self,
+    ) -> QTextDocument.FindFlag:
+        flags = QTextDocument.FindFlag(
+            0,
+        )
+
+        if self.case_sensitive_check.isChecked():
+            flags |= (
+                QTextDocument.FindFlag.FindCaseSensitively
+            )
+
+        return flags
+
+    def _handle_find_next(
+        self,
+    ) -> None:
+        self._report_found(
+            self._editor.find_text(
+                self.find_edit.text(),
+                backwards=False,
+                flags=self._flags(),
+            )
+        )
+
+    def _handle_find_previous(
+        self,
+    ) -> None:
+        self._report_found(
+            self._editor.find_text(
+                self.find_edit.text(),
+                backwards=True,
+                flags=self._flags(),
+            )
+        )
+
+    def _handle_replace(
+        self,
+    ) -> None:
+        self._report_found(
+            self._editor.replace_current(
+                self.find_edit.text(),
+                self.replace_edit.text(),
+                flags=self._flags(),
+            )
+        )
+
+    def _handle_replace_all(
+        self,
+    ) -> None:
+        count = self._editor.replace_all(
+            self.find_edit.text(),
+            self.replace_edit.text(),
+            flags=self._flags(),
+        )
+        self.status_label.setText(
+            f"Replaced {count} occurrence(s)."
+            if count
+            else "No occurrences found."
+        )
+
+    def _report_found(
+        self,
+        found: bool,
+    ) -> None:
+        self.status_label.setText(
+            ""
+            if found
+            else "No occurrences found.",
+        )
+
+
 class SourceEditorWidget(QPlainTextEdit):
     """A plain-text editor for exactly one open document."""
 
@@ -88,6 +300,10 @@ class SourceEditorWidget(QPlainTextEdit):
         self._line_number_area = _LineNumberArea(
             self,
         )
+        self._find_bar = _FindReplaceBar(
+            self,
+        )
+        self._find_bar.hide()
 
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
@@ -222,6 +438,184 @@ class SourceEditorWidget(QPlainTextEdit):
                 self.line_number_area_width(),
                 contents_rect.height(),
             )
+        )
+        self._position_find_bar()
+
+    def show_find_bar(
+        self,
+    ) -> None:
+        """Reveal the find bar, prefilled from any current selection."""
+
+        self._find_bar.set_replace_visible(
+            False,
+        )
+        self._reveal_find_bar()
+
+    def show_replace_bar(
+        self,
+    ) -> None:
+        """Reveal the find bar with its replace row visible."""
+
+        self._find_bar.set_replace_visible(
+            True,
+        )
+        self._reveal_find_bar()
+
+    def hide_find_bar(
+        self,
+    ) -> None:
+        """Hide the find bar and return focus to the editor."""
+
+        self._find_bar.hide()
+        self.setFocus()
+
+    def find_text(
+        self,
+        text: str,
+        *,
+        backwards: bool,
+        flags: QTextDocument.FindFlag = QTextDocument.FindFlag(
+            0,
+        ),
+    ) -> bool:
+        """Find one occurrence, wrapping around the document once if needed."""
+
+        if not text:
+            return False
+
+        search_flags = (
+            flags | QTextDocument.FindFlag.FindBackward
+            if backwards
+            else flags
+        )
+
+        if self.find(
+            text,
+            search_flags,
+        ):
+            return True
+
+        cursor = self.textCursor()
+        cursor.movePosition(
+            QTextCursor.MoveOperation.End
+            if backwards
+            else QTextCursor.MoveOperation.Start,
+        )
+        self.setTextCursor(
+            cursor,
+        )
+
+        return self.find(
+            text,
+            search_flags,
+        )
+
+    def replace_current(
+        self,
+        find_text_value: str,
+        replace_text_value: str,
+        *,
+        flags: QTextDocument.FindFlag = QTextDocument.FindFlag(
+            0,
+        ),
+    ) -> bool:
+        """Replace the current match (if selected) and find the next one."""
+
+        cursor = self.textCursor()
+
+        if cursor.hasSelection() and _texts_match(
+            cursor.selectedText(),
+            find_text_value,
+            flags,
+        ):
+            cursor.insertText(
+                replace_text_value,
+            )
+            self.setTextCursor(
+                cursor,
+            )
+
+        return self.find_text(
+            find_text_value,
+            backwards=False,
+            flags=flags,
+        )
+
+    def replace_all(
+        self,
+        find_text_value: str,
+        replace_text_value: str,
+        *,
+        flags: QTextDocument.FindFlag = QTextDocument.FindFlag(
+            0,
+        ),
+    ) -> int:
+        """Replace every occurrence in the document; return the count."""
+
+        if not find_text_value:
+            return 0
+
+        cursor = self.textCursor()
+        cursor.movePosition(
+            QTextCursor.MoveOperation.Start,
+        )
+        self.setTextCursor(
+            cursor,
+        )
+
+        replaced_count = 0
+
+        while self.find(
+            find_text_value,
+            flags,
+        ):
+            match_cursor = self.textCursor()
+            match_cursor.insertText(
+                replace_text_value,
+            )
+            self.setTextCursor(
+                match_cursor,
+            )
+            replaced_count += 1
+
+        return replaced_count
+
+    def _reveal_find_bar(
+        self,
+    ) -> None:
+        self._find_bar.show()
+        self._position_find_bar()
+        self._find_bar.raise_()
+
+        selected_text = self.textCursor().selectedText()
+
+        if selected_text:
+            self._find_bar.find_edit.setText(
+                selected_text,
+            )
+
+        self._find_bar.find_edit.setFocus()
+        self._find_bar.find_edit.selectAll()
+
+    def _position_find_bar(
+        self,
+    ) -> None:
+        if not self._find_bar.isVisible():
+            return
+
+        bar_width = min(
+            420,
+            max(
+                self.width() - 8,
+                1,
+            ),
+        )
+        self._find_bar.setFixedWidth(
+            bar_width,
+        )
+        self._find_bar.move(
+            self.width() - bar_width - 4,
+            4,
         )
 
     def _update_line_number_area_width(
@@ -466,6 +860,26 @@ class EditorTabsWidget(QTabWidget):
             self._close_tab(
                 index,
             )
+
+    def show_find(
+        self,
+    ) -> None:
+        """Show the find bar on the active tab, if any."""
+
+        editor = self.currentWidget()
+
+        if editor is not None:
+            editor.show_find_bar()
+
+    def show_replace(
+        self,
+    ) -> None:
+        """Show the find-and-replace bar on the active tab, if any."""
+
+        editor = self.currentWidget()
+
+        if editor is not None:
+            editor.show_replace_bar()
 
     def _show_document(
         self,
@@ -796,4 +1210,23 @@ def _tab_tooltip(
         )
         if document.path is not None
         else "Untitled"
+    )
+
+
+def _texts_match(
+    selected_text: str,
+    target_text: str,
+    flags: QTextDocument.FindFlag,
+) -> bool:
+    """Return whether selected text is the same match as the search text."""
+
+    if bool(
+        flags
+        & QTextDocument.FindFlag.FindCaseSensitively,
+    ):
+        return selected_text == target_text
+
+    return (
+        selected_text.casefold()
+        == target_text.casefold()
     )

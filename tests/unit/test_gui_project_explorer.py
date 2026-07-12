@@ -493,3 +493,97 @@ def test_double_clicking_a_directory_emits_nothing(
     )
 
     assert received == []
+
+
+def test_show_project_properties_emits_the_request_signal(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.project_properties_requested.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    widget._show_project_properties()
+
+    assert received == [True]
+
+
+def test_context_menu_ignores_empty_area(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # No item under the cursor: must return before ever building/exec'ing a
+    # QMenu (QMenu.exec() hangs indefinitely under the offscreen platform,
+    # so reaching it here would hang the test rather than fail it).
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.project_properties_requested.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    widget._show_context_menu(
+        widget._tree.rect().bottomRight(),
+    )
+
+    assert received == []
+
+
+def test_context_menu_ignores_non_root_items(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "x",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.project_properties_requested.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    file_item = root_item.child(
+        0,
+    )
+    widget._tree.expandItem(
+        root_item,
+    )
+    file_rect = widget._tree.visualItemRect(
+        file_item,
+    )
+
+    widget._show_context_menu(
+        file_rect.center(),
+    )
+
+    assert received == []

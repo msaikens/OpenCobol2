@@ -351,3 +351,97 @@ def test_build_handler_creates_missing_output_directory(
 
     assert output_directory.is_dir()
     assert (output_directory / "main").is_file()
+
+
+def test_build_handler_prefers_project_compiler_profile_over_global_default(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "main.cbl").write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+
+    global_script = tmp_path / "global_stub.py"
+    global_script.write_text(
+        _STUB_COMPILER_SCRIPT.replace(
+            "unused data item",
+            "compiled by the global profile",
+        )
+    )
+    project_script = tmp_path / "project_stub.py"
+    project_script.write_text(
+        _STUB_COMPILER_SCRIPT.replace(
+            "unused data item",
+            "compiled by the project profile",
+        )
+    )
+
+    global_profile = CompilerProfile(
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Global Compiler",
+        configuration={
+            "executable_path": sys.executable,
+            "compile_arguments": (
+                str(global_script),
+                "{source}",
+                "-o",
+                "{output}",
+            ),
+        },
+    )
+    project_profile = CompilerProfile(
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Project Compiler",
+        configuration={
+            "executable_path": sys.executable,
+            "compile_arguments": (
+                str(project_script),
+                "{source}",
+                "-o",
+                "{output}",
+            ),
+        },
+    )
+
+    settings_service = SettingsService(
+        SettingsStorage(tmp_path / "settings.json"),
+    )
+    settings_service.update_compilers(
+        CompilerSettings(
+            default_profile_id=global_profile.profile_id,
+            profiles=(
+                global_profile,
+                project_profile,
+            ),
+        )
+    )
+
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project = replace(
+        project,
+        properties=replace(
+            project.properties,
+            default_compiler_profile_id=(
+                project_profile.profile_id
+            ),
+        ),
+    )
+
+    output_widget = OutputWidget()
+    handler = create_build_project_handler(
+        project_explorer=ProjectExplorerWidget(project),
+        output_widget=output_widget,
+        problems_widget=ProblemsWidget(),
+        runtime_activation_service=(
+            _build_runtime_activation_service(settings_service)
+        ),
+    )
+
+    handler(None)
+
+    output_text = output_widget.toPlainText()
+    assert "compiled by the project profile" in output_text
+    assert "compiled by the global profile" not in output_text

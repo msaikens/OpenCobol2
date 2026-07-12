@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QLabel,
+    QMenu,
     QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
@@ -30,6 +31,9 @@ class ProjectExplorerWidget(QWidget):
 
     file_double_clicked = Signal(Path)
     """Emitted with a physical file's path when its tree item is double-clicked."""
+
+    project_properties_requested = Signal()
+    """Emitted when the user chooses Properties... on the project's root item."""
 
     def __init__(
         self,
@@ -65,6 +69,12 @@ class ProjectExplorerWidget(QWidget):
         )
         self._tree.itemDoubleClicked.connect(
             self._handle_item_double_clicked,
+        )
+        self._tree.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu,
+        )
+        self._tree.customContextMenuRequested.connect(
+            self._show_context_menu,
         )
 
         self._stack = QStackedWidget()
@@ -151,6 +161,46 @@ class ProjectExplorerWidget(QWidget):
             self.file_double_clicked.emit(
                 path,
             )
+
+    def _show_context_menu(
+        self,
+        position,
+    ) -> None:
+        """Show Properties... when the project's own root item is right-clicked."""
+
+        item = self._tree.itemAt(
+            position,
+        )
+
+        if (
+            item is None
+            or item is not self._tree.topLevelItem(
+                0,
+            )
+        ):
+            return
+
+        menu = QMenu(
+            self,
+        )
+        properties_action = menu.addAction(
+            "Properties...",
+        )
+        chosen_action = menu.exec(
+            self._tree.mapToGlobal(
+                position,
+            )
+        )
+
+        if chosen_action is properties_action:
+            self._show_project_properties()
+
+    def _show_project_properties(
+        self,
+    ) -> None:
+        """Request that the project's properties be edited."""
+
+        self.project_properties_requested.emit()
 
 
 def populate_project_tree(

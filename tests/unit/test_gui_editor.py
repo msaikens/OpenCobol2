@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.documents import DocumentService
@@ -586,4 +587,403 @@ def test_current_line_highlight_uses_full_width_selection(
             QTextFormat.Property.FullWidthSelection,
         )
         is True
+    )
+
+
+def test_show_find_bar_reveals_and_prefills_from_selection(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "hello world",
+    )
+    cursor = editor.textCursor()
+    cursor.setPosition(
+        0,
+    )
+    cursor.setPosition(
+        5,
+        cursor.MoveMode.KeepAnchor,
+    )
+    editor.setTextCursor(
+        cursor,
+    )
+
+    assert editor._find_bar.isHidden()
+
+    editor.show_find_bar()
+
+    assert not editor._find_bar.isHidden()
+    assert (
+        editor._find_bar.find_edit.text()
+        == "hello"
+    )
+    assert (
+        editor._find_bar._replace_row_widget.isHidden()
+    )
+
+
+def test_show_replace_bar_reveals_replace_row(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    editor.show_replace_bar()
+
+    assert not editor._find_bar.isHidden()
+    assert (
+        not editor._find_bar._replace_row_widget.isHidden()
+    )
+
+
+def test_hide_find_bar_hides_it(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.show_find_bar()
+
+    editor.hide_find_bar()
+
+    assert editor._find_bar.isHidden()
+
+
+def test_find_text_is_case_insensitive_by_default(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "Needle in a haystack",
+    )
+
+    found = editor.find_text(
+        "needle",
+        backwards=False,
+    )
+
+    assert found
+    assert (
+        editor.textCursor().selectedText()
+        == "Needle"
+    )
+
+
+def test_find_text_case_sensitive_flag_requires_exact_case(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "Needle needle",
+    )
+
+    found = editor.find_text(
+        "needle",
+        backwards=False,
+        flags=(
+            QTextDocument.FindFlag.FindCaseSensitively
+        ),
+    )
+
+    assert found
+    assert (
+        editor.textCursor().selectionStart()
+        == 7
+    )
+
+
+def test_find_text_wraps_around_the_document(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "apple banana apple",
+    )
+    cursor = editor.textCursor()
+    cursor.movePosition(
+        cursor.MoveOperation.End,
+    )
+    editor.setTextCursor(
+        cursor,
+    )
+
+    found = editor.find_text(
+        "apple",
+        backwards=False,
+    )
+
+    assert found
+    assert (
+        editor.textCursor().selectionStart()
+        == 0
+    )
+
+
+def test_find_text_returns_false_when_search_text_is_blank(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "hello",
+    )
+
+    assert not editor.find_text(
+        "",
+        backwards=False,
+    )
+
+
+def test_find_text_returns_false_when_not_present(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "hello world",
+    )
+
+    assert not editor.find_text(
+        "zzz",
+        backwards=False,
+    )
+
+
+def test_find_text_backwards_searches_toward_the_start(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "apple banana apple",
+    )
+    cursor = editor.textCursor()
+    cursor.movePosition(
+        cursor.MoveOperation.End,
+    )
+    editor.setTextCursor(
+        cursor,
+    )
+
+    found = editor.find_text(
+        "apple",
+        backwards=True,
+    )
+
+    assert found
+    assert (
+        editor.textCursor().selectionStart()
+        == 13
+    )
+
+
+def test_replace_current_replaces_selected_match_and_finds_next(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "apple banana apple",
+    )
+    editor.find_text(
+        "apple",
+        backwards=False,
+    )
+
+    found_next = editor.replace_current(
+        "apple",
+        "ORANGE",
+    )
+
+    assert editor.toPlainText() == (
+        "ORANGE banana apple"
+    )
+    assert found_next
+    assert (
+        editor.textCursor().selectedText()
+        == "apple"
+    )
+
+
+def test_replace_current_without_a_matching_selection_only_finds(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "apple banana",
+    )
+    cursor = editor.textCursor()
+    cursor.movePosition(
+        cursor.MoveOperation.Start,
+    )
+    editor.setTextCursor(
+        cursor,
+    )
+
+    editor.replace_current(
+        "apple",
+        "ORANGE",
+    )
+
+    # No prior selection matched "apple", so nothing was replaced -- the
+    # call only performed a find.
+    assert (
+        editor.toPlainText()
+        == "apple banana"
+    )
+    assert (
+        editor.textCursor().selectedText()
+        == "apple"
+    )
+
+
+def test_replace_all_replaces_every_occurrence_and_returns_count(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "apple banana Apple BANANA",
+    )
+
+    count = editor.replace_all(
+        "apple",
+        "grape",
+    )
+
+    assert count == 2
+    assert (
+        editor.toPlainText()
+        == "grape banana grape BANANA"
+    )
+
+
+def test_replace_all_returns_zero_for_blank_search_text(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "hello",
+    )
+
+    count = editor.replace_all(
+        "",
+        "x",
+    )
+
+    assert count == 0
+    assert editor.toPlainText() == "hello"
+
+
+def test_editor_tabs_show_find_delegates_to_active_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+
+    tabs.show_find()
+
+    assert not tabs.widget(
+        1,
+    )._find_bar.isHidden()
+    assert tabs.widget(
+        0,
+    )._find_bar.isHidden()
+
+
+def test_editor_tabs_show_replace_delegates_to_active_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+
+    tabs.show_replace()
+
+    editor = tabs.widget(
+        0,
+    )
+    assert not editor._find_bar.isHidden()
+    assert (
+        not editor._find_bar._replace_row_widget.isHidden()
+    )
+
+
+def test_editor_tabs_show_find_is_a_no_op_without_open_tabs(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.show_find()
+
+    assert tabs.count() == 0
+
+
+def test_find_bar_next_button_reports_status_when_not_found(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "hello world",
+    )
+    editor.show_find_bar()
+
+    editor._find_bar.find_edit.setText(
+        "zzz",
+    )
+    editor._find_bar._handle_find_next()
+
+    assert (
+        editor._find_bar.status_label.text()
+        == "No occurrences found."
+    )
+
+
+def test_find_bar_replace_all_button_reports_count(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "one one one",
+    )
+    editor.show_replace_bar()
+
+    editor._find_bar.find_edit.setText(
+        "one",
+    )
+    editor._find_bar.replace_edit.setText(
+        "two",
+    )
+    editor._find_bar._handle_replace_all()
+
+    assert (
+        editor._find_bar.status_label.text()
+        == "Replaced 3 occurrence(s)."
+    )
+    assert (
+        editor.toPlainText()
+        == "two two two"
     )

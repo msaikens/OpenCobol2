@@ -19,6 +19,9 @@ from opencobol2.gui.application import (
     TOP_LEVEL_MENUS,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.gui.project_properties_dialog import (
+    ProjectPropertiesDialog,
+)
 from opencobol2.gui.settings_dialog import SettingsDialog
 from opencobol2.project import (
     create_project,
@@ -1186,6 +1189,168 @@ def test_compiler_profile_added_through_dialog_is_used_by_build_project(
     assert (
         "main.cbl: succeeded"
         in output_widget.toPlainText()
+    )
+
+
+def test_project_properties_selects_a_project_specific_compiler_profile(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    stub_script = tmp_path / "stub_compiler.py"
+    stub_script.write_text(
+        _STUB_COMPILER_SCRIPT,
+    )
+    project_profile = CompilerProfile(
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Project-Specific Compiler",
+        configuration={
+            "executable_path": sys.executable,
+            "compile_arguments": (
+                str(stub_script),
+                "{source}",
+                "-o",
+                "{output}",
+            ),
+        },
+    )
+    existing_compilers = (
+        settings_service.current.compilers
+    )
+    settings_service.update_compilers(
+        CompilerSettings(
+            default_profile_id=(
+                existing_compilers.default_profile_id
+            ),
+            profiles=(
+                *existing_compilers.profiles,
+                project_profile,
+            ),
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        index = (
+            dialog_self._compiler_profile_combo.findData(
+                project_profile.profile_id,
+            )
+        )
+        dialog_self._compiler_profile_combo.setCurrentIndex(
+            index,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    # The context menu's own QMenu.exec() hangs indefinitely under the
+    # offscreen platform and can't be mocked (a known Qt/PySide6 quirk), so
+    # this triggers the same signal a real "Properties..." click would
+    # rather than driving the menu itself.
+    with patch(
+        "opencobol2.gui.project_properties_dialog."
+        "ProjectPropertiesDialog.exec",
+        fake_exec,
+    ):
+        explorer.project_properties_requested.emit()
+
+    assert (
+        explorer.project.properties
+        .default_compiler_profile_id
+        == project_profile.profile_id
+    )
+
+    output_widget = _output_content(
+        window,
+    )
+    build_menu = window.menus["build"]
+    build_menu.aboutToShow.emit()
+    _find_action(
+        build_menu,
+        "Build Project",
+    ).trigger()
+
+    assert (
+        "main.cbl: succeeded"
+        in output_widget.toPlainText()
+    )
+
+
+def test_edit_menu_find_and_replace_actions_work_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "needle in a haystack, "
+        "another needle here",
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Find",
+    ).trigger()
+
+    assert not editor._find_bar.isHidden()
+    assert (
+        editor._find_bar._replace_row_widget.isHidden()
+    )
+
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Replace",
+    ).trigger()
+
+    assert (
+        not editor._find_bar._replace_row_widget.isHidden()
+    )
+
+    editor._find_bar.find_edit.setText(
+        "needle",
+    )
+    editor._find_bar.replace_edit.setText(
+        "pin",
+    )
+    editor._find_bar._handle_replace_all()
+
+    assert (
+        editor.toPlainText()
+        == "pin in a haystack, another pin here"
     )
 
 

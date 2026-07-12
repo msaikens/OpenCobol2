@@ -137,7 +137,12 @@ def create_build_project_handler(
         QWidget | None,
     ] = lambda: None,
 ) -> CommandHandler:
-    """Create a handler that builds every COBOL source file in the open project."""
+    """Create a handler that builds every COBOL source file in the open project.
+
+    Uses the project's own `properties.default_compiler_profile_id` when
+    set (via Project Properties); otherwise falls back to the globally
+    configured default compiler profile.
+    """
 
     def handle_build_project(
         context: CommandContext,
@@ -169,9 +174,17 @@ def create_build_project_handler(
             )
             return
 
+        project_profile_id = (
+            project.properties.default_compiler_profile_id
+        )
+
         try:
             runtime = (
-                runtime_activation_service.activate_default()
+                runtime_activation_service.activate(
+                    project_profile_id,
+                )
+                if project_profile_id is not None
+                else runtime_activation_service.activate_default()
             )
         except _RUNTIME_ACTIVATION_ERRORS as error:
             output_widget.append_line(
