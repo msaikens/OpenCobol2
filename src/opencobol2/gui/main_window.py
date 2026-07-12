@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -14,7 +14,10 @@ from PySide6.QtWidgets import (
 
 from opencobol2.gui.command_menus import build_menu_bar
 from opencobol2.gui.theming import apply_theme_to_widget
-from opencobol2.gui.tool_windows import ToolWindowDockManager
+from opencobol2.gui.tool_windows import (
+    ToolWindowContentFactory,
+    ToolWindowDockManager,
+)
 from opencobol2.gui.toolbars import build_toolbar
 from opencobol2.services.command_contributions import (
     CommandContributionService,
@@ -34,6 +37,11 @@ class MainWindow(QMainWindow):
         theme_service: ThemeService,
         top_level_menus: Sequence[tuple[str, str]],
         toolbar_surface_ids: Sequence[str] = (),
+        tool_window_content_factories: Mapping[
+            str,
+            ToolWindowContentFactory,
+        ]
+        | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the OpenCobol2 shell from the supplied application services."""
@@ -117,6 +125,7 @@ class MainWindow(QMainWindow):
         self._dock_manager = ToolWindowDockManager(
             main_window=self,
             tool_window_service=tool_window_service,
+            content_factories=tool_window_content_factories,
         )
 
         self.apply_active_theme()

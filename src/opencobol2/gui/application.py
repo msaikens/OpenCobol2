@@ -13,6 +13,8 @@ from opencobol2.commands.builtins import (
     create_builtin_command_registry,
 )
 from opencobol2.gui.main_window import MainWindow
+from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.project import Project
 from opencobol2.services.accessibility import AccessibilityService
 from opencobol2.services.command_contributions import (
     CommandContributionService,
@@ -23,6 +25,7 @@ from opencobol2.services.tool_windows import ToolWindowService
 from opencobol2.settings import SettingsService
 from opencobol2.theming import create_builtin_theme_registry
 from opencobol2.tool_windows.builtins import (
+    BuiltInToolWindowIds,
     create_builtin_tool_window_registry,
 )
 
@@ -66,11 +69,14 @@ TOP_LEVEL_MENUS = (
 def create_main_window(
     *,
     settings_service: SettingsService | None = None,
+    project: Project | None = None,
 ) -> MainWindow:
     """Wire the built-in OpenCobol2 registries and construct the main window.
 
     Recent-file and recent-project menus start empty: neither is persisted
     yet, so wiring real providers is future work, not this bootstrap's job.
+    `project` seeds the Project Explorer panel; there is no "Open Project"
+    command wired up yet to load one interactively.
     """
 
     resolved_settings_service = (
@@ -121,6 +127,13 @@ def create_main_window(
         tool_window_service=tool_window_service,
         theme_service=theme_service,
         top_level_menus=TOP_LEVEL_MENUS,
+        tool_window_content_factories={
+            BuiltInToolWindowIds.PROJECT_EXPLORER: (
+                lambda: ProjectExplorerWidget(
+                    project,
+                )
+            ),
+        },
     )
 
 

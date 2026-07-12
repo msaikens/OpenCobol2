@@ -7,11 +7,14 @@ QDockWidget's native floating/closable behavior is used as-is.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDockWidget,
     QLabel,
     QMainWindow,
+    QWidget,
 )
 
 from opencobol2.services.tool_windows import ToolWindowService
@@ -19,6 +22,9 @@ from opencobol2.tool_windows import (
     ToolWindowArea,
     ToolWindowDefinition,
 )
+
+
+type ToolWindowContentFactory = Callable[[], QWidget]
 
 
 _AREA_TO_QT_DOCK_AREA = {
@@ -52,8 +58,17 @@ class ToolWindowDockManager:
         *,
         main_window: QMainWindow,
         tool_window_service: ToolWindowService,
+        content_factories: Mapping[
+            str,
+            ToolWindowContentFactory,
+        ]
+        | None = None,
     ) -> None:
-        """Build one dock widget per registered tool-window definition."""
+        """Build one dock widget per registered tool-window definition.
+
+        Tool windows without an entry in `content_factories` fall back to
+        placeholder content — most panels don't have a real widget yet.
+        """
 
         if not isinstance(
             main_window,
@@ -74,6 +89,13 @@ class ToolWindowDockManager:
 
         self._main_window = main_window
         self._tool_window_service = tool_window_service
+        self._content_factories = (
+            {}
+            if content_factories is None
+            else dict(
+                content_factories,
+            )
+        )
         self._dock_widgets: dict[
             str,
             QDockWidget,
@@ -133,8 +155,13 @@ class ToolWindowDockManager:
                 definition.accessibility_description,
             )
 
+        content_factory = self._content_factories.get(
+            definition.tool_window_id,
+        )
         dock_widget.setWidget(
-            _create_placeholder_content(
+            content_factory()
+            if content_factory is not None
+            else _create_placeholder_content(
                 definition,
             )
         )

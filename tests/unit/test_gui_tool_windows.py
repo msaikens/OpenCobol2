@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMainWindow
+from PySide6.QtWidgets import (
+    QLabel,
+    QMainWindow,
+)
 
 from opencobol2.gui.tool_windows import (
     dock_area_for,
@@ -226,3 +229,44 @@ def test_manager_rejects_non_tool_window_service(
             main_window=window,
             tool_window_service=object(),  # type: ignore[arg-type]
         )
+
+
+def test_manager_uses_content_factory_when_provided(
+    qapp,
+) -> None:
+    service = _build_service()
+    window = QMainWindow()
+
+    manager = ToolWindowDockManager(
+        main_window=window,
+        tool_window_service=service,
+        content_factories={
+            "alpha": lambda: QLabel(
+                "Custom Alpha Content",
+            ),
+        },
+    )
+
+    alpha_content = manager.get_dock_widget(
+        "alpha",
+    ).widget()
+    beta_content = manager.get_dock_widget(
+        "beta",
+    ).widget()
+
+    assert isinstance(
+        alpha_content,
+        QLabel,
+    )
+    assert (
+        alpha_content.text()
+        == "Custom Alpha Content"
+    )
+    assert isinstance(
+        beta_content,
+        QLabel,
+    )
+    assert (
+        beta_content.text()
+        != "Custom Alpha Content"
+    )

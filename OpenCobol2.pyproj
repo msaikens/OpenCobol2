@@ -623,6 +623,7 @@
     <Compile Include="src\opencobol2\gui\application.py" />
     <Compile Include="src\opencobol2\gui\command_menus.py" />
     <Compile Include="src\opencobol2\gui\main_window.py" />
+    <Compile Include="src\opencobol2\gui\project_explorer.py" />
     <Compile Include="src\opencobol2\gui\theming.py" />
     <Compile Include="src\opencobol2\gui\toolbars.py" />
     <Compile Include="src\opencobol2\gui\tool_windows.py" />
@@ -733,6 +734,7 @@
     <Compile Include="tests\unit\test_gui_application.py" />
     <Compile Include="tests\unit\test_gui_command_menus.py" />
     <Compile Include="tests\unit\test_gui_main_window.py" />
+    <Compile Include="tests\unit\test_gui_project_explorer.py" />
     <Compile Include="tests\unit\test_gui_theming.py" />
     <Compile Include="tests\unit\test_gui_toolbars.py" />
     <Compile Include="tests\unit\test_gui_tool_windows.py" />
