@@ -624,6 +624,7 @@
     <Compile Include="src\opencobol2\gui\build_commands.py" />
     <Compile Include="src\opencobol2\gui\command_menus.py" />
     <Compile Include="src\opencobol2\gui\command_palette.py" />
+    <Compile Include="src\opencobol2\gui\compiler_profiles_dialog.py" />
     <Compile Include="src\opencobol2\gui\git_changes.py" />
     <Compile Include="src\opencobol2\gui\git_repository.py" />
     <Compile Include="src\opencobol2\gui\main_window.py" />
@@ -749,6 +750,7 @@
     <Compile Include="tests\unit\test_gui_build_commands.py" />
     <Compile Include="tests\unit\test_gui_command_menus.py" />
     <Compile Include="tests\unit\test_gui_command_palette.py" />
+    <Compile Include="tests\unit\test_gui_compiler_profiles_dialog.py" />
     <Compile Include="tests\unit\test_gui_git_changes.py" />
     <Compile Include="tests\unit\test_gui_git_repository.py" />
     <Compile Include="tests\unit\test_gui_main_window.py" />
@@ -947,6 +949,7 @@
     <Content Include="legacy\opencobolide\build-support\README.rst" />
     <Content Include="legacy\opencobolide\build-support\requirements.legacy.txt" />
     <Content Include="README.MD" />
+    <Content Include="ROADMAP.MD" />
     <Content Include="scripts\git-hooks\post-commit" />
     <Content Include="scripts\git-hooks\pre-commit" />
     <Content Include="scripts\git-hooks\readme.rst" />

@@ -13,6 +13,7 @@ from opencobol2.gui.settings_dialog import (
     SettingsDialog,
 )
 from opencobol2.settings import (
+    ExternalToolSettings,
     SettingsService,
     SettingsStorage,
 )
@@ -63,6 +64,10 @@ def test_dialog_loads_current_settings(
     assert (
         dialog._theme_combo.currentData()
         == DARK_THEME_ID
+    )
+    assert (
+        dialog._git_executable_path_edit.text()
+        == ""
     )
 
 
@@ -180,6 +185,72 @@ def test_apply_and_accept_persists_all_sections(
     assert (
         reloaded.current.theme.active_theme_id
         == "light"
+    )
+
+
+def test_apply_and_accept_persists_git_executable_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    service = _build_service(
+        tmp_path,
+    )
+    dialog = SettingsDialog(
+        settings_service=service,
+        theme_registry=create_builtin_theme_registry(),
+    )
+    git_path = tmp_path / "custom-git.exe"
+
+    dialog._git_executable_path_edit.setText(
+        str(git_path),
+    )
+    dialog._apply_and_accept()
+
+    reloaded = SettingsService(
+        service.storage,
+    )
+    assert (
+        reloaded.current.external_tools.git_executable_path
+        == git_path
+    )
+
+
+def test_apply_and_accept_clears_git_executable_path_when_blank(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    service = _build_service(
+        tmp_path,
+    )
+    service.update_external_tools(
+        ExternalToolSettings(
+            git_executable_path=(
+                tmp_path / "custom-git.exe"
+            ),
+        )
+    )
+    dialog = SettingsDialog(
+        settings_service=service,
+        theme_registry=create_builtin_theme_registry(),
+    )
+    assert (
+        dialog._git_executable_path_edit.text()
+        == str(
+            tmp_path / "custom-git.exe",
+        )
+    )
+
+    dialog._git_executable_path_edit.setText(
+        "",
+    )
+    dialog._apply_and_accept()
+
+    reloaded = SettingsService(
+        service.storage,
+    )
+    assert (
+        reloaded.current.external_tools.git_executable_path
+        is None
     )
 
 

@@ -154,6 +154,68 @@ def test_discover_repository_uses_configured_executable(
     )
 
 
+def test_set_executable_path_changes_future_invocations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_command: tuple[str, ...] | None = None
+
+    def invoke_git_process(
+        **kwargs: object,
+    ) -> GitCommandResult:
+        nonlocal captured_command
+
+        command = kwargs[
+            "command"
+        ]
+        captured_command = command
+
+        return _completed_result(
+            command,
+            stdout="/source/project\n",
+        )
+
+    monkeypatch.setattr(
+        git_service_module,
+        "invoke_git_process",
+        invoke_git_process,
+    )
+
+    service = GitService()
+    assert service.executable_path == "git"
+
+    service.set_executable_path(
+        r"C:\Program Files\Git\cmd\git.exe",
+    )
+    assert (
+        service.executable_path
+        == r"C:\Program Files\Git\cmd\git.exe"
+    )
+
+    service.discover_repository(
+        "/source/project",
+    )
+
+    assert captured_command is not None
+    assert (
+        captured_command[
+            0
+        ]
+        == r"C:\Program Files\Git\cmd\git.exe"
+    )
+
+
+def test_set_executable_path_rejects_empty_value() -> None:
+    service = GitService()
+
+    with pytest.raises(
+        ValueError,
+        match="Git executable path must not be empty",
+    ):
+        service.set_executable_path(
+            "   ",
+        )
+
+
 def test_get_status_discovers_root_then_reads_porcelain_v2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

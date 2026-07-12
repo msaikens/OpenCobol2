@@ -26,6 +26,7 @@ from opencobol2.project import (
 from opencobol2.theming import LIGHT_THEME_ID
 from opencobol2.settings import (
     CompilerSettings,
+    ExternalToolSettings,
     SettingsService,
     SettingsStorage,
     ThemeSettings,
@@ -892,6 +893,228 @@ def test_settings_menu_action_applies_theme_to_running_window(
     assert (
         reloaded.current.theme.active_theme_id
         == "light"
+    )
+
+
+def test_bootstrap_uses_configured_git_executable_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    configured_git = (
+        tmp_path / "fake-git.exe"
+    )
+    settings_service.update_external_tools(
+        ExternalToolSettings(
+            git_executable_path=configured_git,
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    git_changes = _git_changes_content(
+        window,
+    )
+
+    assert (
+        git_changes._git_service.executable_path
+        == str(configured_git)
+    )
+
+
+def test_settings_menu_action_applies_git_executable_path_to_running_window(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    git_changes = _git_changes_content(
+        window,
+    )
+
+    assert (
+        git_changes._git_service.executable_path
+        == "git"
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+    new_git_path = str(
+        tmp_path / "other-git.exe"
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        dialog_self._git_executable_path_edit.setText(
+            new_git_path,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert (
+        git_changes._git_service.executable_path
+        == new_git_path
+    )
+
+
+def test_compiler_profiles_menu_action_opens_dialog(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    profiles_action = _find_action(
+        tools_menu,
+        "Compiler Profiles",
+    )
+
+    with patch(
+        "opencobol2.gui.compiler_profiles_dialog."
+        "CompilerProfilesDialog.exec",
+        return_value=0,
+    ) as mock_exec:
+        profiles_action.trigger()
+
+    mock_exec.assert_called_once()
+
+
+def test_compiler_profile_added_through_dialog_is_used_by_build_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    _configure_stub_compiler_profile(
+        settings_service,
+        tmp_path,
+    )
+    # Reset back to just the built-in default so the dialog is the only
+    # thing that adds the custom profile, proving the composition (not a
+    # profile that already happened to be configured beforehand).
+    settings_service.update_compilers(
+        CompilerSettings(),
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    profiles_action = _find_action(
+        tools_menu,
+        "Compiler Profiles",
+    )
+    stub_script_path = (
+        tmp_path / "stub_compiler.py"
+    )
+    stub_script_path.write_text(
+        _STUB_COMPILER_SCRIPT,
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        with patch(
+            "opencobol2.gui.compiler_profiles_dialog."
+            "QInputDialog.getItem",
+            return_value=(
+                "Custom local COBOL compiler",
+                True,
+            ),
+        ):
+            dialog_self._add_profile()
+
+        dialog_self._display_name_edit.setText(
+            "Dialog Configured Compiler",
+        )
+        dialog_self._field_widgets[
+            "executable_path"
+        ].setText(
+            sys.executable,
+        )
+        dialog_self._field_widgets[
+            "compile_arguments"
+        ].setPlainText(
+            f"{stub_script_path}\n{{source}}\n-o\n{{output}}",
+        )
+        dialog_self._set_selected_as_default()
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch(
+        "opencobol2.gui.compiler_profiles_dialog."
+        "CompilerProfilesDialog.exec",
+        fake_exec,
+    ):
+        profiles_action.trigger()
+
+    assert (
+        settings_service.current.compilers
+        .default_profile.display_name
+        == "Dialog Configured Compiler"
+    )
+
+    output_widget = _output_content(
+        window,
+    )
+    build_menu = window.menus["build"]
+    build_menu.aboutToShow.emit()
+    _find_action(
+        build_menu,
+        "Build Project",
+    ).trigger()
+
+    assert (
+        "main.cbl: succeeded"
+        in output_widget.toPlainText()
     )
 
 

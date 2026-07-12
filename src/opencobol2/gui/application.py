@@ -29,6 +29,9 @@ from opencobol2.gui.build_commands import (
 from opencobol2.gui.command_palette import (
     create_show_command_palette_handler,
 )
+from opencobol2.gui.compiler_profiles_dialog import (
+    create_show_compiler_profiles_handler,
+)
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.gui.main_window import MainWindow
@@ -168,6 +171,22 @@ def _create_status_bar_registry(
     return registry
 
 
+def _resolve_git_executable_path(
+    settings: ApplicationSettings,
+) -> str:
+    """Return the configured Git executable, defaulting to `"git"`."""
+
+    configured_path = (
+        settings.external_tools.git_executable_path
+    )
+
+    return (
+        "git"
+        if configured_path is None
+        else str(configured_path)
+    )
+
+
 def _discover_repository_path(
     git_service: GitService,
     project: Project | None,
@@ -240,7 +259,11 @@ def create_main_window(
         project,
     )
 
-    git_service = GitService()
+    git_service = GitService(
+        executable_path=_resolve_git_executable_path(
+            resolved_settings_service.current,
+        ),
+    )
     initial_repository_path = _discover_repository_path(
         git_service,
         project,
@@ -256,6 +279,10 @@ def create_main_window(
 
     output_widget = OutputWidget()
     problems_widget = ProblemsWidget()
+
+    compiler_provider_registry = (
+        create_builtin_compiler_provider_registry()
+    )
 
     compiler_runtime_registry = CompilerRuntimeFactoryRegistry()
     compiler_runtime_registry.register(
@@ -273,7 +300,7 @@ def create_main_window(
             profile_service=CompilerProfileService(
                 settings_service=resolved_settings_service,
                 provider_registry=(
-                    create_builtin_compiler_provider_registry()
+                    compiler_provider_registry
                 ),
             ),
             runtime_factory_registry=compiler_runtime_registry,
@@ -316,6 +343,12 @@ def create_main_window(
             settings.theme.active_theme_id,
         )
         main_window_holder[0].apply_active_theme()
+
+        git_service.set_executable_path(
+            _resolve_git_executable_path(
+                settings,
+            ),
+        )
 
     command_service = CommandService(
         registry=create_builtin_command_registry(
@@ -392,6 +425,19 @@ def create_main_window(
                             ),
                             on_applied=(
                                 _apply_settings_to_running_window
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.TOOLS_COMPILER_PROFILES: (
+                        create_show_compiler_profiles_handler(
+                            settings_service=(
+                                resolved_settings_service
+                            ),
+                            provider_registry=(
+                                compiler_provider_registry
                             ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]

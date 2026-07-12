@@ -287,6 +287,23 @@ class GitService:
             timeout_seconds,
         )
 
+    def set_executable_path(
+        self,
+        executable_path: Path | str,
+    ) -> None:
+        """Update the configured Git executable path."""
+
+        executable = str(
+            executable_path,
+        ).strip()
+
+        if not executable:
+            raise ValueError(
+                "Git executable path must not be empty."
+            )
+
+        self._executable_path = executable
+
     @property
     def executable_path(
         self,

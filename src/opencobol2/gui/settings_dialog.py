@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
@@ -28,6 +30,7 @@ from opencobol2.settings import (
     CobolGuideSettings,
     CobolSettings,
     EditorSettings,
+    ExternalToolSettings,
     SettingsService,
     ThemeSettings,
 )
@@ -121,6 +124,10 @@ class SettingsDialog(QDialog):
         tabs.addTab(
             self._build_theme_tab(),
             "Theme",
+        )
+        tabs.addTab(
+            self._build_external_tools_tab(),
+            "External Tools",
         )
 
         button_row = QHBoxLayout()
@@ -292,6 +299,64 @@ class SettingsDialog(QDialog):
 
         return tab
 
+    def _build_external_tools_tab(
+        self,
+    ) -> QWidget:
+        """Build the External Tools tab: overridable external executables."""
+
+        tab = QWidget()
+        form = QFormLayout(
+            tab,
+        )
+
+        row = QWidget()
+        row_layout = QHBoxLayout(
+            row,
+        )
+        row_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        self._git_executable_path_edit = QLineEdit()
+        row_layout.addWidget(
+            self._git_executable_path_edit,
+        )
+
+        browse_button = QPushButton(
+            "Browse...",
+        )
+        browse_button.clicked.connect(
+            self._browse_for_git_executable,
+        )
+        row_layout.addWidget(
+            browse_button,
+        )
+
+        form.addRow(
+            "Git executable:",
+            row,
+        )
+
+        return tab
+
+    def _browse_for_git_executable(
+        self,
+    ) -> None:
+        """Prompt for a Git executable and fill the path field with it."""
+
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Git Executable",
+        )
+
+        if path_str:
+            self._git_executable_path_edit.setText(
+                path_str,
+            )
+
     def _load_from_settings(
         self,
     ) -> None:
@@ -352,6 +417,15 @@ class SettingsDialog(QDialog):
                 theme_index,
             )
 
+        self._git_executable_path_edit.setText(
+            str(
+                settings.external_tools.git_executable_path,
+            )
+            if settings.external_tools.git_executable_path
+            is not None
+            else "",
+        )
+
     def _apply_and_accept(
         self,
     ) -> None:
@@ -391,6 +465,21 @@ class SettingsDialog(QDialog):
             ThemeSettings(
                 active_theme_id=(
                     self._theme_combo.currentData()
+                ),
+            )
+        )
+
+        git_executable_path_text = (
+            self._git_executable_path_edit.text().strip()
+        )
+        self._settings_service.update_external_tools(
+            ExternalToolSettings(
+                git_executable_path=(
+                    Path(
+                        git_executable_path_text,
+                    )
+                    if git_executable_path_text
+                    else None
                 ),
             )
         )
