@@ -127,8 +127,8 @@ Scope decision: OpenCobol2 supports GnuCOBOL and custom local compiler profiles 
 * 🚫 Visual COBOL provider (out of scope)
 * ✅ Compile commands (structured compile requests, real `cobc`/custom-toolchain process invocation)
 * 🔶 Link commands (GnuCOBOL's single-invocation `cobc` model handles compile+link together; a distinct link step isn't needed for the currently supported providers)
-* ⬜ Build pipelines (multi-file/whole-project builds)
-* ⬜ Incremental build
+* 🔶 Build pipelines (`opencobol2.gui.build_commands`, wired to Build > Build Project: finds every `.cbl`/`.cob` file under the project root and compiles each independently through `CompilerRuntimeActivationService`, logging to the Output/Problems panels — see Phase 7. No multi-file program linking yet; the project model has no "main program"/entry-point concept to link around.)
+* ⬜ Incremental build (every Build Project run recompiles every source file)
 * ✅ Error parser
 * ✅ Warning parser
 * ⬜ Listing parser
@@ -150,7 +150,7 @@ Still untouched.
 
 ## Phase 7 — UI
 
-The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window (with a pluggable per-tool-window content factory), renders a real content-driven status bar, and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme/status-bar registries together, plus an optional `Project` to seed the Project Explorer). File > New/Open/Save As/Close Project are all real, working commands (and File > Open Recent Project actually lists real, still-existing project files), the status bar reflects the open project and active theme live, View > Command Palette (Ctrl+Shift+P) opens a real searchable command list, and Tools > Settings opens a real Preferences dialog that applies changes to the running window immediately. Project Explorer, Git Changes, and Git Repository are the first tool windows with real content; Output, Problems, and the rest are still placeholders.
+The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window (with a pluggable per-tool-window content factory), renders a real content-driven status bar, and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme/status-bar/compiler registries together, plus an optional `Project` to seed the Project Explorer). File > New/Open/Save As/Close Project are all real, working commands (and File > Open Recent Project actually lists real, still-existing project files), the status bar reflects the open project and active theme live, View > Command Palette (Ctrl+Shift+P) opens a real searchable command list, Tools > Settings opens a real Preferences dialog that applies changes to the running window immediately, and Build > Build Project compiles the open project's COBOL sources through the real compiler integration layer. Project Explorer, Git Changes, Git Repository, Output, and Problems are the tool windows with real content; the rest are still placeholders.
 
 * ✅ Application shell (`MainWindow`: live menu bar + toolbars rendered from command contributions, a real content-driven status bar, theme palette application, a real runnable bootstrap)
 * ✅ Status bar (see Phase 1 above for the domain model; the shell's built-in items show the open project's name — reacting live to `ProjectExplorerWidget.project_changed` — and the active theme, reacting when `apply_active_theme()` runs)
@@ -160,8 +160,8 @@ The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindo
 * ✅ Recent projects (`RecentProjectsSettings` persists up to 10 project file paths, newest first, deduplicated on reopen; File > Open Recent Project lists them live via a `DynamicMenuContribution`, skipping any that no longer exist on disk; New/Open/Save-As all record the project file automatically)
 * ✅ Preferences dialog (`SettingsDialog`, `opencobol2.gui.settings_dialog`: Editor/COBOL/Theme tabs backed by the real `SettingsService`; wired to Tools > Settings; applying immediately updates the running window's palette and status bar via an `on_applied` callback, not just the persisted file. No compiler-profile or external-tool-path editing yet — those stay on `Tools > Compiler Profiles`, still unconfigured)
 * ✅ Project explorer (`ProjectExplorerWidget`: real physical-file tree honoring `excluded_patterns`, virtual folders, and linked files — see Phase 2; all four project file commands — New, Open, Save As, Close (`opencobol2.gui.project_commands`) — are wired to real handlers using stock `QFileDialog`/`QInputDialog` prompts, no custom dialog widgets built yet)
-* ⬜ Output window (dock panel renders; real content not built)
-* ⬜ Problems window (dock panel renders; real content not built)
+* ✅ Output window (`OutputWidget`, `opencobol2.gui.output_panel`: a read-only, append-only log; Build > Build Project streams compiler process stdout/stderr and per-file status lines into it)
+* ✅ Problems window (`ProblemsWidget`, `opencobol2.gui.problems_panel`: a read-only table of severity/file/line/column/message, replaced with each build's parsed `CompilerDiagnostic`s)
 * ⬜ Terminal
 * ✅ Git window — both dock panels now have real content, sharing one repository auto-discovered from the open project's root:
   * `GitChangesWidget` (`opencobol2.gui.git_changes`): working-tree status, branch name, staged/unstaged file lists, stage/unstage via double-click or Stage All/Unstage All, and commit with a message box — verified against a real `git` repository, which caught and fixed a real bug in `GitService.unstage_all()` (`git rm --recursive` isn't a valid long option, only `-r` is).
@@ -193,7 +193,7 @@ Still untouched. One of the biggest goals of the modernization branch.
 
 Coverage for the foundation built so far is strong.
 
-* ✅ Unit tests (800+, covering every implemented subsystem)
+* ✅ Unit tests (1000+, covering every implemented subsystem)
 * ✅ Real-executable smoke tests (real `git.exe`, real GnuCOBOL `cobc`, real `.cbl` files under `legacy/opencobolide/tests/testfiles/`)
 * 🔶 Integration tests (`tests/integration/` covers real GnuCOBOL toolchain discovery and diagnostics; broader cross-subsystem integration coverage is still thin)
 * 🔶 GUI tests (the Phase 7 shell — menus, toolbars, dock widgets, theming, bootstrap — is unit tested against a real offscreen `QApplication`; no interaction-simulation/visual-regression tooling yet)

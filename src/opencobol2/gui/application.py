@@ -15,12 +15,25 @@ from opencobol2.commands.builtins import (
     create_builtin_command_contribution_registry,
     create_builtin_command_registry,
 )
+from opencobol2.compiler.providers import (
+    create_builtin_compiler_provider_registry,
+)
+from opencobol2.compiler.runtimes import (
+    CompilerRuntimeFactoryRegistry,
+    CustomLocalCompilerRuntimeFactory,
+    GnuCobolRuntimeFactory,
+)
+from opencobol2.gui.build_commands import (
+    create_build_project_handler,
+)
 from opencobol2.gui.command_palette import (
     create_show_command_palette_handler,
 )
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.gui.main_window import MainWindow
+from opencobol2.gui.output_panel import OutputWidget
+from opencobol2.gui.problems_panel import ProblemsWidget
 from opencobol2.gui.project_commands import (
     create_project_close_handler,
     create_project_new_handler,
@@ -39,6 +52,10 @@ from opencobol2.services.command_contributions import (
     CommandContributionService,
 )
 from opencobol2.services.commands import CommandService
+from opencobol2.services.compiler_runtimes import (
+    CompilerRuntimeActivationService,
+)
+from opencobol2.services.compilers import CompilerProfileService
 from opencobol2.services.git import (
     GitCommandFailedError,
     GitCommandTimedOutError,
@@ -49,6 +66,7 @@ from opencobol2.services.git import (
 from opencobol2.services.status_bar import StatusBarService
 from opencobol2.services.theming import ThemeService
 from opencobol2.services.tool_windows import ToolWindowService
+from opencobol2.services.toolchains import GnuCobolToolchainService
 from opencobol2.settings import (
     ApplicationSettings,
     SettingsService,
@@ -196,7 +214,11 @@ def create_main_window(
     changes. The Git Changes and Git Repository panels both track a Git
     repository discovered at the open project's root — falling back to
     their empty state if there is none, or if `git` itself is unavailable —
-    refreshing automatically alongside it.
+    refreshing automatically alongside it. Build > Build Project compiles
+    every `.cbl`/`.cob` file found under the open project's root (honoring
+    `excluded_patterns`) using the default configured compiler profile
+    (GnuCOBOL auto-discovery or a custom local compiler), logging process
+    output to the Output panel and parsed diagnostics to the Problems panel.
     """
 
     resolved_settings_service = (
@@ -230,6 +252,32 @@ def create_main_window(
     git_repository_widget = GitRepositoryWidget(
         git_service=git_service,
         repository_path=initial_repository_path,
+    )
+
+    output_widget = OutputWidget()
+    problems_widget = ProblemsWidget()
+
+    compiler_runtime_registry = CompilerRuntimeFactoryRegistry()
+    compiler_runtime_registry.register(
+        GnuCobolRuntimeFactory(
+            toolchain_service=GnuCobolToolchainService(
+                settings_service=resolved_settings_service,
+            ),
+        ),
+    )
+    compiler_runtime_registry.register(
+        CustomLocalCompilerRuntimeFactory(),
+    )
+    compiler_runtime_activation_service = (
+        CompilerRuntimeActivationService(
+            profile_service=CompilerProfileService(
+                settings_service=resolved_settings_service,
+                provider_registry=(
+                    create_builtin_compiler_provider_registry()
+                ),
+            ),
+            runtime_factory_registry=compiler_runtime_registry,
+        )
     )
 
     # Built before the command registry (unlike CommandService/MainWindow
@@ -350,6 +398,19 @@ def create_main_window(
                             ),
                         )
                     ),
+                    BuiltInCommandIds.BUILD_PROJECT: (
+                        create_build_project_handler(
+                            project_explorer=project_explorer,
+                            output_widget=output_widget,
+                            problems_widget=problems_widget,
+                            runtime_activation_service=(
+                                compiler_runtime_activation_service
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
                 },
             ),
         ),
@@ -392,6 +453,12 @@ def create_main_window(
             ),
             BuiltInToolWindowIds.GIT_REPOSITORY: (
                 lambda: git_repository_widget
+            ),
+            BuiltInToolWindowIds.OUTPUT: (
+                lambda: output_widget
+            ),
+            BuiltInToolWindowIds.PROBLEMS: (
+                lambda: problems_widget
             ),
         },
         status_bar_service=status_bar_service,

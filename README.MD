@@ -177,7 +177,7 @@ The command, menu, tool-window, status-bar, and theme registries above are fully
 OpenCobol2 has a real, launchable Qt application shell (`src/opencobol2/gui/`), independent from — and built entirely on top of — the Qt-independent registries above:
 
 * `MainWindow` builds a live menu bar and toolbars from command surface contributions. Menus rebuild themselves from current command/dynamic-menu state every time they open, so enabled/checked state and dynamic entries (like the recent-projects list below) are never stale.
-* Every registered tool window is rendered as a real `QDockWidget`: initial dock area and visibility come from `ToolWindowService`, and visibility changes made through the real widget (closing a panel, for example) are synced back into that service. Pinning/auto-hide and floating-geometry restoration are not implemented yet; panels use plain `QDockWidget` floating/closable behavior as-is. Each tool window can be given real content through a pluggable per-tool-window content factory; panels without one fall back to a placeholder. Project Explorer, Git Changes, and Git Repository are the first three panels with real content (see "Project system" and "Git integration" below) — Output, Problems, and the rest still fall back to the placeholder.
+* Every registered tool window is rendered as a real `QDockWidget`: initial dock area and visibility come from `ToolWindowService`, and visibility changes made through the real widget (closing a panel, for example) are synced back into that service. Pinning/auto-hide and floating-geometry restoration are not implemented yet; panels use plain `QDockWidget` floating/closable behavior as-is. Each tool window can be given real content through a pluggable per-tool-window content factory; panels without one fall back to a placeholder. Project Explorer, Git Changes, Git Repository, Output, and Problems now have real content (see "Project system", "Git integration", and "Build integration" below) — Terminal, Search, Outline, Bookmarks, Task List, and Extensions still fall back to the placeholder.
 * The status bar renders one real label per registered status bar item — left-aligned items via `QStatusBar.addWidget`, right-aligned items via `addPermanentWidget` — and `MainWindow.refresh_status_bar()` re-resolves every item's provider on demand. The built-in items show the currently open project's name (updating live off `ProjectExplorerWidget.project_changed`) and the active theme's name (updating whenever `apply_active_theme()` runs).
 * The active color theme is applied to the shell as a real `QPalette`.
 * A `CommandPaletteDialog` (View > Command Palette, Ctrl+Shift+P) lists every registered command with its category, filters live as the user types (matching against both title and category), supports arrow-key navigation, and executes the selected command on Enter or double-click. Commands the current `CommandState` reports as disabled are shown but not executable; hidden commands are omitted entirely.
@@ -226,6 +226,10 @@ A real Project Explorer (`ProjectExplorerWidget`) now renders inside the applica
 
 All four project file commands (`opencobol2.gui.project_commands`) are wired to real handlers: New Project prompts for a name, a root directory, and a save location, then creates and persists a project; Open Project prompts for a project file and loads it through `ProjectStorage`; Save Project As persists the currently open project to a new location; Close Project clears the panel back to its empty state. `create_main_window(project=...)` can also seed a project directly.
 
+### Build integration
+
+Build > Build Project (`opencobol2.gui.build_commands`) wires the application shell to the real compiler integration layer: it recursively finds every `.cbl`/`.cob` file under the open project's root (honoring `excluded_patterns`), activates the default configured compiler profile through `CompilerRuntimeActivationService` (GnuCOBOL auto-discovery or a custom local compiler), and compiles each file independently as its own executable — the project model has no "main program"/entry-point concept yet, so there is no multi-file program linking. Process output streams to the real `OutputWidget` dock panel and parsed diagnostics populate the real `ProblemsWidget` table (severity, file, line, column, message). Verified end to end against both a real GnuCOBOL installation and a stub custom-local compiler: no project open, no source files found, and no compiler profile configured all report a clear message instead of failing silently.
+
 ### COBOL language services (lexer, parser, semantic analysis)
 
 OpenCobol2 has begun in-house COBOL language services, independent of the GnuCOBOL compiler process:
@@ -246,8 +250,7 @@ For a detailed, phase-by-phase status of every planned subsystem (including what
 
 The application shell exists and runs (see "Application shell" under "Current foundation" above: a live menu bar and toolbars rendered from the command/menu contribution registries, and docked tool-window panels backed by the tool window registry). What's still ahead:
 
-* Real content for each remaining docked tool-window panel — Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, and Extensions panels currently render as placeholders (Project Explorer, Git Changes, and Git Repository now have real content).
-* Branch/tag/remote create, delete, and rename actions in the Git Repository panel — it currently supports browsing and switching branches only.
+* Real content for each remaining docked tool-window panel — Terminal, Search, Outline, Bookmarks, Task List, and Extensions panels currently render as placeholders (Project Explorer, Git Changes, Git Repository, Output, and Problems now have real content).
 * A dedicated New Project dialog widget — today it's a sequence of stock `QInputDialog`/`QFileDialog` prompts rather than a single purpose-built form.
 * A Welcome page. Recent projects now exist (File > Open Recent Project); Preferences now exist (Tools > Settings) but only cover editor/COBOL/theme settings — compiler-profile and external-tool-path editing are still ahead.
 * A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set) — the biggest remaining piece, and a prerequisite for docking anything into the shell's document area.
@@ -273,7 +276,7 @@ GitHub integration is a separate, not-yet-started layer on top of the existing G
 
 ### Compiler integration (remaining)
 
-The compiler subsystem already supports GnuCOBOL and a generic custom local compiler profile. Not yet built: build pipelines, incremental build, and dedicated warning/listing parsers beyond the existing diagnostic parsing. Additional vendor providers (Micro Focus, IBM Enterprise COBOL, ACUCOBOL, Visual COBOL) are explicitly out of scope for now — the project is intentionally scoped to GnuCOBOL and custom compiler profiles.
+The compiler subsystem already supports GnuCOBOL and a generic custom local compiler profile, and Build > Build Project (see "Build integration" above) now compiles every source file in a project as an independent, unlinked build. Not yet built: multi-file program linking, incremental build (every Build Project run recompiles everything), and dedicated warning/listing parsers beyond the existing diagnostic parsing. Additional vendor providers (Micro Focus, IBM Enterprise COBOL, ACUCOBOL, Visual COBOL) are explicitly out of scope for now — the project is intentionally scoped to GnuCOBOL and custom compiler profiles.
 
 ### Debugger
 

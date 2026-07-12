@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from opencobol2.compiler.gnucobol import (
@@ -23,12 +24,20 @@ from opencobol2.compiler.providers import (
 from opencobol2.compiler.runtimes.models import (
     CompilerRuntime,
 )
-from opencobol2.services.toolchains import (
-    GnuCobolToolchainService,
-)
 from opencobol2.toolchains import (
     GnuCobolToolchain,
 )
+
+
+if TYPE_CHECKING:
+    # Deferred: opencobol2.services imports opencobol2.compiler.runtimes
+    # (for CompilerRuntime et al.), so a module-level import here would be
+    # circular. GnuCobolToolchainService is only ever used as a type hint
+    # and via duck-typed method calls below, never as a runtime class
+    # reference, so the deferred import is sufficient.
+    from opencobol2.services.toolchains import (
+        GnuCobolToolchainService,
+    )
 
 
 class GnuCobolRuntimeUnavailableError(RuntimeError):

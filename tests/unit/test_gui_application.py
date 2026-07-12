@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import sys
 from unittest.mock import patch
 
 from PySide6.QtGui import QPalette
 
+from opencobol2.compiler.providers import (
+    CompilerProfile,
+    CUSTOM_COMPILER_PROVIDER_ID,
+)
 from opencobol2.gui.application import (
     create_main_window,
     TOP_LEVEL_MENUS,
@@ -20,10 +25,60 @@ from opencobol2.project import (
 )
 from opencobol2.theming import LIGHT_THEME_ID
 from opencobol2.settings import (
+    CompilerSettings,
     SettingsService,
     SettingsStorage,
     ThemeSettings,
 )
+
+
+_STUB_COMPILER_SCRIPT = '''
+import sys
+
+args = sys.argv[1:]
+source = args[0]
+output = args[args.index("-o") + 1]
+
+with open(output, "w") as handle:
+    handle.write("fake binary")
+
+print(f"{source}:2:3: warning: unused data item", file=sys.stderr)
+sys.exit(0)
+'''
+
+
+def _configure_stub_compiler_profile(
+    settings_service: SettingsService,
+    tmp_path: Path,
+) -> None:
+    """Configure a real subprocess stub compiler as the default profile.
+
+    GnuCOBOL isn't guaranteed to be installed wherever these tests run, so
+    this stands in for it via a real (non-mocked) subprocess invocation.
+    """
+
+    script = tmp_path / "stub_compiler.py"
+    script.write_text(_STUB_COMPILER_SCRIPT)
+
+    profile = CompilerProfile(
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Stub Compiler",
+        configuration={
+            "executable_path": sys.executable,
+            "compile_arguments": (
+                str(script),
+                "{source}",
+                "-o",
+                "{output}",
+            ),
+        },
+    )
+    settings_service.update_compilers(
+        CompilerSettings(
+            default_profile_id=profile.profile_id,
+            profiles=(profile,),
+        )
+    )
 
 
 def _init_repository(
@@ -107,6 +162,26 @@ def _git_repository_content(
     return (
         window.dock_manager.get_dock_widget(
             "git-repository",
+        ).widget()
+    )
+
+
+def _output_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "output",
+        ).widget()
+    )
+
+
+def _problems_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "problems",
         ).widget()
     )
 
@@ -1073,3 +1148,63 @@ def test_recent_projects_menu_lists_and_reopens_projects(
             project_two_file,
         )
     )
+
+
+def test_build_project_menu_action_compiles_project_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    _configure_stub_compiler_profile(
+        settings_service,
+        tmp_path,
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    output_widget = _output_content(
+        window,
+    )
+    problems_widget = _problems_content(
+        window,
+    )
+
+    build_menu = window.menus["build"]
+    build_menu.aboutToShow.emit()
+    _find_action(
+        build_menu,
+        "Build Project",
+    ).trigger()
+
+    assert (
+        "main.cbl: succeeded"
+        in output_widget.toPlainText()
+    )
+    assert problems_widget.rowCount() == 1
+    assert (
+        problems_widget.item(
+            0,
+            0,
+        ).text()
+        == "WARNING"
+    )
+    assert (
+        tmp_path
+        / project.properties.output_directory
+        / "main"
+    ).is_file()
