@@ -10,6 +10,7 @@ from opencobol2.settings.models import (
     CompilerSettings,
     EditorSettings,
     ExternalToolSettings,
+    RecentProjectsSettings,
     ThemeSettings,
 )
 from opencobol2.settings.storage import (
@@ -184,6 +185,29 @@ class SettingsService:
         settings = replace(
             self._current,
             theme=theme,
+        )
+
+        return self.apply(
+            settings,
+        )
+
+    def update_recent_projects(
+        self,
+        recent_projects: RecentProjectsSettings,
+    ) -> ApplicationSettings:
+        """Persist replacement recent-projects settings."""
+        if not isinstance(
+            recent_projects,
+            RecentProjectsSettings,
+        ):
+            raise TypeError(
+                "Recent projects settings must be "
+                "RecentProjectsSettings."
+            )
+
+        settings = replace(
+            self._current,
+            recent_projects=recent_projects,
         )
 
         return self.apply(

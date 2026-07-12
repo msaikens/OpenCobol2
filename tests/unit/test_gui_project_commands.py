@@ -5,19 +5,28 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from opencobol2.commands import CommandContext
+from opencobol2.commands.builtins import BuiltInCommandIds
 from opencobol2.gui.project_commands import (
     create_project_close_handler,
     create_project_from_details,
     create_project_new_handler,
     create_project_open_handler,
+    create_project_open_recent_handler,
     create_project_save_as_handler,
+    create_recent_project_provider,
     open_project_from_path,
+    record_recent_project,
     save_project_as,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import (
     create_project,
     ProjectStorage,
+)
+from opencobol2.settings import (
+    SettingsService,
+    SettingsStorage,
 )
 
 
@@ -562,3 +571,270 @@ def test_save_as_handler_reports_error_on_save_failure(
 
     assert result is None
     mock_critical.assert_called_once()
+
+
+def _build_settings_service(
+    tmp_path: Path,
+) -> SettingsService:
+    return SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+
+def test_record_recent_project_moves_path_to_front(
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    first_path = (
+        tmp_path / "first.json"
+    )
+    second_path = (
+        tmp_path / "second.json"
+    )
+
+    record_recent_project(
+        settings_service,
+        first_path,
+    )
+    record_recent_project(
+        settings_service,
+        second_path,
+    )
+    record_recent_project(
+        settings_service,
+        first_path,
+    )
+
+    assert (
+        settings_service.current.recent_projects.paths
+        == (
+            first_path,
+            second_path,
+        )
+    )
+
+
+def test_recent_project_provider_lists_only_existing_files(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    existing_path = (
+        tmp_path / "exists.json"
+    )
+    existing_path.write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    missing_path = (
+        tmp_path / "missing.json"
+    )
+
+    record_recent_project(
+        settings_service,
+        missing_path,
+    )
+    record_recent_project(
+        settings_service,
+        existing_path,
+    )
+
+    provider = create_recent_project_provider(
+        settings_service,
+    )
+    items = tuple(
+        provider(
+            CommandContext(),
+        )
+    )
+
+    assert len(items) == 1
+    assert items[0].title == str(
+        existing_path,
+    )
+    assert (
+        items[0].command_id
+        == BuiltInCommandIds.PROJECT_OPEN_RECENT
+    )
+    assert items[0].context.get(
+        "path",
+    ) == str(
+        existing_path,
+    )
+
+
+def test_open_recent_handler_opens_project_and_re_records(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+    record_recent_project(
+        settings_service,
+        project_file,
+    )
+
+    explorer = ProjectExplorerWidget()
+    handler = create_project_open_recent_handler(
+        project_explorer=explorer,
+        settings_service=settings_service,
+    )
+
+    result = handler(
+        CommandContext(
+            values={
+                "path": str(
+                    project_file,
+                ),
+            },
+        )
+    )
+
+    assert result is not None
+    assert result.name == "Demo"
+    assert explorer.project == result
+    assert (
+        settings_service.current.recent_projects.paths[
+            0
+        ]
+        == project_file
+    )
+
+
+def test_open_recent_handler_reports_error_for_missing_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    missing_path = (
+        tmp_path / "missing.json"
+    )
+
+    explorer = ProjectExplorerWidget()
+    handler = create_project_open_recent_handler(
+        project_explorer=explorer,
+        settings_service=settings_service,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QMessageBox.critical",
+    ) as mock_critical:
+        result = handler(
+            CommandContext(
+                values={
+                    "path": str(
+                        missing_path,
+                    ),
+                },
+            )
+        )
+
+    assert result is None
+    mock_critical.assert_called_once()
+    assert explorer.project is None
+
+
+def test_open_handler_records_recent_project_when_settings_service_given(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    explorer = ProjectExplorerWidget()
+    handler = create_project_open_handler(
+        project_explorer=explorer,
+        settings_service=settings_service,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        handler(
+            None,
+        )
+
+    assert (
+        settings_service.current.recent_projects.paths
+        == (
+            project_file,
+        )
+    )
+
+
+def test_open_handler_without_settings_service_does_not_record(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    explorer = ProjectExplorerWidget()
+    handler = create_project_open_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        result = handler(
+            None,
+        )
+
+    assert result is not None

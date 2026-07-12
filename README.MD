@@ -135,6 +135,7 @@ OpenCobol2 has a typed, schema-versioned application settings model with JSON pe
 * Editor font, spacing, and indentation preferences.
 * COBOL fixed-format guide visibility preferences.
 * A selected color theme (see "Color theme system" below).
+* Up to 10 recently opened project file paths, newest first, deduplicated whenever one is reopened (see "Application shell" below).
 * Atomic, same-directory replacement saves.
 
 A settings service exposes the current settings snapshot and supports reload and partial updates.
@@ -175,12 +176,13 @@ The command, menu, tool-window, status-bar, and theme registries above are fully
 
 OpenCobol2 has a real, launchable Qt application shell (`src/opencobol2/gui/`), independent from — and built entirely on top of — the Qt-independent registries above:
 
-* `MainWindow` builds a live menu bar and toolbars from command surface contributions. Menus rebuild themselves from current command/dynamic-menu state every time they open, so enabled/checked state and dynamic entries (like a future recent-files list) are never stale.
+* `MainWindow` builds a live menu bar and toolbars from command surface contributions. Menus rebuild themselves from current command/dynamic-menu state every time they open, so enabled/checked state and dynamic entries (like the recent-projects list below) are never stale.
 * Every registered tool window is rendered as a real `QDockWidget`: initial dock area and visibility come from `ToolWindowService`, and visibility changes made through the real widget (closing a panel, for example) are synced back into that service. Pinning/auto-hide and floating-geometry restoration are not implemented yet; panels use plain `QDockWidget` floating/closable behavior as-is. Each tool window can be given real content through a pluggable per-tool-window content factory; panels without one fall back to a placeholder. Project Explorer, Git Changes, and Git Repository are the first three panels with real content (see "Project system" and "Git integration" below) — Output, Problems, and the rest still fall back to the placeholder.
 * The status bar renders one real label per registered status bar item — left-aligned items via `QStatusBar.addWidget`, right-aligned items via `addPermanentWidget` — and `MainWindow.refresh_status_bar()` re-resolves every item's provider on demand. The built-in items show the currently open project's name (updating live off `ProjectExplorerWidget.project_changed`) and the active theme's name (updating whenever `apply_active_theme()` runs).
 * The active color theme is applied to the shell as a real `QPalette`.
 * A `CommandPaletteDialog` (View > Command Palette, Ctrl+Shift+P) lists every registered command with its category, filters live as the user types (matching against both title and category), supports arrow-key navigation, and executes the selected command on Enter or double-click. Commands the current `CommandState` reports as disabled are shown but not executable; hidden commands are omitted entirely.
 * A `SettingsDialog` (Tools > Settings) edits Editor, COBOL, and Theme settings against the real `SettingsService` across three tabs, preloaded from and persisted back to the same settings file every other subsystem reads. Applying changes doesn't just write to disk — an `on_applied` callback immediately switches the running window's active theme and refreshes the palette and status bar, so a theme change is visible the moment you click OK.
+* File > New/Open/Save As Project all record the project file into `RecentProjectsSettings`, and File > Open Recent Project lists them as real, individually clickable menu entries (`opencobol2.gui.project_commands`) — entries pointing at a file that no longer exists are quietly skipped rather than shown as a broken link.
 * `create_main_window()` (`opencobol2.gui.application`) wires the real built-in command, tool-window, theme, and status-bar registries together into a working window, optionally seeded with a `Project` to show in the Project Explorer. The application launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`[project.gui-scripts]`).
 
 The shell is unit tested against a real, offscreen (`QT_QPA_PLATFORM=offscreen`) `QApplication` — no display server is required to run these tests.
@@ -247,7 +249,7 @@ The application shell exists and runs (see "Application shell" under "Current fo
 * Real content for each remaining docked tool-window panel — Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, and Extensions panels currently render as placeholders (Project Explorer, Git Changes, and Git Repository now have real content).
 * Branch/tag/remote create, delete, and rename actions in the Git Repository panel — it currently supports browsing and switching branches only.
 * A dedicated New Project dialog widget — today it's a sequence of stock `QInputDialog`/`QFileDialog` prompts rather than a single purpose-built form.
-* A Welcome page and a recent-projects list. Preferences now exist (Tools > Settings) but only cover editor/COBOL/theme settings — compiler-profile and external-tool-path editing are still ahead.
+* A Welcome page. Recent projects now exist (File > Open Recent Project); Preferences now exist (Tools > Settings) but only cover editor/COBOL/theme settings — compiler-profile and external-tool-path editing are still ahead.
 * A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set) — the biggest remaining piece, and a prerequisite for docking anything into the shell's document area.
 * Tool-window pinning/auto-hide and floating-geometry persistence, which the current dock manager doesn't implement yet.
 

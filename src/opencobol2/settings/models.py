@@ -291,6 +291,44 @@ class ThemeSettings:
         )
 
 
+MAX_RECENT_PROJECTS = 10
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecentProjectsSettings:
+    """Most recently opened project file paths, newest first."""
+
+    paths: tuple[Path, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Normalize and cap the recent project path list."""
+        normalized_paths = tuple(
+            Path(path) for path in self.paths
+        )[:MAX_RECENT_PROJECTS]
+
+        object.__setattr__(
+            self,
+            "paths",
+            normalized_paths,
+        )
+
+    def with_recorded_path(
+        self,
+        path: Path,
+    ) -> "RecentProjectsSettings":
+        """Return settings with `path` moved to the front, deduplicated."""
+        recorded_path = Path(path)
+        remaining_paths = tuple(
+            existing_path
+            for existing_path in self.paths
+            if existing_path != recorded_path
+        )
+
+        return RecentProjectsSettings(
+            paths=(recorded_path,) + remaining_paths,
+        )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ApplicationSettings:
     """Complete persisted OpenCobol2 settings state."""
@@ -310,6 +348,9 @@ class ApplicationSettings:
     )
     theme: ThemeSettings = field(
         default_factory=ThemeSettings,
+    )
+    recent_projects: RecentProjectsSettings = field(
+        default_factory=RecentProjectsSettings,
     )
 
     def __post_init__(self) -> None:
@@ -372,6 +413,15 @@ class ApplicationSettings:
         ):
             raise TypeError(
                 "Theme settings must be ThemeSettings."
+            )
+
+        if not isinstance(
+            self.recent_projects,
+            RecentProjectsSettings,
+        ):
+            raise TypeError(
+                "Recent projects settings must be "
+                "RecentProjectsSettings."
             )
 
 

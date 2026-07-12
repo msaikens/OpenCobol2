@@ -25,7 +25,9 @@ from opencobol2.gui.project_commands import (
     create_project_close_handler,
     create_project_new_handler,
     create_project_open_handler,
+    create_project_open_recent_handler,
     create_project_save_as_handler,
+    create_recent_project_provider,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.gui.settings_dialog import (
@@ -182,17 +184,19 @@ def create_main_window(
 ) -> MainWindow:
     """Wire the built-in OpenCobol2 registries and construct the main window.
 
-    Recent-file and recent-project menus start empty: neither is persisted
-    yet, so wiring real providers is future work, not this bootstrap's job.
-    `project` seeds the Project Explorer panel; File > New/Open/Close
-    Project and File > Save Project As are all wired to real handlers that
-    create, load, save, or clear a project file and update that panel. The
-    status bar shows the open project's name (left) and the active theme
-    (right), refreshing automatically whenever the project changes. The Git
-    Changes and Git Repository panels both track a Git repository discovered
-    at the open project's root — falling back to their empty state if there
-    is none, or if `git` itself is unavailable — refreshing automatically
-    alongside it.
+    Recent-file menus start empty: OpenCobol2 has no document/file model
+    yet, so there's nothing to make that one real. Recent-project menus are
+    real: every successful New/Open/Save-As records that project file, and
+    File > Open Recent Project lists them (skipping any that no longer
+    exist on disk). `project` seeds the Project Explorer panel; File >
+    New/Open/Close Project and File > Save Project As are all wired to real
+    handlers that create, load, save, or clear a project file and update
+    that panel. The status bar shows the open project's name (left) and the
+    active theme (right), refreshing automatically whenever the project
+    changes. The Git Changes and Git Repository panels both track a Git
+    repository discovered at the open project's root — falling back to
+    their empty state if there is none, or if `git` itself is unavailable —
+    refreshing automatically alongside it.
     """
 
     resolved_settings_service = (
@@ -274,6 +278,9 @@ def create_main_window(
                     BuiltInCommandIds.PROJECT_OPEN: (
                         create_project_open_handler(
                             project_explorer=project_explorer,
+                            settings_service=(
+                                resolved_settings_service
+                            ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),
@@ -287,6 +294,9 @@ def create_main_window(
                     BuiltInCommandIds.PROJECT_NEW: (
                         create_project_new_handler(
                             project_explorer=project_explorer,
+                            settings_service=(
+                                resolved_settings_service
+                            ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),
@@ -295,6 +305,20 @@ def create_main_window(
                     BuiltInCommandIds.PROJECT_SAVE_AS: (
                         create_project_save_as_handler(
                             project_explorer=project_explorer,
+                            settings_service=(
+                                resolved_settings_service
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.PROJECT_OPEN_RECENT: (
+                        create_project_open_recent_handler(
+                            project_explorer=project_explorer,
+                            settings_service=(
+                                resolved_settings_service
+                            ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),
@@ -337,7 +361,11 @@ def create_main_window(
         contribution_registry=(
             create_builtin_command_contribution_registry(
                 recent_file_provider=lambda context: (),
-                recent_project_provider=lambda context: (),
+                recent_project_provider=(
+                    create_recent_project_provider(
+                        resolved_settings_service,
+                    )
+                ),
                 accessibility_service=accessibility_service,
             )
         ),

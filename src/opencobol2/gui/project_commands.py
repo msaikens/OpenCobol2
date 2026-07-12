@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -15,19 +15,41 @@ from PySide6.QtWidgets import (
 from opencobol2.commands import (
     CommandContext,
     CommandHandler,
+    DynamicMenuItem,
 )
+from opencobol2.commands.builtins import BuiltInCommandIds
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import (
     create_project,
     Project,
     ProjectStorage,
 )
+from opencobol2.settings import SettingsService
 
 
 _PROJECT_FILE_FILTER = (
     "OpenCobol2 Project Files (*.json);;"
     "All Files (*)"
 )
+
+
+def record_recent_project(
+    settings_service: SettingsService,
+    project_path: Path,
+) -> None:
+    """Move a project file to the front of the persisted recent-projects list."""
+
+    updated_recent_projects = (
+        settings_service
+        .current
+        .recent_projects
+        .with_recorded_path(
+            project_path,
+        )
+    )
+    settings_service.update_recent_projects(
+        updated_recent_projects,
+    )
 
 
 def open_project_from_path(
@@ -49,6 +71,7 @@ def open_project_from_path(
 def create_project_open_handler(
     *,
     project_explorer: ProjectExplorerWidget,
+    settings_service: SettingsService | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -73,12 +96,14 @@ def create_project_open_handler(
         if not path_str:
             return None
 
+        project_path = Path(
+            path_str,
+        )
+
         try:
-            return open_project_from_path(
+            project = open_project_from_path(
                 project_explorer,
-                Path(
-                    path_str,
-                ),
+                project_path,
             )
         except (
             OSError,
@@ -92,6 +117,14 @@ def create_project_open_handler(
                 ),
             )
             return None
+
+        if settings_service is not None:
+            record_recent_project(
+                settings_service,
+                project_path,
+            )
+
+        return project
 
     return handle_open_project
 
@@ -150,6 +183,7 @@ def save_project_as(
 def create_project_new_handler(
     *,
     project_explorer: ProjectExplorerWidget,
+    settings_service: SettingsService | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -191,21 +225,21 @@ def create_project_new_handler(
         if not project_file_str:
             return None
 
+        project_file = Path(
+            project_file_str,
+        )
+
         try:
             project = create_project_from_details(
                 name,
                 Path(
                     root_path_str,
                 ),
-                Path(
-                    project_file_str,
-                ),
+                project_file,
             )
             project_explorer.set_project(
                 project,
             )
-
-            return project
         except (
             OSError,
             ValueError,
@@ -219,12 +253,21 @@ def create_project_new_handler(
             )
             return None
 
+        if settings_service is not None:
+            record_recent_project(
+                settings_service,
+                project_file,
+            )
+
+        return project
+
     return handle_new_project
 
 
 def create_project_save_as_handler(
     *,
     project_explorer: ProjectExplorerWidget,
+    settings_service: SettingsService | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -260,12 +303,14 @@ def create_project_save_as_handler(
         if not project_file_str:
             return None
 
+        project_file = Path(
+            project_file_str,
+        )
+
         try:
-            return save_project_as(
+            saved_project = save_project_as(
                 current_project,
-                Path(
-                    project_file_str,
-                ),
+                project_file,
             )
         except OSError as error:
             QMessageBox.critical(
@@ -277,4 +322,102 @@ def create_project_save_as_handler(
             )
             return None
 
+        if settings_service is not None:
+            record_recent_project(
+                settings_service,
+                project_file,
+            )
+
+        return saved_project
+
     return handle_save_project_as
+
+
+def create_recent_project_provider(
+    settings_service: SettingsService,
+) -> Callable[
+    [CommandContext],
+    Iterable[DynamicMenuItem],
+]:
+    """Create a dynamic menu provider listing recent, still-existing project files."""
+
+    def provide_recent_projects(
+        context: CommandContext,
+    ) -> Iterable[DynamicMenuItem]:
+        return tuple(
+            DynamicMenuItem(
+                title=str(
+                    path,
+                ),
+                command_id=(
+                    BuiltInCommandIds.PROJECT_OPEN_RECENT
+                ),
+                context=CommandContext(
+                    values={
+                        "path": str(
+                            path,
+                        ),
+                    },
+                ),
+            )
+            for path in (
+                settings_service
+                .current
+                .recent_projects
+                .paths
+            )
+            if path.is_file()
+        )
+
+    return provide_recent_projects
+
+
+def create_project_open_recent_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    settings_service: SettingsService,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> CommandHandler:
+    """Create a handler that opens a project referenced by a recent-item click."""
+
+    def handle_open_recent_project(
+        context: CommandContext,
+    ) -> Project | None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+        project_path = Path(
+            context.require(
+                "path",
+            ),
+        )
+
+        try:
+            project = open_project_from_path(
+                project_explorer,
+                project_path,
+            )
+        except (
+            OSError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                parent_widget,
+                "Open Project Failed",
+                str(
+                    error,
+                ),
+            )
+            return None
+
+        record_recent_project(
+            settings_service,
+            project_path,
+        )
+
+        return project
+
+    return handle_open_recent_project

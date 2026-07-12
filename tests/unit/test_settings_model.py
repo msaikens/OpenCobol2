@@ -20,6 +20,8 @@ from opencobol2.settings.models import (
     DEFAULT_GNUCOBOL_PROFILE_ID,
     EditorSettings,
     ExternalToolSettings,
+    MAX_RECENT_PROJECTS,
+    RecentProjectsSettings,
     ThemeSettings,
 )
 from opencobol2.theming import DEFAULT_THEME_ID
@@ -65,6 +67,11 @@ def test_application_settings_have_typed_defaults() -> None:
         settings.theme.active_theme_id
         == DEFAULT_THEME_ID
     )
+    assert isinstance(
+        settings.recent_projects,
+        RecentProjectsSettings,
+    )
+    assert settings.recent_projects.paths == ()
 
 
 def test_compiler_settings_have_default_gnucobol_profile() -> None:
@@ -345,3 +352,91 @@ def test_theme_settings_reject_non_string_active_theme_id() -> None:
         ThemeSettings(
             active_theme_id=1,  # type: ignore[arg-type]
         )
+
+
+def test_recent_projects_settings_default_to_empty() -> None:
+    settings = RecentProjectsSettings()
+
+    assert settings.paths == ()
+
+
+def test_recent_projects_settings_normalize_to_path() -> None:
+    settings = RecentProjectsSettings(
+        paths=(
+            "a/project.json",
+        ),
+    )
+
+    assert settings.paths == (
+        Path(
+            "a/project.json",
+        ),
+    )
+
+
+def test_recent_projects_settings_cap_length() -> None:
+    settings = RecentProjectsSettings(
+        paths=tuple(
+            Path(
+                f"/p{index}.json",
+            )
+            for index in range(
+                MAX_RECENT_PROJECTS + 5,
+            )
+        ),
+    )
+
+    assert len(settings.paths) == MAX_RECENT_PROJECTS
+
+
+def test_with_recorded_path_moves_existing_path_to_front() -> None:
+    settings = RecentProjectsSettings(
+        paths=(
+            Path(
+                "/a.json",
+            ),
+            Path(
+                "/b.json",
+            ),
+        ),
+    )
+
+    updated = settings.with_recorded_path(
+        Path(
+            "/b.json",
+        ),
+    )
+
+    assert updated.paths == (
+        Path(
+            "/b.json",
+        ),
+        Path(
+            "/a.json",
+        ),
+    )
+
+
+def test_with_recorded_path_adds_new_path_to_front() -> None:
+    settings = RecentProjectsSettings(
+        paths=(
+            Path(
+                "/a.json",
+            ),
+        ),
+    )
+
+    updated = settings.with_recorded_path(
+        Path(
+            "/b.json",
+        ),
+    )
+
+    assert updated.paths == (
+        Path(
+            "/b.json",
+        ),
+        Path(
+            "/a.json",
+        ),
+    )

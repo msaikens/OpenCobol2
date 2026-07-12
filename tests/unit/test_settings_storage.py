@@ -18,6 +18,7 @@ from opencobol2.settings import (
     CompilerSettings,
     EditorSettings,
     ExternalToolSettings,
+    RecentProjectsSettings,
     SettingsFormatError,
     SettingsStorage,
     ThemeSettings,
@@ -103,6 +104,13 @@ def test_settings_round_trip_preserves_custom_configuration(
         theme=ThemeSettings(
             active_theme_id="light",
         ),
+        recent_projects=RecentProjectsSettings(
+            paths=(
+                Path(
+                    "C:/projects/demo.json",
+                ),
+            ),
+        ),
     )
 
     saved_path = storage.save(
@@ -146,6 +154,14 @@ def test_settings_round_trip_preserves_custom_configuration(
     assert (
         loaded_settings.theme.active_theme_id
         == "light"
+    )
+    assert (
+        loaded_settings.recent_projects.paths
+        == (
+            Path(
+                "C:/projects/demo.json",
+            ),
+        )
     )
 
 
@@ -351,6 +367,7 @@ def test_saved_json_uses_compiler_and_external_tool_groups(
     assert "compilers" in raw_settings
     assert "external_tools" in raw_settings
     assert "theme" in raw_settings
+    assert "recent_projects" in raw_settings
     assert "toolchains" not in raw_settings
 
 
@@ -385,6 +402,10 @@ def test_partial_settings_file_uses_current_defaults(
     )
     assert settings.cobol == CobolSettings()
     assert settings.theme == ThemeSettings()
+    assert (
+        settings.recent_projects
+        == RecentProjectsSettings()
+    )
 
 
 def test_compiler_profile_uuid_round_trip(

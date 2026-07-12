@@ -16,6 +16,7 @@ from opencobol2.settings import (
     CompilerSettings,
     EditorSettings,
     ExternalToolSettings,
+    RecentProjectsSettings,
     SettingsService,
     SettingsStorage,
     ThemeSettings,
@@ -299,6 +300,68 @@ def test_update_theme_preserves_other_settings(
     assert updated_settings.cobol is original_cobol
     assert updated_settings.theme is theme
     assert storage.load() == updated_settings
+
+
+def test_update_recent_projects_preserves_other_settings(
+    tmp_path: Path,
+) -> None:
+    storage = SettingsStorage(
+        tmp_path / "settings.json",
+    )
+    service = SettingsService(
+        storage,
+    )
+
+    original_compilers = service.current.compilers
+    original_editor = service.current.editor
+    original_theme = service.current.theme
+
+    recent_projects = RecentProjectsSettings(
+        paths=(
+            Path(
+                "/a/project.json",
+            ),
+        ),
+    )
+
+    updated_settings = (
+        service.update_recent_projects(
+            recent_projects,
+        )
+    )
+
+    assert (
+        updated_settings.compilers
+        is original_compilers
+    )
+    assert updated_settings.editor is original_editor
+    assert updated_settings.theme is original_theme
+    assert (
+        updated_settings.recent_projects
+        is recent_projects
+    )
+    assert storage.load() == updated_settings
+
+
+def test_update_recent_projects_rejects_wrong_type(
+    tmp_path: Path,
+) -> None:
+    service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            "Recent projects settings must be "
+            "RecentProjectsSettings"
+        ),
+    ):
+        service.update_recent_projects(
+            object(),  # type: ignore[arg-type]
+        )
 
 
 def test_reload_replaces_current_snapshot_from_disk(

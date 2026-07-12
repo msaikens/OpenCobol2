@@ -9,6 +9,8 @@ from opencobol2.settings.models import (
     DEFAULT_GNUCOBOL_PROFILE_ID,
     EditorSettings,
     ExternalToolSettings,
+    MAX_RECENT_PROJECTS,
+    RecentProjectsSettings,
     ThemeSettings,
 )
 from opencobol2.settings.service import (
@@ -32,6 +34,8 @@ __all__ = [
     "default_settings_path",
     "EditorSettings",
     "ExternalToolSettings",
+    "MAX_RECENT_PROJECTS",
+    "RecentProjectsSettings",
     "SettingsFormatError",
     "SettingsService",
     "SettingsStorage",

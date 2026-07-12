@@ -25,6 +25,7 @@ from opencobol2.settings.models import (
     CURRENT_SETTINGS_SCHEMA_VERSION,
     EditorSettings,
     ExternalToolSettings,
+    RecentProjectsSettings,
     ThemeSettings,
 )
 
@@ -218,6 +219,12 @@ def _encode_settings(
                 settings.theme.active_theme_id
             ),
         },
+        "recent_projects": {
+            "paths": [
+                str(path)
+                for path in settings.recent_projects.paths
+            ],
+        },
     }
 
 
@@ -364,6 +371,12 @@ def _decode_settings(
                 {},
             )
         )
+        recent_projects = _decode_recent_projects_settings(
+            root.get(
+                "recent_projects",
+                {},
+            )
+        )
 
         return ApplicationSettings(
             schema_version=schema_version,
@@ -372,6 +385,7 @@ def _decode_settings(
             editor=editor,
             cobol=cobol,
             theme=theme,
+            recent_projects=recent_projects,
         )
     except SettingsFormatError:
         raise
@@ -680,6 +694,35 @@ def _decode_theme_settings(
                 defaults.active_theme_id,
             ),
             "Active theme ID",
+        ),
+    )
+
+
+def _decode_recent_projects_settings(
+    raw_settings: Any,
+) -> RecentProjectsSettings:
+    """Decode the recent-project path list."""
+    settings = _require_mapping(
+        raw_settings,
+        "Recent projects settings",
+    )
+    raw_paths = _require_list(
+        settings.get(
+            "paths",
+            [],
+        ),
+        "Recent project paths",
+    )
+
+    return RecentProjectsSettings(
+        paths=tuple(
+            Path(
+                _require_string(
+                    raw_path,
+                    "Recent project path",
+                ),
+            )
+            for raw_path in raw_paths
         ),
     )
 

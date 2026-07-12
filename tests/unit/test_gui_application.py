@@ -971,3 +971,105 @@ def test_git_repository_panel_updates_when_project_opened_and_closed(
     ).trigger()
 
     assert git_repository.repository_path is None
+
+
+def test_recent_projects_menu_lists_and_reopens_projects(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    project_one = create_project(
+        name="ProjectOne",
+        root_path=tmp_path,
+    )
+    project_two = create_project(
+        name="ProjectTwo",
+        root_path=tmp_path,
+    )
+    project_one_file = (
+        tmp_path / "one.json"
+    )
+    project_two_file = (
+        tmp_path / "two.json"
+    )
+    ProjectStorage(
+        project_one_file,
+    ).save(
+        project_one,
+    )
+    ProjectStorage(
+        project_two_file,
+    ).save(
+        project_two,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+    file_menu = window.menus["file"]
+
+    file_menu.aboutToShow.emit()
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_one_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    file_menu.aboutToShow.emit()
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_two_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    # Newest-first: ProjectTwo was opened last.
+    assert (
+        settings_service.current.recent_projects.paths
+        == (
+            project_two_file,
+            project_one_file,
+        )
+    )
+
+    file_menu.aboutToShow.emit()
+    recent_item = _find_action(
+        file_menu,
+        str(
+            project_one_file,
+        ),
+    )
+    recent_item.trigger()
+
+    assert explorer.project.name == "ProjectOne"
+    # Reopening ProjectOne moves it back to the front.
+    assert (
+        settings_service.current.recent_projects.paths
+        == (
+            project_one_file,
+            project_two_file,
+        )
+    )
