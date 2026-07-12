@@ -19,6 +19,7 @@ from opencobol2.gui.command_palette import (
     create_show_command_palette_handler,
 )
 from opencobol2.gui.git_changes import GitChangesWidget
+from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.gui.main_window import MainWindow
 from opencobol2.gui.project_commands import (
     create_project_close_handler,
@@ -188,9 +189,10 @@ def create_main_window(
     create, load, save, or clear a project file and update that panel. The
     status bar shows the open project's name (left) and the active theme
     (right), refreshing automatically whenever the project changes. The Git
-    Changes panel tracks a Git repository discovered at the open project's
-    root — falling back to its empty state if there is none, or if `git`
-    itself is unavailable — and refreshes automatically alongside it.
+    Changes and Git Repository panels both track a Git repository discovered
+    at the open project's root — falling back to their empty state if there
+    is none, or if `git` itself is unavailable — refreshing automatically
+    alongside it.
     """
 
     resolved_settings_service = (
@@ -213,12 +215,17 @@ def create_main_window(
     )
 
     git_service = GitService()
+    initial_repository_path = _discover_repository_path(
+        git_service,
+        project,
+    )
     git_changes_widget = GitChangesWidget(
         git_service=git_service,
-        repository_path=_discover_repository_path(
-            git_service,
-            project,
-        ),
+        repository_path=initial_repository_path,
+    )
+    git_repository_widget = GitRepositoryWidget(
+        git_service=git_service,
+        repository_path=initial_repository_path,
     )
 
     # Built before the command registry (unlike CommandService/MainWindow
@@ -355,22 +362,34 @@ def create_main_window(
             BuiltInToolWindowIds.GIT_CHANGES: (
                 lambda: git_changes_widget
             ),
+            BuiltInToolWindowIds.GIT_REPOSITORY: (
+                lambda: git_repository_widget
+            ),
         },
         status_bar_service=status_bar_service,
     )
     main_window_holder[0] = window
+
+    def _on_project_changed(
+        changed_project: Project | None,
+    ) -> None:
+        """Refresh everything derived from the project when it changes."""
+
+        window.refresh_status_bar()
+
+        repository_path = _discover_repository_path(
+            git_service,
+            changed_project,
+        )
+        git_changes_widget.set_repository_path(
+            repository_path,
+        )
+        git_repository_widget.set_repository_path(
+            repository_path,
+        )
+
     project_explorer.project_changed.connect(
-        lambda _project: window.refresh_status_bar(),
-    )
-    project_explorer.project_changed.connect(
-        lambda changed_project: (
-            git_changes_widget.set_repository_path(
-                _discover_repository_path(
-                    git_service,
-                    changed_project,
-                )
-            )
-        ),
+        _on_project_changed,
     )
 
     return window

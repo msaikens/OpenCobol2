@@ -101,6 +101,16 @@ def _git_changes_content(
     )
 
 
+def _git_repository_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "git-repository",
+        ).widget()
+    )
+
+
 def test_create_main_window_wires_builtin_registries(
     qapp,
     tmp_path: Path,
@@ -808,3 +818,156 @@ def test_settings_menu_action_applies_theme_to_running_window(
         reloaded.current.theme.active_theme_id
         == "light"
     )
+
+
+def test_git_repository_panel_empty_without_a_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    git_repository = _git_repository_content(
+        window,
+    )
+
+    assert git_repository.repository_path is None
+
+
+def test_git_repository_panel_seeded_with_project_repository(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project_root = (
+        tmp_path / "project"
+    )
+    project_root.mkdir()
+    _init_repository(
+        project_root,
+    )
+    (
+        project_root / "main.cbl"
+    ).write_text(
+        "x",
+    )
+    subprocess.run(
+        [
+            "git",
+            "add",
+            ".",
+        ],
+        cwd=project_root,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "commit",
+            "-q",
+            "-m",
+            "Initial commit",
+        ],
+        cwd=project_root,
+        check=True,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=project_root,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    git_repository = _git_repository_content(
+        window,
+    )
+
+    assert (
+        git_repository.repository_path
+        == project_root
+    )
+    assert (
+        git_repository._history_list.count()
+        == 1
+    )
+
+
+def test_git_repository_panel_updates_when_project_opened_and_closed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project_root = (
+        tmp_path / "project"
+    )
+    project_root.mkdir()
+    _init_repository(
+        project_root,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=project_root,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    git_repository = _git_repository_content(
+        window,
+    )
+
+    assert git_repository.repository_path is None
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    assert (
+        git_repository.repository_path
+        == project_root
+    )
+
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert git_repository.repository_path is None
