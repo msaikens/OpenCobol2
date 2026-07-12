@@ -144,9 +144,19 @@ A settings service exposes the current settings snapshot and supports reload and
 OpenCobol2 has a Qt-independent command and contribution framework:
 
 * A command registry with declarative command definitions, an extensible built-in command catalog, and placeholder commands reserved for future GUI wiring.
-* Menu and toolbar contribution registries, including submenu and dynamic menu support. There is no contribution-registry-backed status bar item model yet — the Phase 7 shell renders a plain, non-contribution-driven status bar (see "Application shell" below).
+* Menu and toolbar contribution registries, including submenu and dynamic menu support.
 * A tool window registry describing docked panels (id, title, default dock area, default visibility, accessibility description). The Phase 7 shell now renders these as real docked panels.
 * Accessibility preference profiles.
+
+### Status bar item contribution model
+
+OpenCobol2 has a Qt-independent status bar item model, mirroring the menu/toolbar contribution pattern above:
+
+* `StatusBarItemDefinition` describes one item: an ID, a left/right `StatusBarItemAlignment`, a display order, and a zero-argument provider callable that returns its current `StatusBarItemContent` (text, optional tooltip, visibility).
+* A `StatusBarItemRegistry` for registering items and listing them per alignment, ordered for display.
+* A `StatusBarService` that resolves items (individually or by alignment) by calling their providers for current content.
+
+Items are read-only — there is no click-to-execute-a-command support yet. The Phase 7 application shell (below) renders these as real labels and keeps them refreshed from live application state.
 
 ### Color theme system
 
@@ -159,7 +169,7 @@ OpenCobol2 has a Qt-independent color theme model, independent of any rendered s
 
 The Phase 7 application shell (below) now applies the active theme's palette to real widgets.
 
-The command, menu, tool-window, and theme registries above are fully unit tested independently of Qt, in addition to their Phase 7 rendering.
+The command, menu, tool-window, status-bar, and theme registries above are fully unit tested independently of Qt, in addition to their Phase 7 rendering.
 
 ### Application shell
 
@@ -167,8 +177,9 @@ OpenCobol2 has a real, launchable Qt application shell (`src/opencobol2/gui/`), 
 
 * `MainWindow` builds a live menu bar and toolbars from command surface contributions. Menus rebuild themselves from current command/dynamic-menu state every time they open, so enabled/checked state and dynamic entries (like a future recent-files list) are never stale.
 * Every registered tool window is rendered as a real `QDockWidget`: initial dock area and visibility come from `ToolWindowService`, and visibility changes made through the real widget (closing a panel, for example) are synced back into that service. Pinning/auto-hide and floating-geometry restoration are not implemented yet; panels use plain `QDockWidget` floating/closable behavior as-is. Each tool window can be given real content through a pluggable per-tool-window content factory; panels without one fall back to a placeholder. Project Explorer is the first to have real content (see "Project system" below) — Output, Problems, and the rest still fall back to the placeholder.
+* The status bar renders one real label per registered status bar item — left-aligned items via `QStatusBar.addWidget`, right-aligned items via `addPermanentWidget` — and `MainWindow.refresh_status_bar()` re-resolves every item's provider on demand. The built-in items show the currently open project's name (updating live off `ProjectExplorerWidget.project_changed`) and the active theme's name (updating whenever `apply_active_theme()` runs).
 * The active color theme is applied to the shell as a real `QPalette`.
-* `create_main_window()` (`opencobol2.gui.application`) wires the real built-in command, tool-window, and theme registries together into a working window, optionally seeded with a `Project` to show in the Project Explorer. The application launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`[project.gui-scripts]`).
+* `create_main_window()` (`opencobol2.gui.application`) wires the real built-in command, tool-window, theme, and status-bar registries together into a working window, optionally seeded with a `Project` to show in the Project Explorer. The application launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`[project.gui-scripts]`).
 
 The shell is unit tested against a real, offscreen (`QT_QPA_PLATFORM=offscreen`) `QApplication` — no display server is required to run these tests.
 

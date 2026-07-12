@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import fnmatch
 from pathlib import Path
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QLabel,
     QStackedWidget,
@@ -23,6 +24,9 @@ from opencobol2.project import (
 
 class ProjectExplorerWidget(QWidget):
     """Displays the currently open project's files and organization."""
+
+    project_changed = Signal(object)
+    """Emitted with the new `Project | None` whenever `set_project` runs."""
 
     def __init__(
         self,
@@ -106,6 +110,9 @@ class ProjectExplorerWidget(QWidget):
             self._stack.setCurrentWidget(
                 self._empty_label,
             )
+            self.project_changed.emit(
+                None,
+            )
             return
 
         populate_project_tree(
@@ -114,6 +121,9 @@ class ProjectExplorerWidget(QWidget):
         )
         self._stack.setCurrentWidget(
             self._tree,
+        )
+        self.project_changed.emit(
+            project,
         )
 
 

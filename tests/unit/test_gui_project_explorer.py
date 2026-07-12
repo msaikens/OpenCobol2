@@ -47,6 +47,36 @@ def test_widget_shows_empty_state_with_no_project(
     )
 
 
+def test_set_project_emits_project_changed_signal(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget()
+    received = []
+    widget.project_changed.connect(
+        received.append,
+    )
+
+    widget.set_project(
+        project,
+    )
+
+    assert received == [project]
+
+    widget.set_project(
+        None,
+    )
+
+    assert received == [
+        project,
+        None,
+    ]
+
+
 def test_widget_shows_tree_when_project_set(
     qapp,
     tmp_path: Path,

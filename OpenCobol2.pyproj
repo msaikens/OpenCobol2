@@ -625,6 +625,7 @@
     <Compile Include="src\opencobol2\gui\main_window.py" />
     <Compile Include="src\opencobol2\gui\project_commands.py" />
     <Compile Include="src\opencobol2\gui\project_explorer.py" />
+    <Compile Include="src\opencobol2\gui\status_bar.py" />
     <Compile Include="src\opencobol2\gui\theming.py" />
     <Compile Include="src\opencobol2\gui\toolbars.py" />
     <Compile Include="src\opencobol2\gui\tool_windows.py" />
@@ -649,6 +650,7 @@
     <Compile Include="src\opencobol2\services\compiler_runtimes.py" />
     <Compile Include="src\opencobol2\services\git.py" />
     <Compile Include="src\opencobol2\services\project.py" />
+    <Compile Include="src\opencobol2\services\status_bar.py" />
     <Compile Include="src\opencobol2\services\theming.py" />
     <Compile Include="src\opencobol2\services\toolchains.py" />
     <Compile Include="src\opencobol2\services\tool_windows.py" />
@@ -657,6 +659,9 @@
     <Compile Include="src\opencobol2\settings\service.py" />
     <Compile Include="src\opencobol2\settings\storage.py" />
     <Compile Include="src\opencobol2\settings\__init__.py" />
+    <Compile Include="src\opencobol2\status_bar\models.py" />
+    <Compile Include="src\opencobol2\status_bar\registry.py" />
+    <Compile Include="src\opencobol2\status_bar\__init__.py" />
     <Compile Include="src\opencobol2\theming\builtins.py" />
     <Compile Include="src\opencobol2\theming\models.py" />
     <Compile Include="src\opencobol2\theming\registry.py" />
@@ -737,6 +742,7 @@
     <Compile Include="tests\unit\test_gui_main_window.py" />
     <Compile Include="tests\unit\test_gui_project_commands.py" />
     <Compile Include="tests\unit\test_gui_project_explorer.py" />
+    <Compile Include="tests\unit\test_gui_status_bar.py" />
     <Compile Include="tests\unit\test_gui_theming.py" />
     <Compile Include="tests\unit\test_gui_toolbars.py" />
     <Compile Include="tests\unit\test_gui_tool_windows.py" />
@@ -749,6 +755,9 @@
     <Compile Include="tests\unit\test_settings_model.py" />
     <Compile Include="tests\unit\test_settings_storage.py" />
     <Compile Include="tests\unit\test_settings_service.py" />
+    <Compile Include="tests\unit\test_status_bar_models.py" />
+    <Compile Include="tests\unit\test_status_bar_registry.py" />
+    <Compile Include="tests\unit\test_status_bar_service.py" />
     <Compile Include="tests\unit\test_theme_service.py" />
     <Compile Include="tests\unit\test_theming_builtins.py" />
     <Compile Include="tests\unit\test_theming_models.py" />
@@ -948,6 +957,9 @@
     <Content Include="src\opencobol2\language\__pycache__\lexer.cpython-314.pyc" />
     <Content Include="src\opencobol2\language\__pycache__\tokens.cpython-314.pyc" />
     <Content Include="src\opencobol2\language\__pycache__\__init__.cpython-314.pyc" />
+    <Content Include="src\opencobol2\status_bar\__pycache__\models.cpython-314.pyc" />
+    <Content Include="src\opencobol2\status_bar\__pycache__\registry.cpython-314.pyc" />
+    <Content Include="src\opencobol2\status_bar\__pycache__\__init__.cpython-314.pyc" />
     <Content Include="src\opencobol2\theming\__pycache__\builtins.cpython-314.pyc" />
     <Content Include="src\opencobol2\theming\__pycache__\models.cpython-314.pyc" />
     <Content Include="src\opencobol2\theming\__pycache__\registry.cpython-314.pyc" />
@@ -1066,6 +1078,8 @@
     <Folder Include="src\opencobol2\language\" />
     <Folder Include="src\opencobol2\language\__pycache__\" />
     <Folder Include="src\opencobol2\project\" />
+    <Folder Include="src\opencobol2\status_bar\" />
+    <Folder Include="src\opencobol2\status_bar\__pycache__\" />
     <Folder Include="src\opencobol2\theming\" />
     <Folder Include="src\opencobol2\theming\__pycache__\" />
     <Folder Include="src\opencobol2\tool_windows\" />

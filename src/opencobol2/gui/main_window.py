@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from PySide6.QtWidgets import (
+    QLabel,
     QMainWindow,
     QMenu,
     QStatusBar,
@@ -13,6 +14,10 @@ from PySide6.QtWidgets import (
 )
 
 from opencobol2.gui.command_menus import build_menu_bar
+from opencobol2.gui.status_bar import (
+    build_status_bar,
+    refresh_status_bar as refresh_status_bar_labels,
+)
 from opencobol2.gui.theming import apply_theme_to_widget
 from opencobol2.gui.tool_windows import (
     ToolWindowContentFactory,
@@ -22,6 +27,7 @@ from opencobol2.gui.toolbars import build_toolbar
 from opencobol2.services.command_contributions import (
     CommandContributionService,
 )
+from opencobol2.services.status_bar import StatusBarService
 from opencobol2.services.theming import ThemeService
 from opencobol2.services.tool_windows import ToolWindowService
 
@@ -42,6 +48,7 @@ class MainWindow(QMainWindow):
             ToolWindowContentFactory,
         ]
         | None = None,
+        status_bar_service: StatusBarService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the OpenCobol2 shell from the supplied application services."""
@@ -76,9 +83,22 @@ class MainWindow(QMainWindow):
                 "Main window theme service must be ThemeService."
             )
 
+        if (
+            status_bar_service is not None
+            and not isinstance(
+                status_bar_service,
+                StatusBarService,
+            )
+        ):
+            raise TypeError(
+                "Main window status bar service must be "
+                "StatusBarService or None."
+            )
+
         self._contribution_service = contribution_service
         self._tool_window_service = tool_window_service
         self._theme_service = theme_service
+        self._status_bar_service = status_bar_service
 
         self.setWindowTitle(
             "OpenCobol2",
@@ -121,6 +141,16 @@ class MainWindow(QMainWindow):
                 self,
             )
         )
+        self._status_bar_labels: dict[
+            str,
+            QLabel,
+        ] = {}
+
+        if status_bar_service is not None:
+            self._status_bar_labels = build_status_bar(
+                self.statusBar(),
+                status_bar_service,
+            )
 
         self._dock_manager = ToolWindowDockManager(
             main_window=self,
@@ -166,4 +196,18 @@ class MainWindow(QMainWindow):
         apply_theme_to_widget(
             self,
             self._theme_service.active_theme,
+        )
+        self.refresh_status_bar()
+
+    def refresh_status_bar(
+        self,
+    ) -> None:
+        """Refresh every status bar item from its current provider content."""
+
+        if self._status_bar_service is None:
+            return
+
+        refresh_status_bar_labels(
+            self._status_bar_labels,
+            self._status_bar_service,
         )

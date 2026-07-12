@@ -6,7 +6,7 @@ Status legend: ✅ done · 🔶 partially done · ⬜ not started · 🚫 intent
 
 ## Phase 1 — Foundation (core application complete; Git foundation complete except deliberately deferred items)
 
-Everything in "Core application" below is a Qt-independent registry/model. It is fully unit tested, but nothing is rendered by a GUI yet — that is Phase 7.
+Everything in "Core application" below started as a Qt-independent registry/model, fully unit tested on its own. Most of it is now also rendered by the Phase 7 shell (see below); each bullet notes whether that rendering exists yet.
 
 **Core application**
 
@@ -15,7 +15,7 @@ Everything in "Core application" below is a Qt-independent registry/model. It is
 * ✅ Command framework
 * ✅ Menu contribution framework (including submenus and dynamic menus)
 * ✅ Toolbar contribution framework
-* 🔶 Status bar (a plain `QStatusBar` is now rendered by the Phase 7 shell; unlike menus/toolbars, there is no contribution-registry-backed status-bar-item model yet — this was previously mis-marked as fully done)
+* ✅ Status bar (`StatusBarItemDefinition`/`StatusBarItemRegistry`/`StatusBarService` mirror the menu/toolbar contribution pattern; the Phase 7 shell renders one label per registered item — left-aligned via `QStatusBar.addWidget`, right-aligned via `addPermanentWidget` — and refreshes them from live application state; no click-to-execute-a-command support yet, items are read-only)
 * ✅ Tool-window/docking registry (id, title, default dock area, default visibility; now actually rendered as real `QDockWidget` panels by the Phase 7 shell, see below)
 * ✅ Theme system (`Theme`/`ThemeColors`/`ThemeKind` models, a `ThemeRegistry`, a built-in catalog of four themes — Light, Dark, High Contrast Light, High Contrast Dark — a `ThemeService` for active-theme selection, and a persisted `ThemeSettings` section; the Phase 7 shell now applies the active theme's palette to real widgets)
 * ✅ Accent color normalization (per-tool-window accent override, scoped to the accessibility profile below)
@@ -150,9 +150,10 @@ Still untouched.
 
 ## Phase 7 — UI
 
-The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window (with a pluggable per-tool-window content factory), and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme registries together, plus an optional `Project` to seed the Project Explorer). File > New/Open/Save As/Close Project are all real, working commands. Project Explorer is the first tool window with real content; Output, Problems, and the rest are still placeholders.
+The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window (with a pluggable per-tool-window content factory), renders a real content-driven status bar, and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme/status-bar registries together, plus an optional `Project` to seed the Project Explorer). File > New/Open/Save As/Close Project are all real, working commands, and the status bar reflects the open project and active theme live. Project Explorer is the first tool window with real content; Output, Problems, and the rest are still placeholders.
 
-* ✅ Application shell (`MainWindow`: live menu bar + toolbars rendered from command contributions, theme palette application, a real runnable bootstrap)
+* ✅ Application shell (`MainWindow`: live menu bar + toolbars rendered from command contributions, a real content-driven status bar, theme palette application, a real runnable bootstrap)
+* ✅ Status bar (see Phase 1 above for the domain model; the shell's built-in items show the open project's name — reacting live to `ProjectExplorerWidget.project_changed` — and the active theme, reacting when `apply_active_theme()` runs)
 * ✅ Tool windows (rendering the Phase 1 registry: one `QDockWidget` per registered definition, initial dock area + visibility applied, visibility synced bidirectionally with `ToolWindowService`, pluggable real content per tool window; pinning/auto-hide and floating-geometry restoration are not implemented yet — plain QDockWidget floating/closable behavior is used as-is)
 * ⬜ Welcome page
 * ⬜ Recent projects

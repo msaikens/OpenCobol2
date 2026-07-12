@@ -17,8 +17,15 @@ from opencobol2.services.command_contributions import (
     CommandContributionService,
 )
 from opencobol2.services.commands import CommandService
+from opencobol2.services.status_bar import StatusBarService
 from opencobol2.services.theming import ThemeService
 from opencobol2.services.tool_windows import ToolWindowService
+from opencobol2.status_bar import (
+    StatusBarItemAlignment,
+    StatusBarItemContent,
+    StatusBarItemDefinition,
+    StatusBarItemRegistry,
+)
 from opencobol2.theming import (
     create_builtin_theme_registry,
     DARK_THEME_ID,
@@ -241,4 +248,132 @@ def test_main_window_rejects_invalid_theme_service(
             tool_window_service=tool_window_service,
             theme_service=object(),  # type: ignore[arg-type]
             top_level_menus=(),
+        )
+
+
+def test_main_window_without_status_bar_service_has_no_labels(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    window = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+    )
+
+    assert window._status_bar_labels == {}
+    # Must be a safe no-op without a configured status bar service.
+    window.refresh_status_bar()
+
+
+def test_main_window_builds_status_bar_from_service(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    status_bar_registry = StatusBarItemRegistry()
+    status_bar_registry.register(
+        StatusBarItemDefinition(
+            item_id="message",
+            alignment=StatusBarItemAlignment.LEFT,
+            provider=lambda: StatusBarItemContent(
+                text="Ready",
+            ),
+        )
+    )
+    status_bar_service = StatusBarService(
+        registry=status_bar_registry,
+    )
+
+    window = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+        status_bar_service=status_bar_service,
+    )
+
+    assert (
+        window._status_bar_labels[
+            "message"
+        ].text()
+        == "Ready"
+    )
+
+
+def test_apply_active_theme_refreshes_status_bar(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    text_holder = ["First"]
+    status_bar_registry = StatusBarItemRegistry()
+    status_bar_registry.register(
+        StatusBarItemDefinition(
+            item_id="message",
+            alignment=StatusBarItemAlignment.LEFT,
+            provider=lambda: StatusBarItemContent(
+                text=text_holder[0],
+            ),
+        )
+    )
+    status_bar_service = StatusBarService(
+        registry=status_bar_registry,
+    )
+
+    window = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+        status_bar_service=status_bar_service,
+    )
+
+    text_holder[0] = "Second"
+    window.apply_active_theme()
+
+    assert (
+        window._status_bar_labels[
+            "message"
+        ].text()
+        == "Second"
+    )
+
+
+def test_main_window_rejects_invalid_status_bar_service(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            "Main window status bar service must be "
+            "StatusBarService or None"
+        ),
+    ):
+        MainWindow(
+            contribution_service=contribution_service,
+            tool_window_service=tool_window_service,
+            theme_service=theme_service,
+            top_level_menus=(),
+            status_bar_service=object(),  # type: ignore[arg-type]
         )

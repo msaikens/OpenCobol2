@@ -335,3 +335,158 @@ def test_new_and_save_project_as_menu_actions_work_end_to_end(
         ).trigger()
 
     assert save_as_path.is_file()
+
+
+def test_status_bar_shows_no_project_and_default_theme(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    assert (
+        window._status_bar_labels[
+            "project"
+        ].text()
+        == "No Project Open"
+    )
+    assert (
+        window._status_bar_labels[
+            "theme"
+        ].text()
+        == "Theme: Dark"
+    )
+
+
+def test_status_bar_seeded_with_project_at_bootstrap(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+
+    assert (
+        window._status_bar_labels[
+            "project"
+        ].text()
+        == "Project: Demo"
+    )
+
+
+def test_status_bar_updates_when_project_opened_and_closed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    project_label = (
+        window._status_bar_labels[
+            "project"
+        ]
+    )
+
+    assert (
+        project_label.text()
+        == "No Project Open"
+    )
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    assert (
+        project_label.text()
+        == "Project: Demo"
+    )
+
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert (
+        project_label.text()
+        == "No Project Open"
+    )
+
+
+def test_status_bar_updates_when_theme_switches(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    theme_label = (
+        window._status_bar_labels[
+            "theme"
+        ]
+    )
+
+    window._theme_service.set_active_theme(
+        "light",
+    )
+    window.apply_active_theme()
+
+    assert (
+        theme_label.text()
+        == "Theme: Light"
+    )
