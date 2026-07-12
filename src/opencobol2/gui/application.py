@@ -14,6 +14,9 @@ from opencobol2.commands.builtins import (
     create_builtin_command_contribution_registry,
     create_builtin_command_registry,
 )
+from opencobol2.gui.command_palette import (
+    create_show_command_palette_handler,
+)
 from opencobol2.gui.main_window import MainWindow
 from opencobol2.gui.project_commands import (
     create_project_close_handler,
@@ -170,6 +173,12 @@ def create_main_window(
     main_window_holder: list[
         MainWindow | None
     ] = [None]
+    # Same problem in reverse: the command palette needs the CommandService
+    # that wraps THIS registry, which doesn't exist until after the registry
+    # it's being registered into is fully built.
+    command_service_holder: list[
+        CommandService | None
+    ] = [None]
 
     command_service = CommandService(
         registry=create_builtin_command_registry(
@@ -206,10 +215,21 @@ def create_main_window(
                             ),
                         )
                     ),
+                    BuiltInCommandIds.VIEW_COMMAND_PALETTE: (
+                        create_show_command_palette_handler(
+                            command_service_provider=(
+                                lambda: command_service_holder[0]
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
                 },
             ),
         ),
     )
+    command_service_holder[0] = command_service
 
     contribution_service = CommandContributionService(
         command_service=command_service,

@@ -490,3 +490,34 @@ def test_status_bar_updates_when_theme_switches(
         theme_label.text()
         == "Theme: Light"
     )
+
+
+def test_command_palette_menu_action_opens_dialog(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+    palette_action = _find_action(
+        view_menu,
+        "Command Palette",
+    )
+
+    with patch(
+        "opencobol2.gui.command_palette."
+        "CommandPaletteDialog.exec",
+        return_value=0,
+    ) as mock_exec:
+        palette_action.trigger()
+
+    mock_exec.assert_called_once()

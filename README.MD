@@ -179,6 +179,7 @@ OpenCobol2 has a real, launchable Qt application shell (`src/opencobol2/gui/`), 
 * Every registered tool window is rendered as a real `QDockWidget`: initial dock area and visibility come from `ToolWindowService`, and visibility changes made through the real widget (closing a panel, for example) are synced back into that service. Pinning/auto-hide and floating-geometry restoration are not implemented yet; panels use plain `QDockWidget` floating/closable behavior as-is. Each tool window can be given real content through a pluggable per-tool-window content factory; panels without one fall back to a placeholder. Project Explorer is the first to have real content (see "Project system" below) — Output, Problems, and the rest still fall back to the placeholder.
 * The status bar renders one real label per registered status bar item — left-aligned items via `QStatusBar.addWidget`, right-aligned items via `addPermanentWidget` — and `MainWindow.refresh_status_bar()` re-resolves every item's provider on demand. The built-in items show the currently open project's name (updating live off `ProjectExplorerWidget.project_changed`) and the active theme's name (updating whenever `apply_active_theme()` runs).
 * The active color theme is applied to the shell as a real `QPalette`.
+* A `CommandPaletteDialog` (View > Command Palette, Ctrl+Shift+P) lists every registered command with its category, filters live as the user types (matching against both title and category), supports arrow-key navigation, and executes the selected command on Enter or double-click. Commands the current `CommandState` reports as disabled are shown but not executable; hidden commands are omitted entirely.
 * `create_main_window()` (`opencobol2.gui.application`) wires the real built-in command, tool-window, theme, and status-bar registries together into a working window, optionally seeded with a `Project` to show in the Project Explorer. The application launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`[project.gui-scripts]`).
 
 The shell is unit tested against a real, offscreen (`QT_QPA_PLATFORM=offscreen`) `QApplication` — no display server is required to run these tests.
@@ -236,7 +237,6 @@ For a detailed, phase-by-phase status of every planned subsystem (including what
 
 The application shell exists and runs (see "Application shell" under "Current foundation" above: a live menu bar and toolbars rendered from the command/menu contribution registries, and docked tool-window panels backed by the tool window registry). What's still ahead:
 
-* A command search interface over registered commands.
 * Real content for each remaining docked tool-window panel — Git, Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, and Extensions panels currently render as placeholders (Project Explorer now has real content).
 * A dedicated New Project dialog widget — today it's a sequence of stock `QInputDialog`/`QFileDialog` prompts rather than a single purpose-built form.
 * A Welcome page, a recent-projects list, and preferences dialogs.
