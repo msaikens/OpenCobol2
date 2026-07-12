@@ -201,7 +201,9 @@ OpenCobol2 has a persisted project model that stays independent of any specific 
 
 Project persistence uses the same schema-versioned, atomic-replacement JSON storage pattern as application settings.
 
-A real Project Explorer (`ProjectExplorerWidget`) now renders inside the application shell's dock panel (see "Application shell" above): a physical file/directory tree of the project root honoring `excluded_patterns`, a "Virtual Folders" branch showing the logical folder tree (including nested folders, member file paths, and referenced linked files), and a "Linked Files" branch for any linked file not already organized into a virtual folder. File > Open Project and File > Close Project (`opencobol2.gui.project_commands`) are wired to real handlers: Open Project prompts for a project file, loads it through `ProjectStorage`, and displays it; Close Project clears the panel back to its empty state. `create_main_window(project=...)` can also seed a project directly. New Project and Save Project As remain unconfigured.
+A real Project Explorer (`ProjectExplorerWidget`) now renders inside the application shell's dock panel (see "Application shell" above): a physical file/directory tree of the project root honoring `excluded_patterns`, a "Virtual Folders" branch showing the logical folder tree (including nested folders, member file paths, and referenced linked files), and a "Linked Files" branch for any linked file not already organized into a virtual folder.
+
+All four project file commands (`opencobol2.gui.project_commands`) are wired to real handlers: New Project prompts for a name, a root directory, and a save location, then creates and persists a project; Open Project prompts for a project file and loads it through `ProjectStorage`; Save Project As persists the currently open project to a new location; Close Project clears the panel back to its empty state. `create_main_window(project=...)` can also seed a project directly.
 
 ### COBOL language services (lexer, parser, semantic analysis)
 
@@ -225,7 +227,7 @@ The application shell exists and runs (see "Application shell" under "Current fo
 
 * A command search interface over registered commands.
 * Real content for each remaining docked tool-window panel — Git, Output, Problems, Terminal, Search, Outline, Bookmarks, Task List, and Extensions panels currently render as placeholders (Project Explorer now has real content).
-* A New Project command (with a name/location dialog) and a Save Project As command — Open Project and Close Project are already wired to real handlers.
+* A dedicated New Project dialog widget — today it's a sequence of stock `QInputDialog`/`QFileDialog` prompts rather than a single purpose-built form.
 * A Welcome page, a recent-projects list, and preferences dialogs.
 * A text editor widget (tabs, split editors, dirty tracking, undo/redo, folding, minimap, multiple cursors, and the rest of the editor feature set) — the biggest remaining piece, and a prerequisite for docking anything into the shell's document area.
 * Tool-window pinning/auto-hide and floating-geometry persistence, which the current dock manager doesn't implement yet.

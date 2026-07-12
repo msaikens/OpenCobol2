@@ -27,10 +27,18 @@ def _find_action(
     menu,
     title: str,
 ):
-    return next(
-        action
-        for action in menu.actions()
-        if action.text() == title
+    # Materialize the actions list into a local before searching it: a
+    # chained `next(a for a in menu.actions() if ...)` can let PySide6
+    # garbage-collect the underlying QAction (and, for submenu actions, the
+    # QMenu it owns) before the caller finishes using the returned value.
+    actions = menu.actions()
+
+    for action in actions:
+        if action.text() == title:
+            return action
+
+    raise ValueError(
+        f"No action titled {title!r} found."
     )
 
 
@@ -234,3 +242,96 @@ def test_open_and_close_project_menu_actions_work_end_to_end(
     ).trigger()
 
     assert explorer.project is None
+
+
+def test_new_and_save_project_as_menu_actions_work_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+    # Bind the "New" action to a name before calling .menu() on it in a
+    # separate statement: PySide6 has garbage-collected the submenu a
+    # chained `_find_action(...).menu()` returned before it could be used.
+    new_action = _find_action(
+        file_menu,
+        "New",
+    )
+    new_submenu = new_action.menu()
+    new_submenu.aboutToShow.emit()
+
+    project_file = (
+        tmp_path / "project.json"
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.project_commands.QInputDialog.getText",
+            return_value=(
+                "Demo",
+                True,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands."
+            "QFileDialog.getExistingDirectory",
+            return_value=str(
+                tmp_path,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands."
+            "QFileDialog.getSaveFileName",
+            return_value=(
+                str(
+                    project_file,
+                ),
+                "",
+            ),
+        ),
+    ):
+        _find_action(
+            new_submenu,
+            "New Project",
+        ).trigger()
+
+    assert (
+        explorer.project is not None
+        and explorer.project.name
+        == "Demo"
+    )
+
+    file_menu.aboutToShow.emit()
+    save_as_path = (
+        tmp_path / "copy.json"
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands."
+        "QFileDialog.getSaveFileName",
+        return_value=(
+            str(
+                save_as_path,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Save Project As",
+        ).trigger()
+
+    assert save_as_path.is_file()

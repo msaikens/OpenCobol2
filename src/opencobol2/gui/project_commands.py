@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QFileDialog,
+    QInputDialog,
     QMessageBox,
     QWidget,
 )
@@ -17,8 +18,15 @@ from opencobol2.commands import (
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import (
+    create_project,
     Project,
     ProjectStorage,
+)
+
+
+_PROJECT_FILE_FILTER = (
+    "OpenCobol2 Project Files (*.json);;"
+    "All Files (*)"
 )
 
 
@@ -59,10 +67,7 @@ def create_project_open_handler(
             parent_widget,
             "Open Project",
             "",
-            (
-                "OpenCobol2 Project Files (*.json);;"
-                "All Files (*)"
-            ),
+            _PROJECT_FILE_FILTER,
         )
 
         if not path_str:
@@ -105,3 +110,171 @@ def create_project_close_handler(
         )
 
     return handle_close_project
+
+
+def create_project_from_details(
+    name: str,
+    root_path: Path,
+    project_file: Path,
+) -> Project:
+    """Create a new project and persist it to a project file."""
+
+    project = create_project(
+        name=name,
+        root_path=root_path,
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    return project
+
+
+def save_project_as(
+    project: Project,
+    project_file: Path,
+) -> Project:
+    """Persist an existing project to a new project file location."""
+
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    return project
+
+
+def create_project_new_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> CommandHandler:
+    """Create a handler that prompts for new-project details and creates it."""
+
+    def handle_new_project(
+        context: CommandContext,
+    ) -> Project | None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+
+        name, ok = QInputDialog.getText(
+            parent_widget,
+            "New Project",
+            "Project name:",
+        )
+
+        if not ok or not name.strip():
+            return None
+
+        root_path_str = QFileDialog.getExistingDirectory(
+            parent_widget,
+            "Select Project Root Directory",
+        )
+
+        if not root_path_str:
+            return None
+
+        project_file_str, _ = QFileDialog.getSaveFileName(
+            parent_widget,
+            "Save Project As",
+            "",
+            _PROJECT_FILE_FILTER,
+        )
+
+        if not project_file_str:
+            return None
+
+        try:
+            project = create_project_from_details(
+                name,
+                Path(
+                    root_path_str,
+                ),
+                Path(
+                    project_file_str,
+                ),
+            )
+            project_explorer.set_project(
+                project,
+            )
+
+            return project
+        except (
+            OSError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                parent_widget,
+                "New Project Failed",
+                str(
+                    error,
+                ),
+            )
+            return None
+
+    return handle_new_project
+
+
+def create_project_save_as_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> CommandHandler:
+    """Create a handler that saves the open project to a new location."""
+
+    def handle_save_project_as(
+        context: CommandContext,
+    ) -> Project | None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+        current_project = (
+            project_explorer.project
+        )
+
+        if current_project is None:
+            QMessageBox.information(
+                parent_widget,
+                "Save Project As",
+                "No project is open to save.",
+            )
+            return None
+
+        project_file_str, _ = QFileDialog.getSaveFileName(
+            parent_widget,
+            "Save Project As",
+            "",
+            _PROJECT_FILE_FILTER,
+        )
+
+        if not project_file_str:
+            return None
+
+        try:
+            return save_project_as(
+                current_project,
+                Path(
+                    project_file_str,
+                ),
+            )
+        except OSError as error:
+            QMessageBox.critical(
+                parent_widget,
+                "Save Project Failed",
+                str(
+                    error,
+                ),
+            )
+            return None
+
+    return handle_save_project_as

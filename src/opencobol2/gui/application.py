@@ -17,7 +17,9 @@ from opencobol2.commands.builtins import (
 from opencobol2.gui.main_window import MainWindow
 from opencobol2.gui.project_commands import (
     create_project_close_handler,
+    create_project_new_handler,
     create_project_open_handler,
+    create_project_save_as_handler,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import Project
@@ -81,9 +83,9 @@ def create_main_window(
 
     Recent-file and recent-project menus start empty: neither is persisted
     yet, so wiring real providers is future work, not this bootstrap's job.
-    `project` seeds the Project Explorer panel; File > Open Project and
-    File > Close Project are wired to real handlers that load a project
-    file from disk (via a file dialog) and update that panel directly.
+    `project` seeds the Project Explorer panel; File > New/Open/Close
+    Project and File > Save Project As are all wired to real handlers that
+    create, load, save, or clear a project file and update that panel.
     """
 
     resolved_settings_service = (
@@ -129,6 +131,22 @@ def create_main_window(
                     BuiltInCommandIds.PROJECT_CLOSE: (
                         create_project_close_handler(
                             project_explorer=project_explorer,
+                        )
+                    ),
+                    BuiltInCommandIds.PROJECT_NEW: (
+                        create_project_new_handler(
+                            project_explorer=project_explorer,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.PROJECT_SAVE_AS: (
+                        create_project_save_as_handler(
+                            project_explorer=project_explorer,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
                         )
                     ),
                 },
