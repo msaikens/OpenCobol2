@@ -8,6 +8,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from opencobol2.accessibility import AccessibilityProfileRegistry
+from opencobol2.commands import CommandContext
 from opencobol2.commands.builtins import (
     BuiltInCommandHandlers,
     BuiltInCommandIds,
@@ -34,6 +35,7 @@ from opencobol2.gui.compiler_profiles_dialog import (
     create_show_compiler_profiles_handler,
 )
 from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.gui.find_results_panel import FindResultsWidget
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.gui.main_window import MainWindow
@@ -51,9 +53,13 @@ from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.gui.project_properties_dialog import (
     ProjectPropertiesDialog,
 )
+from opencobol2.gui.search_commands import (
+    create_find_in_files_handler,
+)
 from opencobol2.gui.settings_dialog import (
     create_show_settings_handler,
 )
+from opencobol2.gui.terminal_panel import TerminalWidget
 from opencobol2.project import Project
 from opencobol2.services.accessibility import AccessibilityService
 from opencobol2.services.command_contributions import (
@@ -219,6 +225,23 @@ def _discover_repository_path(
         return None
 
 
+def _recent_project_paths(
+    settings_service: SettingsService,
+) -> tuple[Path, ...]:
+    """Return persisted recent-project paths that still exist on disk."""
+
+    return tuple(
+        path
+        for path in (
+            settings_service
+            .current
+            .recent_projects
+            .paths
+        )
+        if path.is_file()
+    )
+
+
 def create_main_window(
     *,
     settings_service: SettingsService | None = None,
@@ -321,6 +344,14 @@ def create_main_window(
 
     output_widget = OutputWidget()
     problems_widget = ProblemsWidget()
+    find_results_widget = FindResultsWidget()
+    terminal_widget = TerminalWidget(
+        working_directory=(
+            project.root_path
+            if project is not None
+            else None
+        ),
+    )
 
     compiler_provider_registry = (
         create_builtin_compiler_provider_registry()
@@ -362,6 +393,31 @@ def create_main_window(
     command_service_holder: list[
         CommandService | None
     ] = [None]
+
+    def _reveal_find_results() -> None:
+        """Force the Find Results dock panel visible after a search runs.
+
+        `ToolWindowService.activate()` only updates domain state; nothing
+        currently syncs that state back to the real `QDockWidget` (the dock
+        manager only listens the other way, dock -> service). Show/raise the
+        dock widget directly instead, since a search whose results stay
+        hidden would look like it silently did nothing.
+        """
+
+        main_window = main_window_holder[0]
+
+        if main_window is None:
+            return
+
+        dock_widget = (
+            main_window.dock_manager.get_dock_widget(
+                BuiltInToolWindowIds.FIND_RESULTS,
+            )
+        )
+        dock_widget.setVisible(
+            True,
+        )
+        dock_widget.raise_()
 
     def _handle_show_project_properties() -> None:
         """Open Project Properties for the currently displayed project."""
@@ -460,6 +516,20 @@ def create_main_window(
                     BuiltInCommandIds.EDIT_REPLACE: (
                         lambda context: (
                             editor_tabs_widget.show_replace()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_FIND_IN_FILES: (
+                        create_find_in_files_handler(
+                            project_explorer=project_explorer,
+                            find_results_widget=(
+                                find_results_widget
+                            ),
+                            reveal_find_results=(
+                                _reveal_find_results
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
                         )
                     ),
                     BuiltInCommandIds.PROJECT_OPEN: (
@@ -612,6 +682,12 @@ def create_main_window(
             BuiltInToolWindowIds.PROBLEMS: (
                 lambda: problems_widget
             ),
+            BuiltInToolWindowIds.FIND_RESULTS: (
+                lambda: find_results_widget
+            ),
+            BuiltInToolWindowIds.TERMINAL: (
+                lambda: terminal_widget
+            ),
         },
         status_bar_service=status_bar_service,
         central_widget=editor_tabs_widget,
@@ -635,9 +711,74 @@ def create_main_window(
         git_repository_widget.set_repository_path(
             repository_path,
         )
+        editor_tabs_widget.welcome_page.set_recent_projects(
+            _recent_project_paths(
+                resolved_settings_service,
+            )
+        )
+        terminal_widget.set_working_directory(
+            changed_project.root_path
+            if changed_project is not None
+            else None
+        )
 
     project_explorer.project_changed.connect(
         _on_project_changed,
+    )
+
+    def _handle_welcome_new_project() -> None:
+        command_service_holder[0].execute(
+            BuiltInCommandIds.PROJECT_NEW,
+        )
+
+    def _handle_welcome_open_project() -> None:
+        command_service_holder[0].execute(
+            BuiltInCommandIds.PROJECT_OPEN,
+        )
+
+    def _handle_welcome_open_recent_project(
+        project_path: Path,
+    ) -> None:
+        command_service_holder[0].execute(
+            BuiltInCommandIds.PROJECT_OPEN_RECENT,
+            CommandContext(
+                values={
+                    "path": str(
+                        project_path,
+                    ),
+                },
+            ),
+        )
+
+    welcome_page = editor_tabs_widget.welcome_page
+    welcome_page.new_project_requested.connect(
+        _handle_welcome_new_project,
+    )
+    welcome_page.open_project_requested.connect(
+        _handle_welcome_open_project,
+    )
+    welcome_page.open_recent_project_requested.connect(
+        _handle_welcome_open_recent_project,
+    )
+    welcome_page.set_recent_projects(
+        _recent_project_paths(
+            resolved_settings_service,
+        )
+    )
+
+    def _handle_find_result_activated(
+        path: Path,
+        line: int,
+        column: int,
+    ) -> None:
+        editor_tabs_widget.open_path_at_line(
+            path,
+            line,
+            column,
+        )
+
+    find_results_widget.result_activated.connect(
+        _handle_find_result_activated,
     )
 
     return window

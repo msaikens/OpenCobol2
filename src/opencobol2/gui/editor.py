@@ -41,6 +41,7 @@ from opencobol2.documents import (
 )
 from opencobol2.gui.coding_area_guides import CodingAreaGuides
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
+from opencobol2.gui.welcome_page import WelcomePageWidget
 from opencobol2.language import compute_fold_ranges, FoldRange
 from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import Theme
@@ -862,6 +863,40 @@ class SourceEditorWidget(QPlainTextEdit):
 
         return replaced_count
 
+    def go_to_line(
+        self,
+        line_number: int,
+        column: int = 1,
+    ) -> None:
+        """Move the cursor to a 1-based line/column and reveal it."""
+
+        block = self.document().findBlockByNumber(
+            max(
+                line_number - 1,
+                0,
+            )
+        )
+
+        if not block.isValid():
+            return
+
+        cursor = QTextCursor(
+            block,
+        )
+        cursor.movePosition(
+            QTextCursor.MoveOperation.Right,
+            QTextCursor.MoveMode.MoveAnchor,
+            max(
+                column - 1,
+                0,
+            ),
+        )
+        self.setTextCursor(
+            cursor,
+        )
+        self.setFocus()
+        self.ensureCursorVisible()
+
     def _reveal_find_bar(
         self,
     ) -> None:
@@ -1215,6 +1250,11 @@ class EditorTabsWidget(QTabWidget):
             self._close_tab,
         )
 
+        self._welcome_page = WelcomePageWidget(
+            self,
+        )
+        self._update_welcome_page_visibility()
+
     @property
     def document_service(
         self,
@@ -1222,6 +1262,41 @@ class EditorTabsWidget(QTabWidget):
         """Return the document service backing this editor area."""
 
         return self._document_service
+
+    @property
+    def welcome_page(
+        self,
+    ) -> WelcomePageWidget:
+        """Return the overlay shown when no documents are open."""
+
+        return self._welcome_page
+
+    def resizeEvent(
+        self,
+        event: QResizeEvent,
+    ) -> None:
+        """Keep the welcome-page overlay sized to the full tab area."""
+
+        super().resizeEvent(
+            event,
+        )
+
+        self._welcome_page.setGeometry(
+            self.rect(),
+        )
+
+    def _update_welcome_page_visibility(
+        self,
+    ) -> None:
+        """Show the welcome page only when there are no open tabs."""
+
+        has_open_documents = self.count() > 0
+        self._welcome_page.setVisible(
+            not has_open_documents,
+        )
+
+        if not has_open_documents:
+            self._welcome_page.raise_()
 
     def apply_theme(
         self,
@@ -1290,6 +1365,28 @@ class EditorTabsWidget(QTabWidget):
         self._show_document(
             workspace_document,
         )
+
+    def open_path_at_line(
+        self,
+        path: Path | str,
+        line_number: int,
+        column: int = 1,
+    ) -> None:
+        """Open a file (reusing an already-open tab) and reveal a location."""
+
+        self.open_path(
+            path,
+        )
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.go_to_line(
+                line_number,
+                column,
+            )
 
     def new_file(
         self,
@@ -1457,6 +1554,7 @@ class EditorTabsWidget(QTabWidget):
         self.setCurrentIndex(
             index,
         )
+        self._update_welcome_page_visibility()
 
     def _handle_text_changed(
         self,
@@ -1652,6 +1750,7 @@ class EditorTabsWidget(QTabWidget):
         self.removeTab(
             index,
         )
+        self._update_welcome_page_visibility()
 
     def _editor_at(
         self,

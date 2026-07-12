@@ -1235,3 +1235,126 @@ def test_source_editor_widget_apply_guide_settings_delegates(
         .show_indicator_column
         is False
     )
+
+
+def test_welcome_page_is_visible_when_no_tabs_are_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert not tabs.welcome_page.isHidden()
+
+
+def test_welcome_page_hides_once_a_tab_is_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.new_file()
+
+    assert tabs.welcome_page.isHidden()
+
+
+def test_welcome_page_reappears_once_the_last_tab_closes(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+
+    tabs.close_active_document()
+
+    assert tabs.count() == 0
+    assert not tabs.welcome_page.isHidden()
+
+
+def test_welcome_page_stays_hidden_while_other_tabs_remain_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+
+    tabs.setCurrentIndex(
+        0,
+    )
+    tabs.close_active_document()
+
+    assert tabs.count() == 1
+    assert tabs.welcome_page.isHidden()
+
+
+def test_resizing_the_tabs_widget_resizes_the_welcome_page(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.show()
+
+    tabs.resize(
+        640,
+        480,
+    )
+
+    assert tabs.welcome_page.size() == tabs.size()
+
+
+def test_open_path_at_line_opens_the_file_and_moves_the_cursor(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+    tabs = _build_tabs()
+
+    tabs.open_path_at_line(
+        file_path,
+        2,
+        6,
+    )
+
+    assert tabs.count() == 1
+    cursor = tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 1
+    assert cursor.columnNumber() == 5
+
+
+def test_open_path_at_line_reuses_an_already_open_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+        "line two\n"
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    tabs.new_file()
+
+    tabs.open_path_at_line(
+        file_path,
+        2,
+        1,
+    )
+
+    assert tabs.count() == 2
+    assert tabs.currentIndex() == 0
+
+
+def test_go_to_line_with_an_out_of_range_line_does_nothing(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    editor.go_to_line(
+        999,
+    )
+
+    assert editor.textCursor().blockNumber() == 0

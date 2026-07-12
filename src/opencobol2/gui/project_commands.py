@@ -55,12 +55,27 @@ def record_recent_project(
 def open_project_from_path(
     project_explorer: ProjectExplorerWidget,
     project_path: Path,
+    *,
+    settings_service: SettingsService | None = None,
 ) -> Project:
-    """Load a project file from disk and display it in the Project Explorer."""
+    """Load a project file from disk and display it in the Project Explorer.
+
+    Recent-project state is recorded *before* the project is handed to the
+    explorer: `set_project` synchronously emits `project_changed`, and any
+    listener refreshing itself from `settings_service.current.recent_projects`
+    (e.g. the Welcome page) must see the just-opened path already recorded.
+    """
 
     project = ProjectStorage(
         project_path,
     ).load()
+
+    if settings_service is not None:
+        record_recent_project(
+            settings_service,
+            project_path,
+        )
+
     project_explorer.set_project(
         project,
     )
@@ -104,6 +119,7 @@ def create_project_open_handler(
             project = open_project_from_path(
                 project_explorer,
                 project_path,
+                settings_service=settings_service,
             )
         except (
             OSError,
@@ -117,12 +133,6 @@ def create_project_open_handler(
                 ),
             )
             return None
-
-        if settings_service is not None:
-            record_recent_project(
-                settings_service,
-                project_path,
-            )
 
         return project
 
@@ -237,9 +247,6 @@ def create_project_new_handler(
                 ),
                 project_file,
             )
-            project_explorer.set_project(
-                project,
-            )
         except (
             OSError,
             ValueError,
@@ -258,6 +265,10 @@ def create_project_new_handler(
                 settings_service,
                 project_file,
             )
+
+        project_explorer.set_project(
+            project,
+        )
 
         return project
 
@@ -399,6 +410,7 @@ def create_project_open_recent_handler(
             project = open_project_from_path(
                 project_explorer,
                 project_path,
+                settings_service=settings_service,
             )
         except (
             OSError,
@@ -412,11 +424,6 @@ def create_project_open_recent_handler(
                 ),
             )
             return None
-
-        record_recent_project(
-            settings_service,
-            project_path,
-        )
 
         return project
 

@@ -20,6 +20,7 @@ def test_builtin_registry_contains_standard_tool_windows() -> None:
         BuiltInToolWindowIds.OUTPUT,
         BuiltInToolWindowIds.PROBLEMS,
         BuiltInToolWindowIds.FIND_RESULTS,
+        BuiltInToolWindowIds.TERMINAL,
         BuiltInToolWindowIds.GIT_CHANGES,
         BuiltInToolWindowIds.GIT_REPOSITORY,
     )

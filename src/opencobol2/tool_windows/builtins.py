@@ -18,6 +18,7 @@ class BuiltInToolWindowIds:
     OUTPUT = "output"
     PROBLEMS = "problems"
     FIND_RESULTS = "find-results"
+    TERMINAL = "terminal"
     GIT_CHANGES = "git-changes"
     GIT_REPOSITORY = "git-repository"
 
@@ -99,6 +100,23 @@ def create_builtin_tool_window_registry(
             default_pinned=False,
             accessibility_description=(
                 "Review results from searches across files."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.TERMINAL,
+            title="Terminal",
+            default_area=ToolWindowArea.BOTTOM,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "Run shell commands and view their output."
             ),
         ),
         ToolWindowDefinition(

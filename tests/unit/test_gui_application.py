@@ -191,6 +191,26 @@ def _problems_content(
     )
 
 
+def _find_results_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "find-results",
+        ).widget()
+    )
+
+
+def _terminal_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "terminal",
+        ).widget()
+    )
+
+
 def test_create_main_window_wires_builtin_registries(
     qapp,
     tmp_path: Path,
@@ -215,7 +235,7 @@ def test_create_main_window_wires_builtin_registries(
         len(
             window.dock_manager.dock_widgets,
         )
-        == 6
+        == 7
     )
     assert (
         window.windowTitle()
@@ -2030,3 +2050,555 @@ def test_build_project_menu_action_compiles_project_end_to_end(
         / project.properties.output_directory
         / "main"
     ).is_file()
+
+
+def test_welcome_page_shown_when_no_documents_are_open(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+
+    assert not editor_tabs.welcome_page.isHidden()
+
+
+def test_welcome_page_new_project_button_creates_project_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+    project_file = (
+        tmp_path / "project.json"
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.project_commands.QInputDialog.getText",
+            return_value=(
+                "Demo",
+                True,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands."
+            "QFileDialog.getExistingDirectory",
+            return_value=str(
+                tmp_path,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands."
+            "QFileDialog.getSaveFileName",
+            return_value=(
+                str(
+                    project_file,
+                ),
+                "",
+            ),
+        ),
+    ):
+        editor_tabs.welcome_page.new_project_requested.emit()
+
+    assert (
+        explorer.project is not None
+        and explorer.project.name == "Demo"
+    )
+
+
+def test_welcome_page_open_project_button_opens_project_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Existing",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "existing.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        editor_tabs.welcome_page.open_project_requested.emit()
+
+    assert (
+        explorer.project is not None
+        and explorer.project.name == "Existing"
+    )
+
+
+def test_welcome_page_lists_recent_projects_on_bootstrap(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Recent",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "recent.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+    settings_service.update_recent_projects(
+        settings_service.current
+        .recent_projects
+        .with_recorded_path(
+            project_file,
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+
+    assert (
+        editor_tabs.welcome_page
+        ._recent_list.count()
+        == 1
+    )
+    assert (
+        editor_tabs.welcome_page
+        ._recent_list.item(0)
+        .text()
+        == str(project_file)
+    )
+
+
+def test_welcome_page_open_recent_project_signal_reopens_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Recent",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "recent.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+    settings_service.update_recent_projects(
+        settings_service.current
+        .recent_projects
+        .with_recorded_path(
+            project_file,
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+
+    editor_tabs.welcome_page.open_recent_project_requested.emit(
+        project_file,
+    )
+
+    assert (
+        explorer.project is not None
+        and explorer.project.name == "Recent"
+    )
+
+
+def test_welcome_page_recent_projects_list_grows_after_opening_a_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Fresh",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "fresh.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    assert editor_tabs.welcome_page._recent_list.count() == 0
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        editor_tabs.welcome_page.open_project_requested.emit()
+
+    assert editor_tabs.welcome_page._recent_list.count() == 1
+    assert (
+        editor_tabs.welcome_page
+        ._recent_list.item(0)
+        .text()
+        == str(project_file)
+    )
+
+
+def test_find_in_files_menu_action_searches_and_reveals_results(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       MOVE X TO Y.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    find_results_widget = _find_results_content(
+        window,
+    )
+    dock_widget = window.dock_manager.get_dock_widget(
+        "find-results",
+    )
+    assert dock_widget.isHidden()
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.search_commands.QInputDialog.getText",
+        return_value=(
+            "MOVE",
+            True,
+        ),
+    ):
+        _find_action(
+            edit_menu,
+            "Find in Files",
+        ).trigger()
+
+    assert find_results_widget.rowCount() == 1
+    assert (
+        find_results_widget.item(
+            0,
+            3,
+        ).text()
+        == "MOVE X TO Y."
+    )
+    assert not dock_widget.isHidden()
+
+
+def test_find_in_files_without_a_project_shows_a_message(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    find_results_widget = _find_results_content(
+        window,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.search_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            edit_menu,
+            "Find in Files",
+        ).trigger()
+
+    mock_information.assert_called_once()
+    assert find_results_widget.rowCount() == 0
+
+
+def test_double_clicking_a_find_result_opens_it_at_the_matched_location(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    source_path = tmp_path / "main.cbl"
+    source_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       MOVE X TO Y.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    find_results_widget = _find_results_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.search_commands.QInputDialog.getText",
+        return_value=(
+            "MOVE",
+            True,
+        ),
+    ):
+        _find_action(
+            edit_menu,
+            "Find in Files",
+        ).trigger()
+
+    find_results_widget._handle_cell_double_clicked(
+        0,
+        0,
+    )
+
+    assert editor_tabs.count() == 1
+    cursor = editor_tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 1
+    assert cursor.columnNumber() == 7
+
+
+def test_terminal_panel_has_real_content(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    terminal_widget = _terminal_content(
+        window,
+    )
+
+    assert terminal_widget.working_directory == Path.cwd()
+
+
+def test_terminal_working_directory_starts_at_the_seeded_project_root(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    terminal_widget = _terminal_content(
+        window,
+    )
+
+    assert terminal_widget.working_directory == tmp_path
+
+
+def test_terminal_working_directory_follows_project_open_and_close(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "project.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    terminal_widget = _terminal_content(
+        window,
+    )
+    assert terminal_widget.working_directory == Path.cwd()
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    assert terminal_widget.working_directory == tmp_path
+
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert terminal_widget.working_directory == Path.cwd()
+
+
+def test_view_terminal_menu_action_runs_without_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+
+    _find_action(
+        view_menu,
+        "Terminal",
+    ).trigger()
+
+
+def test_terminal_panel_runs_a_real_command_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    terminal_widget = _terminal_content(
+        window,
+    )
+    script_path = tmp_path / "script.py"
+    script_path.write_text(
+        "print('ran for real')\n",
+    )
+
+    terminal_widget.run_command(
+        f'"{sys.executable}" "{script_path}"',
+    )
+
+    assert (
+        "ran for real"
+        in terminal_widget._output_log.toPlainText()
+    )

@@ -75,6 +75,7 @@ class BuiltInCommandIds:
     VIEW_OUTPUT = "view.output"
     VIEW_PROBLEMS = "view.problems"
     VIEW_FIND_RESULTS = "view.find-results"
+    VIEW_TERMINAL = "view.terminal"
     VIEW_GIT_CHANGES = "view.git-changes"
     VIEW_GIT_REPOSITORY = "view.git-repository"
 
@@ -612,6 +613,12 @@ _TOOL_WINDOW_COMMANDS = (
         BuiltInToolWindowIds.FIND_RESULTS,
     ),
     (
+        BuiltInCommandIds.VIEW_TERMINAL,
+        "Terminal",
+        "Show and focus the Terminal tool window.",
+        BuiltInToolWindowIds.TERMINAL,
+    ),
+    (
         BuiltInCommandIds.VIEW_GIT_CHANGES,
         "Git Changes",
         "Show and focus the Git Changes tool window.",
@@ -1109,6 +1116,10 @@ def _register_view_surface(
             (
                 "core.menu.view.find-results",
                 BuiltInCommandIds.VIEW_FIND_RESULTS,
+            ),
+            (
+                "core.menu.view.terminal",
+                BuiltInCommandIds.VIEW_TERMINAL,
             ),
             (
                 "core.menu.view.git-changes",
