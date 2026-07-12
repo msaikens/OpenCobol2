@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import fnmatch
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QLabel,
     QStackedWidget,
@@ -27,6 +27,9 @@ class ProjectExplorerWidget(QWidget):
 
     project_changed = Signal(object)
     """Emitted with the new `Project | None` whenever `set_project` runs."""
+
+    file_double_clicked = Signal(Path)
+    """Emitted with a physical file's path when its tree item is double-clicked."""
 
     def __init__(
         self,
@@ -59,6 +62,9 @@ class ProjectExplorerWidget(QWidget):
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(
             True,
+        )
+        self._tree.itemDoubleClicked.connect(
+            self._handle_item_double_clicked,
         )
 
         self._stack = QStackedWidget()
@@ -125,6 +131,26 @@ class ProjectExplorerWidget(QWidget):
         self.project_changed.emit(
             project,
         )
+
+    def _handle_item_double_clicked(
+        self,
+        item: QTreeWidgetItem,
+        column: int,
+    ) -> None:
+        """Emit `file_double_clicked` when a physical file item is opened."""
+
+        path = item.data(
+            0,
+            Qt.ItemDataRole.UserRole,
+        )
+
+        if isinstance(
+            path,
+            Path,
+        ):
+            self.file_double_clicked.emit(
+                path,
+            )
 
 
 def populate_project_tree(
@@ -247,6 +273,12 @@ def _add_physical_entries(
                 item,
                 entry,
                 excluded_patterns,
+            )
+        else:
+            item.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                entry,
             )
 
 

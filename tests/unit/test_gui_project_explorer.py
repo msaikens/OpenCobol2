@@ -419,3 +419,77 @@ def test_populate_tree_shows_unreferenced_linked_files(
         )
         == "standalone.cpy"
     )
+
+
+def test_double_clicking_a_file_emits_its_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "main.cbl").write_text(
+        "x",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.file_double_clicked.connect(
+        received.append,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    file_item = root_item.child(
+        0,
+    )
+
+    widget._handle_item_double_clicked(
+        file_item,
+        0,
+    )
+
+    assert received == [
+        tmp_path / "main.cbl",
+    ]
+
+
+def test_double_clicking_a_directory_emits_nothing(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.cbl").write_text(
+        "x",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.file_double_clicked.connect(
+        received.append,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    directory_item = root_item.child(
+        0,
+    )
+    assert directory_item.text(
+        0,
+    ) == "src"
+
+    widget._handle_item_double_clicked(
+        directory_item,
+        0,
+    )
+
+    assert received == []

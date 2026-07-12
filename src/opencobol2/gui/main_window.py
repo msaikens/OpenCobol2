@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         ]
         | None = None,
         status_bar_service: StatusBarService | None = None,
+        central_widget: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build the OpenCobol2 shell from the supplied application services."""
@@ -157,6 +158,11 @@ class MainWindow(QMainWindow):
             tool_window_service=tool_window_service,
             content_factories=tool_window_content_factories,
         )
+
+        if central_widget is not None:
+            self.setCentralWidget(
+                central_widget,
+            )
 
         self.apply_active_theme()
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QWidget
 
 from opencobol2.commands import (
     Command,
@@ -352,6 +353,47 @@ def test_apply_active_theme_refreshes_status_bar(
         ].text()
         == "Second"
     )
+
+
+def test_main_window_has_no_central_widget_by_default(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    window = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+    )
+
+    assert window.centralWidget() is None
+
+
+def test_main_window_sets_supplied_central_widget(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    central_widget = QWidget()
+
+    window = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+        central_widget=central_widget,
+    )
+
+    assert window.centralWidget() is central_widget
 
 
 def test_main_window_rejects_invalid_status_bar_service(

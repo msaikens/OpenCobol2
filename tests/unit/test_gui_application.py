@@ -8,6 +8,7 @@ import sys
 from unittest.mock import patch
 
 from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.compiler.providers import (
     CompilerProfile,
@@ -1116,6 +1117,183 @@ def test_compiler_profile_added_through_dialog_is_used_by_build_project(
         "main.cbl: succeeded"
         in output_widget.toPlainText()
     )
+
+
+def test_main_window_central_widget_is_editor_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    assert (
+        type(
+            window.centralWidget(),
+        ).__name__
+        == "EditorTabsWidget"
+    )
+    assert window.centralWidget().count() == 0
+
+
+def test_double_clicking_project_file_opens_it_in_editor(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+
+    root_item = explorer._tree.topLevelItem(
+        0,
+    )
+    file_item = root_item.child(
+        0,
+    )
+    explorer._handle_item_double_clicked(
+        file_item,
+        0,
+    )
+
+    assert editor_tabs.count() == 1
+    assert (
+        editor_tabs.tabText(0)
+        == "main.cbl"
+    )
+    assert (
+        editor_tabs.widget(0).toPlainText()
+        == "IDENTIFICATION DIVISION.\n"
+    )
+
+
+def test_file_menu_new_open_save_actions_work_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+    new_action = _find_action(
+        file_menu,
+        "New",
+    )
+    new_submenu = new_action.menu()
+    new_submenu.aboutToShow.emit()
+    _find_action(
+        new_submenu,
+        "New File",
+    ).trigger()
+
+    assert editor_tabs.count() == 1
+    assert (
+        editor_tabs.tabText(0)
+        == "Untitled"
+    )
+
+    editor_tabs.widget(0).setPlainText(
+        "hello",
+    )
+    save_path = (
+        tmp_path / "new.cbl"
+    )
+
+    file_menu.aboutToShow.emit()
+    with patch(
+        "opencobol2.gui.editor.QFileDialog.getSaveFileName",
+        return_value=(
+            str(save_path),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Save",
+        ).trigger()
+
+    assert save_path.read_text() == "hello"
+    assert (
+        editor_tabs.tabText(0)
+        == "new.cbl"
+    )
+
+    other_file = tmp_path / "existing.cbl"
+    other_file.write_text(
+        "x",
+    )
+    file_menu.aboutToShow.emit()
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(other_file),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open File",
+        ).trigger()
+
+    assert editor_tabs.count() == 2
+    assert (
+        editor_tabs.tabText(1)
+        == "existing.cbl"
+    )
+
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Save All",
+    ).trigger()
+
+    file_menu.aboutToShow.emit()
+    with patch(
+        "opencobol2.gui.editor.QMessageBox.question",
+        return_value=(
+            QMessageBox.StandardButton.Discard
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Close All Files",
+        ).trigger()
+
+    assert editor_tabs.count() == 0
 
 
 def test_git_repository_panel_empty_without_a_project(

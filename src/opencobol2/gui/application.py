@@ -23,6 +23,7 @@ from opencobol2.compiler.runtimes import (
     CustomLocalCompilerRuntimeFactory,
     GnuCobolRuntimeFactory,
 )
+from opencobol2.documents import DocumentService
 from opencobol2.gui.build_commands import (
     create_build_project_handler,
 )
@@ -32,6 +33,7 @@ from opencobol2.gui.command_palette import (
 from opencobol2.gui.compiler_profiles_dialog import (
     create_show_compiler_profiles_handler,
 )
+from opencobol2.gui.editor import EditorTabsWidget
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.gui.main_window import MainWindow
@@ -221,20 +223,25 @@ def create_main_window(
 ) -> MainWindow:
     """Wire the built-in OpenCobol2 registries and construct the main window.
 
-    Recent-file menus start empty: OpenCobol2 has no document/file model
-    yet, so there's nothing to make that one real. Recent-project menus are
-    real: every successful New/Open/Save-As records that project file, and
-    File > Open Recent Project lists them (skipping any that no longer
-    exist on disk). `project` seeds the Project Explorer panel; File >
-    New/Open/Close Project and File > Save Project As are all wired to real
-    handlers that create, load, save, or clear a project file and update
-    that panel. The status bar shows the open project's name (left) and the
-    active theme (right), refreshing automatically whenever the project
-    changes. The Git Changes and Git Repository panels both track a Git
-    repository discovered at the open project's root — falling back to
-    their empty state if there is none, or if `git` itself is unavailable —
-    refreshing automatically alongside it. Build > Build Project compiles
-    every `.cbl`/`.cob` file found under the open project's root (honoring
+    The main window's central widget is a real `EditorTabsWidget` backed by
+    a `DocumentService`: double-clicking a physical file in Project Explorer
+    opens it in a tab, and File > New/Open/Save/Save As/Save All/Close/Close
+    All are all wired to real handlers (dirty tracking, unsaved-changes
+    prompts on close, Save As for untitled documents). Open Recent File
+    still lists nothing yet — unlike Open Recent Project, there is no
+    persisted recent-files list wired up yet. Recent-project menus are real:
+    every successful New/Open/Save-As records that project file, and File >
+    Open Recent Project lists them (skipping any that no longer exist on
+    disk). `project` seeds the Project Explorer panel; File > New/Open/Close
+    Project and File > Save Project As are all wired to real handlers that
+    create, load, save, or clear a project file and update that panel. The
+    status bar shows the open project's name (left) and the active theme
+    (right), refreshing automatically whenever the project changes. The Git
+    Changes and Git Repository panels both track a Git repository
+    discovered at the open project's root — falling back to their empty
+    state if there is none, or if `git` itself is unavailable — refreshing
+    automatically alongside it. Build > Build Project compiles every
+    `.cbl`/`.cob` file found under the open project's root (honoring
     `excluded_patterns`) using the default configured compiler profile
     (GnuCOBOL auto-discovery or a custom local compiler), logging process
     output to the Output panel and parsed diagnostics to the Problems panel.
@@ -257,6 +264,14 @@ def create_main_window(
 
     project_explorer = ProjectExplorerWidget(
         project,
+    )
+
+    document_service = DocumentService()
+    editor_tabs_widget = EditorTabsWidget(
+        document_service=document_service,
+    )
+    project_explorer.file_double_clicked.connect(
+        editor_tabs_widget.open_path,
     )
 
     git_service = GitService(
@@ -356,6 +371,41 @@ def create_main_window(
             accessibility_service=accessibility_service,
             handlers=BuiltInCommandHandlers(
                 values={
+                    BuiltInCommandIds.FILE_NEW: (
+                        lambda context: (
+                            editor_tabs_widget.new_file()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_OPEN: (
+                        lambda context: (
+                            editor_tabs_widget.open_file_dialog()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_SAVE: (
+                        lambda context: (
+                            editor_tabs_widget.save_active_document()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_SAVE_AS: (
+                        lambda context: (
+                            editor_tabs_widget.save_active_document_as()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_SAVE_ALL: (
+                        lambda context: (
+                            editor_tabs_widget.save_all_documents()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_CLOSE: (
+                        lambda context: (
+                            editor_tabs_widget.close_active_document()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_CLOSE_ALL: (
+                        lambda context: (
+                            editor_tabs_widget.close_all_documents()
+                        )
+                    ),
                     BuiltInCommandIds.PROJECT_OPEN: (
                         create_project_open_handler(
                             project_explorer=project_explorer,
@@ -508,6 +558,7 @@ def create_main_window(
             ),
         },
         status_bar_service=status_bar_service,
+        central_widget=editor_tabs_widget,
     )
     main_window_holder[0] = window
 
