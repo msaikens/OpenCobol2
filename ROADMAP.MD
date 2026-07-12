@@ -66,7 +66,7 @@ Most of the non-GUI foundation is done; what remains is almost entirely GUI (Pha
 * ✅ Tasks (user-defined, directly executable)
 * ✅ Launch configurations (directly executable, layered environment resolution)
 * 🔶 Compiler profiles / runtime profiles — the compiler-provider and runtime abstraction exists (Phase 5) and a project can reference a profile by ID, but there is no project-level UI/CRUD for authoring profiles yet
-* ✅ Project Explorer (`ProjectExplorerWidget`, Phase 7: a real tree showing the project's physical files honoring `excluded_patterns`, virtual folders with nested members, and linked files not already organized into a virtual folder; not yet wired to a real "Open Project" command, since that doesn't exist yet)
+* ✅ Project Explorer (`ProjectExplorerWidget`, Phase 7: a real tree showing the project's physical files honoring `excluded_patterns`, virtual folders with nested members, and linked files not already organized into a virtual folder; File > Open Project and File > Close Project are wired to real handlers that load a project file from disk and update this panel)
 
 ## Phase 3 — Editor
 
@@ -150,14 +150,14 @@ Still untouched.
 
 ## Phase 7 — UI
 
-The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window (with a pluggable per-tool-window content factory), and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme registries together, plus an optional `Project` to seed the Project Explorer). Project Explorer is the first tool window with real content; Output, Problems, and the rest are still placeholders.
+The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindow` builds a live menu bar and toolbars from command contributions (rebuilt from live command/dynamic-menu state every time a menu opens), docks every registered tool window (with a pluggable per-tool-window content factory), and applies the active theme's palette. It launches via `python -m opencobol2.gui.application` or the `opencobol2` console script (`create_main_window()` wires the real built-in command/tool-window/theme registries together, plus an optional `Project` to seed the Project Explorer). File > Open Project and File > Close Project are real, working commands. Project Explorer is the first tool window with real content; Output, Problems, and the rest are still placeholders.
 
 * ✅ Application shell (`MainWindow`: live menu bar + toolbars rendered from command contributions, theme palette application, a real runnable bootstrap)
 * ✅ Tool windows (rendering the Phase 1 registry: one `QDockWidget` per registered definition, initial dock area + visibility applied, visibility synced bidirectionally with `ToolWindowService`, pluggable real content per tool window; pinning/auto-hide and floating-geometry restoration are not implemented yet — plain QDockWidget floating/closable behavior is used as-is)
 * ⬜ Welcome page
 * ⬜ Recent projects
 * ⬜ Preferences dialogs
-* ✅ Project explorer (`ProjectExplorerWidget`: real physical-file tree honoring `excluded_patterns`, virtual folders, and linked files — see Phase 2; not yet wired to a real "Open Project" command)
+* ✅ Project explorer (`ProjectExplorerWidget`: real physical-file tree honoring `excluded_patterns`, virtual folders, and linked files — see Phase 2; File > Open Project/Close Project (`opencobol2.gui.project_commands`) load a real project file via a file dialog and wire it into this panel — New Project and Save Project As are still unconfigured)
 * ⬜ Output window (dock panel renders; real content not built)
 * ⬜ Problems window (dock panel renders; real content not built)
 * ⬜ Terminal

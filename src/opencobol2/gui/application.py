@@ -8,11 +8,17 @@ from PySide6.QtWidgets import QApplication
 
 from opencobol2.accessibility import AccessibilityProfileRegistry
 from opencobol2.commands.builtins import (
+    BuiltInCommandHandlers,
+    BuiltInCommandIds,
     BuiltInCommandSurfaceIds,
     create_builtin_command_contribution_registry,
     create_builtin_command_registry,
 )
 from opencobol2.gui.main_window import MainWindow
+from opencobol2.gui.project_commands import (
+    create_project_close_handler,
+    create_project_open_handler,
+)
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import Project
 from opencobol2.services.accessibility import AccessibilityService
@@ -75,8 +81,9 @@ def create_main_window(
 
     Recent-file and recent-project menus start empty: neither is persisted
     yet, so wiring real providers is future work, not this bootstrap's job.
-    `project` seeds the Project Explorer panel; there is no "Open Project"
-    command wired up yet to load one interactively.
+    `project` seeds the Project Explorer panel; File > Open Project and
+    File > Close Project are wired to real handlers that load a project
+    file from disk (via a file dialog) and update that panel directly.
     """
 
     resolved_settings_service = (
@@ -94,10 +101,38 @@ def create_main_window(
         tool_window_service=tool_window_service,
     )
 
+    project_explorer = ProjectExplorerWidget(
+        project,
+    )
+    # MainWindow doesn't exist until after the command registry below, but
+    # the Open Project dialog needs it as a parent; this cell is filled in
+    # once construction finishes and only read later, when a user actually
+    # triggers the command.
+    main_window_holder: list[
+        MainWindow | None
+    ] = [None]
+
     command_service = CommandService(
         registry=create_builtin_command_registry(
             tool_window_service=tool_window_service,
             accessibility_service=accessibility_service,
+            handlers=BuiltInCommandHandlers(
+                values={
+                    BuiltInCommandIds.PROJECT_OPEN: (
+                        create_project_open_handler(
+                            project_explorer=project_explorer,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.PROJECT_CLOSE: (
+                        create_project_close_handler(
+                            project_explorer=project_explorer,
+                        )
+                    ),
+                },
+            ),
         ),
     )
 
@@ -122,19 +157,20 @@ def create_main_window(
         ),
     )
 
-    return MainWindow(
+    window = MainWindow(
         contribution_service=contribution_service,
         tool_window_service=tool_window_service,
         theme_service=theme_service,
         top_level_menus=TOP_LEVEL_MENUS,
         tool_window_content_factories={
             BuiltInToolWindowIds.PROJECT_EXPLORER: (
-                lambda: ProjectExplorerWidget(
-                    project,
-                )
+                lambda: project_explorer
             ),
         },
     )
+    main_window_holder[0] = window
+
+    return window
 
 
 def main() -> int:

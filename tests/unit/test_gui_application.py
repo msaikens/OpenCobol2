@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from PySide6.QtGui import QPalette
 
@@ -11,12 +12,26 @@ from opencobol2.gui.application import (
     TOP_LEVEL_MENUS,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
-from opencobol2.project import create_project
+from opencobol2.project import (
+    create_project,
+    ProjectStorage,
+)
 from opencobol2.settings import (
     SettingsService,
     SettingsStorage,
     ThemeSettings,
 )
+
+
+def _find_action(
+    menu,
+    title: str,
+):
+    return next(
+        action
+        for action in menu.actions()
+        if action.text() == title
+    )
 
 
 def _project_explorer_content(
@@ -158,3 +173,64 @@ def test_create_main_window_menus_have_real_items(
     ]
     assert "New" in titles
     assert "Exit" in titles
+
+
+def test_open_and_close_project_menu_actions_work_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    assert (
+        explorer.project is not None
+        and explorer.project.name
+        == "Demo"
+    )
+
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert explorer.project is None
