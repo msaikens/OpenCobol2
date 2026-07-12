@@ -970,6 +970,133 @@ def test_settings_menu_action_applies_theme_to_open_editor_tabs(
     )
 
 
+def test_settings_menu_action_applies_font_and_guides_to_open_editor_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+
+    assert editor.font().fixedPitch()
+    assert (
+        editor._guides._guide_settings.show_area_a
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        dialog_self._font_family_edit.setText(
+            "Consolas",
+        )
+        dialog_self._font_size_spin.setValue(
+            18,
+        )
+        dialog_self._guide_checks[
+            "show_area_a"
+        ].setChecked(
+            False,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert editor.font().family() == "Consolas"
+    assert editor.font().pointSize() == 18
+    assert (
+        editor._guides._guide_settings.show_area_a
+        is False
+    )
+
+    editor_tabs.new_file()
+    new_editor = editor_tabs.widget(
+        editor_tabs.count() - 1,
+    )
+    assert (
+        new_editor.font().family() == "Consolas"
+    )
+    assert (
+        new_editor._guides._guide_settings.show_area_a
+        is False
+    )
+
+
+def test_settings_menu_action_toggles_code_folding_on_open_editor_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        '           DISPLAY "HI".\n',
+    )
+
+    assert editor._folding_enabled is True
+    assert len(editor._fold_ranges) > 0
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        dialog_self._code_folding_check.setChecked(
+            False,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert editor._folding_enabled is False
+    assert editor._fold_ranges == ()
+
+
 def test_bootstrap_uses_configured_git_executable_path(
     qapp,
     tmp_path: Path,

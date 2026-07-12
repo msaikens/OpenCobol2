@@ -287,6 +287,15 @@ def create_main_window(
     editor_tabs_widget = EditorTabsWidget(
         document_service=document_service,
         theme=theme_service.active_theme,
+        editor_settings=(
+            resolved_settings_service.current.editor
+        ),
+        guide_settings=(
+            resolved_settings_service
+            .current
+            .cobol
+            .guides
+        ),
     )
     project_explorer.file_double_clicked.connect(
         editor_tabs_widget.open_path,
@@ -388,6 +397,12 @@ def create_main_window(
         main_window_holder[0].apply_active_theme()
         editor_tabs_widget.apply_theme(
             theme_service.active_theme,
+        )
+        editor_tabs_widget.apply_editor_settings(
+            settings.editor,
+        )
+        editor_tabs_widget.apply_guide_settings(
+            settings.cobol.guides,
         )
 
         git_service.set_executable_path(

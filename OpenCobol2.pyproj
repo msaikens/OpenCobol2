@@ -622,6 +622,7 @@
     <Compile Include="src\opencobol2\git\__init__.py" />
     <Compile Include="src\opencobol2\gui\application.py" />
     <Compile Include="src\opencobol2\gui\build_commands.py" />
+    <Compile Include="src\opencobol2\gui\coding_area_guides.py" />
     <Compile Include="src\opencobol2\gui\command_menus.py" />
     <Compile Include="src\opencobol2\gui\command_palette.py" />
     <Compile Include="src\opencobol2\gui\compiler_profiles_dialog.py" />
@@ -643,6 +644,7 @@
     <Compile Include="src\opencobol2\gui\__init__.py" />
     <Compile Include="src\opencobol2\language\ast_nodes.py" />
     <Compile Include="src\opencobol2\language\diagnostics.py" />
+    <Compile Include="src\opencobol2\language\folding.py" />
     <Compile Include="src\opencobol2\language\keywords.py" />
     <Compile Include="src\opencobol2\language\lexer.py" />
     <Compile Include="src\opencobol2\language\parser.py" />
@@ -751,10 +753,12 @@
     <Compile Include="src\opencobol2\__init__.py" />
     <Compile Include="tests\unit\test_gui_application.py" />
     <Compile Include="tests\unit\test_gui_build_commands.py" />
+    <Compile Include="tests\unit\test_gui_coding_area_guides.py" />
     <Compile Include="tests\unit\test_gui_command_menus.py" />
     <Compile Include="tests\unit\test_gui_command_palette.py" />
     <Compile Include="tests\unit\test_gui_compiler_profiles_dialog.py" />
     <Compile Include="tests\unit\test_gui_editor.py" />
+    <Compile Include="tests\unit\test_gui_editor_folding.py" />
     <Compile Include="tests\unit\test_gui_git_changes.py" />
     <Compile Include="tests\unit\test_gui_git_repository.py" />
     <Compile Include="tests\unit\test_gui_main_window.py" />
@@ -765,9 +769,11 @@
     <Compile Include="tests\unit\test_gui_project_properties_dialog.py" />
     <Compile Include="tests\unit\test_gui_settings_dialog.py" />
     <Compile Include="tests\unit\test_gui_status_bar.py" />
+    <Compile Include="tests\unit\test_gui_syntax_highlighter.py" />
     <Compile Include="tests\unit\test_gui_theming.py" />
     <Compile Include="tests\unit\test_gui_toolbars.py" />
     <Compile Include="tests\unit\test_gui_tool_windows.py" />
+    <Compile Include="tests\unit\test_language_folding.py" />
     <Compile Include="tests\unit\test_local_compiler_process.py" />
     <Compile Include="tests\unit\test_project_model.py" />
     <Compile Include="tests\unit\test_project_process.py" />

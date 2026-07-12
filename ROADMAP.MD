@@ -70,7 +70,7 @@ Complete. The last remaining gap (a project-level UI for selecting a default com
 
 ## Phase 3 — Editor
 
-A first-cut editor widget now exists (`EditorTabsWidget`/`SourceEditorWidget`, `opencobol2.gui.editor`), built on the Qt-independent document core (Phase 1) below. It now has real COBOL syntax highlighting (see below) — folding and the rest of the language-aware editing surface are still ahead.
+A first-cut editor widget now exists (`EditorTabsWidget`/`SourceEditorWidget`, `opencobol2.gui.editor`), built on the Qt-independent document core (Phase 1) below. It now has real COBOL syntax highlighting and code folding (see below) — a minimap, split editors, and multiple cursors are still ahead.
 
 * ✅ Encoding detection (document-core level)
 * ✅ BOM support (document-core level)
@@ -80,13 +80,15 @@ A first-cut editor widget now exists (`EditorTabsWidget`/`SourceEditorWidget`, `
 * ✅ Dirty tracking UI (tab title grows a trailing `*` while the document's `is_modified`, reflecting the document-core state live as the user types)
 * ⬜ Autosave
 * ✅ Undo/redo manager (Qt's built-in `QPlainTextEdit` undo stack — Ctrl+Z/Ctrl+Y — no custom implementation needed)
-* ⬜ Code folding
+* ✅ Code folding (fold ranges from a new Qt-independent language service, `opencobol2.language.compute_fold_ranges` — walks the real parser's AST for divisions/sections/paragraphs/IF/PERFORM/EVALUATE bodies rather than guessing from indentation; the editor gutter gets a clickable `+`/`-` marker per foldable line, collapsing hides the range via `QTextBlock.setVisible` and paints a `⋯` badge on the fold's start line; nested collapsed folds survive their parent being expanded; gated by `EditorSettings.code_folding`, a real persisted setting with no consumer until now. Not yet built: folding individual group data items by level-number nesting — `DataSectionNode` holds a flat item list, not a level-number tree)
 * ⬜ Bookmarks
 * ⬜ Breakpoints
 * ⬜ Minimap
 * ✅ Line numbers (`SourceEditorWidget`'s gutter, the standard `QPlainTextEdit` line-number-area pattern — width scales with digit count, repainted on scroll/edit, colored from `Theme.colors.line_number_foreground`; also renders current-line highlighting via `setExtraSelections`, colored from `current_line_highlight` — both fields existed in the theme model since Phase 1 with no consumer until now, and both recolor live via `EditorTabsWidget.apply_theme()` on a theme switch)
 * ✅ Search/replace (`SourceEditorWidget`'s in-editor find bar: forward/backward find with wraparound, an optional match-case toggle, Replace, and Replace All, all driven by Qt's own `QPlainTextEdit.find()` rather than hand-rolled search logic; wired to Edit > Find / Replace, Ctrl+F / Ctrl+H, which were registered commands with menu contributions but no handler until now)
 * ✅ Syntax highlighting (`CobolSyntaxHighlighter`, `opencobol2.gui.syntax_highlighter`: a `QSyntaxHighlighter` driven by the real `tokenize_cobol_source` lexer — Phase 4 — coloring reserved words, string/alphanumeric literals, numeric literals, and comments from four new `Theme.colors` fields, `syntax_keyword`/`syntax_string`/`syntax_number`/`syntax_comment`, added to all four built-in themes; attached only to recognized COBOL files — `.cbl`/`.cob`, and untitled/new documents — not to any other file opened in the editor; re-lexes the whole document per edit rather than incrementally, an honest scaling limitation for very large files)
+* ✅ Font/tab-width settings (`EditorSettings.font_family`/`font_size`/`tab_width` — real, persisted, editable in the Settings dialog's Editor tab since before Phase 7, but with no consumer anywhere until now; applied to every `SourceEditorWidget` as a real `QFont` and tab stop distance, falling back to the system fixed-pitch font when no family is configured, live-updated through the same Settings-dialog callback as the theme)
+* ✅ Fixed-format coding-area guides (`CodingAreaGuides`, `opencobol2.gui.coding_area_guides` — see Phase 4 for the full description)
 * ⬜ Multiple cursors
 * ⬜ Column selection
 * ⬜ Printing
@@ -108,7 +110,9 @@ The analysis pipeline (lexer through cross-references) is done and verified agai
 * ⬜ Find references (same — data foundation exists, feature is not built)
 * ⬜ Rename
 * ⬜ Quick fixes
-* ⬜ Syntax coloring
+* ✅ Syntax coloring (`CobolSyntaxHighlighter`, `opencobol2.gui.syntax_highlighter` — Phase 3/7: a `QSyntaxHighlighter` driven by the real lexer, coloring reserved words, string/numeric literals, and comments from theme-configurable colors)
+* ✅ Fixed-format coding-area guides (`CodingAreaGuides`, `opencobol2.gui.coding_area_guides` — Phase 3/7: column rulers/shading for the sequence area, indicator column, Area A, the Area A/B boundary, and the reference area, independently toggleable via the six `CobolGuideSettings` fields that existed since before Phase 7 with no consumer until now)
+* ✅ Code folding (`compute_fold_ranges`, `opencobol2.language.folding` — Qt-independent, walks the real parser's AST for division/section/paragraph/IF/PERFORM/EVALUATE spans; the Phase 3/7 editor gutter renders and toggles it, see Phase 3)
 * ⬜ Formatting
 * ⬜ Code completion
 * ⬜ Snippets
@@ -162,7 +166,7 @@ The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindo
 * ✅ Preferences dialog (`SettingsDialog`, `opencobol2.gui.settings_dialog`: Editor/COBOL/Theme/External Tools tabs backed by the real `SettingsService`; wired to Tools > Settings; applying immediately updates the running window's palette, status bar, and `GitService` executable path via an `on_applied` callback, not just the persisted file)
 * ✅ Compiler Profiles dialog (`CompilerProfilesDialog`, `opencobol2.gui.compiler_profiles_dialog`: list/add/remove/rename configured `CompilerProfile`s, pick a registered provider when adding, select the default, and edit each profile's configuration through a form generated from that provider's `CompilerConfigurationField` schema — every field kind: string, path (with a browse button), boolean, string list, string map, integer list, choice; validates every profile against its provider before saving; wired to Tools > Compiler Profiles. No `on_applied` callback needed — Build Project resolves the default profile from `SettingsService.current` fresh on every build)
 * ✅ Project explorer (`ProjectExplorerWidget`: real physical-file tree honoring `excluded_patterns`, virtual folders, and linked files — see Phase 2; all four project file commands — New, Open, Save As, Close (`opencobol2.gui.project_commands`) — are wired to real handlers using stock `QFileDialog`/`QInputDialog` prompts, no custom dialog widgets built yet; double-clicking a physical file item emits `file_double_clicked`, wired to the editor below; right-clicking the project's root item offers Properties..., opening `ProjectPropertiesDialog` — see Phase 2)
-* ✅ Editor, first cut (`EditorTabsWidget`/`SourceEditorWidget`, `opencobol2.gui.editor`: docked as `MainWindow`'s central widget via a new `central_widget` constructor parameter; one `QPlainTextEdit`-based tab per open document, backed by the Phase 1/3 `DocumentService`; dirty tracking shown as a trailing `*` in the tab title; File > New/Open/Save/Save As/Save All/Close/Close All all wired to real handlers, including unsaved-changes Save/Discard/Cancel prompts on close; a real line-number gutter and current-line highlight, both colored from the active theme and recolored live via `apply_theme()` on a theme switch; Edit > Find/Replace (Ctrl+F/Ctrl+H) open a real in-editor find bar; real COBOL syntax highlighting for recognized files — see Phase 3. No folding, minimap, split editors, or multiple cursors yet)
+* ✅ Editor, first cut (`EditorTabsWidget`/`SourceEditorWidget`, `opencobol2.gui.editor`: docked as `MainWindow`'s central widget via a new `central_widget` constructor parameter; one `QPlainTextEdit`-based tab per open document, backed by the Phase 1/3 `DocumentService`; dirty tracking shown as a trailing `*` in the tab title; File > New/Open/Save/Save As/Save All/Close/Close All all wired to real handlers, including unsaved-changes Save/Discard/Cancel prompts on close; a real line-number gutter and current-line highlight, both colored from the active theme and recolored live via `apply_theme()` on a theme switch; Edit > Find/Replace (Ctrl+F/Ctrl+H) open a real in-editor find bar; real COBOL syntax highlighting, fixed-format coding-area guides, and code folding for recognized files; a real configured font and tab width — see Phase 3. No minimap, split editors, or multiple cursors yet)
 * ✅ Output window (`OutputWidget`, `opencobol2.gui.output_panel`: a read-only, append-only log; Build > Build Project streams compiler process stdout/stderr and per-file status lines into it)
 * ✅ Problems window (`ProblemsWidget`, `opencobol2.gui.problems_panel`: a read-only table of severity/file/line/column/message, replaced with each build's parsed `CompilerDiagnostic`s)
 * ⬜ Terminal

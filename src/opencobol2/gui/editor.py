@@ -5,9 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
+    QFont,
+    QFontDatabase,
+    QMouseEvent,
     QPainter,
     QPaintEvent,
     QResizeEvent,
@@ -36,8 +39,14 @@ from opencobol2.documents import (
     TextDocument,
     WorkspaceDocument,
 )
+from opencobol2.gui.coding_area_guides import CodingAreaGuides
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
+from opencobol2.language import compute_fold_ranges, FoldRange
+from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import Theme
+
+
+_FOLD_MARKER_WIDTH = 14
 
 
 _COBOL_SOURCE_EXTENSIONS = (
@@ -88,6 +97,14 @@ class _LineNumberArea(QWidget):
     ) -> None:
         self._editor.paint_line_number_area(
             event,
+        )
+
+    def mousePressEvent(
+        self,
+        event: QMouseEvent,
+    ) -> None:
+        self._editor.handle_line_number_area_click(
+            event.position().toPoint(),
         )
 
 
@@ -304,6 +321,8 @@ class SourceEditorWidget(QPlainTextEdit):
         document_id: UUID,
         initial_text: str,
         theme: Theme,
+        editor_settings: EditorSettings | None = None,
+        guide_settings: CobolGuideSettings | None = None,
         path: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -327,6 +346,17 @@ class SourceEditorWidget(QPlainTextEdit):
             self,
         )
         self._find_bar.hide()
+        self._guides = CodingAreaGuides(
+            self,
+        )
+        self._guides.apply_theme(
+            theme,
+        )
+        self._guides.apply_guide_settings(
+            guide_settings
+            if guide_settings is not None
+            else CobolGuideSettings(),
+        )
 
         self._highlighter = (
             CobolSyntaxHighlighter(
@@ -338,9 +368,20 @@ class SourceEditorWidget(QPlainTextEdit):
             )
             else None
         )
+        self._folding_enabled = False
+        self._fold_ranges: tuple[
+            FoldRange,
+            ...,
+        ] = ()
+        self._collapsed_start_lines: set[
+            int,
+        ] = set()
 
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
+        )
+        self.blockCountChanged.connect(
+            self._update_fold_ranges,
         )
         self.updateRequest.connect(
             self._update_line_number_area,
@@ -349,11 +390,17 @@ class SourceEditorWidget(QPlainTextEdit):
             self._highlight_current_line,
         )
 
+        self.apply_editor_settings(
+            editor_settings
+            if editor_settings is not None
+            else EditorSettings(),
+        )
         self.setPlainText(
             initial_text,
         )
         self._update_line_number_area_width()
         self._highlight_current_line()
+        self._update_fold_ranges()
 
     def apply_theme(
         self,
@@ -369,11 +416,71 @@ class SourceEditorWidget(QPlainTextEdit):
         )
         self._highlight_current_line()
         self._line_number_area.update()
+        self._guides.apply_theme(
+            theme,
+        )
 
         if self._highlighter is not None:
             self._highlighter.apply_theme(
                 theme,
             )
+
+    def apply_editor_settings(
+        self,
+        editor_settings: EditorSettings,
+    ) -> None:
+        """Apply the configured font and tab width."""
+
+        if editor_settings.font_family:
+            font = QFont(
+                editor_settings.font_family,
+            )
+        else:
+            font = QFontDatabase.systemFont(
+                QFontDatabase.SystemFont.FixedFont,
+            )
+            font.setStyleHint(
+                QFont.StyleHint.Monospace,
+            )
+            font.setFixedPitch(
+                True,
+            )
+
+        font.setPointSize(
+            editor_settings.font_size,
+        )
+        self.setFont(
+            font,
+        )
+
+        char_width = self.fontMetrics().horizontalAdvance(
+            " ",
+        )
+        self.setTabStopDistance(
+            char_width * editor_settings.tab_width,
+        )
+
+        self._folding_enabled = (
+            editor_settings.code_folding
+            and self._highlighter is not None
+        )
+
+        if not self._folding_enabled:
+            self._expand_all_folds()
+
+        self._update_fold_ranges()
+        self._update_line_number_area_width()
+        self.viewport().update()
+
+    def apply_guide_settings(
+        self,
+        guide_settings: CobolGuideSettings,
+    ) -> None:
+        """Change which fixed-format coding-area guides are shown."""
+
+        self._guides.apply_guide_settings(
+            guide_settings,
+        )
 
     def line_number_area_width(
         self,
@@ -389,7 +496,7 @@ class SourceEditorWidget(QPlainTextEdit):
             )
         )
 
-        return (
+        width = (
             12
             + self.fontMetrics().horizontalAdvance(
                 "9",
@@ -397,11 +504,16 @@ class SourceEditorWidget(QPlainTextEdit):
             * digits
         )
 
+        if self._folding_enabled:
+            width += _FOLD_MARKER_WIDTH
+
+        return width
+
     def paint_line_number_area(
         self,
         event: QPaintEvent,
     ) -> None:
-        """Paint every visible block's line number into the gutter."""
+        """Paint every visible block's line number (and fold marker) into the gutter."""
 
         painter = QPainter(
             self._line_number_area,
@@ -411,6 +523,24 @@ class SourceEditorWidget(QPlainTextEdit):
             self.palette().color(
                 self.backgroundRole(),
             ),
+        )
+
+        fold_starts = (
+            {
+                fold_range.start_line
+                for fold_range in self._fold_ranges
+            }
+            if self._folding_enabled
+            else frozenset()
+        )
+        number_width = (
+            self._line_number_area.width()
+            - 4
+            - (
+                _FOLD_MARKER_WIDTH
+                if self._folding_enabled
+                else 0
+            )
         )
 
         block = self.firstVisibleBlock()
@@ -441,16 +571,33 @@ class SourceEditorWidget(QPlainTextEdit):
                 block.isVisible()
                 and bottom >= event.rect().top()
             ):
+                line_number = block_number + 1
                 painter.drawText(
                     0,
                     top,
-                    self._line_number_area.width() - 4,
+                    number_width,
                     self.fontMetrics().height(),
                     Qt.AlignmentFlag.AlignRight,
                     str(
-                        block_number + 1,
+                        line_number,
                     ),
                 )
+
+                if line_number in fold_starts:
+                    marker = (
+                        "+"
+                        if line_number
+                        in self._collapsed_start_lines
+                        else "-"
+                    )
+                    painter.drawText(
+                        number_width,
+                        top,
+                        _FOLD_MARKER_WIDTH,
+                        self.fontMetrics().height(),
+                        Qt.AlignmentFlag.AlignCenter,
+                        marker,
+                    )
 
             block = block.next()
             top = bottom
@@ -479,6 +626,102 @@ class SourceEditorWidget(QPlainTextEdit):
             )
         )
         self._position_find_bar()
+
+    def paintEvent(
+        self,
+        event: QPaintEvent,
+    ) -> None:
+        super().paintEvent(
+            event,
+        )
+
+        painter = QPainter(
+            self.viewport(),
+        )
+        self._guides.paint(
+            painter,
+        )
+        self._paint_fold_indicators(
+            painter,
+        )
+        painter.end()
+
+    def _paint_fold_indicators(
+        self,
+        painter: QPainter,
+    ) -> None:
+        """Mark each collapsed fold's start line with a small `...` badge."""
+
+        if not self._collapsed_start_lines:
+            return
+
+        label = " ⋯ "
+        label_width = self.fontMetrics().horizontalAdvance(
+            label,
+        )
+        margin = self.document().documentMargin()
+
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = round(
+            self.blockBoundingGeometry(
+                block,
+            )
+            .translated(
+                self.contentOffset(),
+            )
+            .top()
+        )
+        bottom = top + round(
+            self.blockBoundingRect(
+                block,
+            ).height()
+        )
+
+        while (
+            block.isValid()
+            and top <= self.viewport().rect().bottom()
+        ):
+            line_number = block_number + 1
+
+            if (
+                block.isVisible()
+                and line_number
+                in self._collapsed_start_lines
+                and bottom >= 0
+            ):
+                text_width = (
+                    self.fontMetrics().horizontalAdvance(
+                        block.text(),
+                    )
+                )
+                badge_rect = QRectF(
+                    margin + text_width + 6,
+                    top,
+                    label_width,
+                    self.fontMetrics().height(),
+                )
+                painter.fillRect(
+                    badge_rect,
+                    self._current_line_color,
+                )
+                painter.setPen(
+                    self._line_number_color,
+                )
+                painter.drawText(
+                    badge_rect,
+                    Qt.AlignmentFlag.AlignCenter,
+                    label,
+                )
+
+            block = block.next()
+            top = bottom
+            bottom = top + round(
+                self.blockBoundingRect(
+                    block,
+                ).height()
+            )
+            block_number += 1
 
     def show_find_bar(
         self,
@@ -711,6 +954,212 @@ class SourceEditorWidget(QPlainTextEdit):
             ]
         )
 
+    def handle_line_number_area_click(
+        self,
+        position: QPoint,
+    ) -> None:
+        """Toggle a fold if the gutter was clicked on a foldable line."""
+
+        if not self._folding_enabled:
+            return
+
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = round(
+            self.blockBoundingGeometry(
+                block,
+            )
+            .translated(
+                self.contentOffset(),
+            )
+            .top()
+        )
+        bottom = top + round(
+            self.blockBoundingRect(
+                block,
+            ).height()
+        )
+
+        while block.isValid() and top <= position.y():
+            if (
+                block.isVisible()
+                and top <= position.y() <= bottom
+            ):
+                self.toggle_fold(
+                    block_number + 1,
+                )
+                return
+
+            block = block.next()
+            top = bottom
+            bottom = top + round(
+                self.blockBoundingRect(
+                    block,
+                ).height()
+            )
+            block_number += 1
+
+    def toggle_fold(
+        self,
+        start_line: int,
+    ) -> None:
+        """Collapse or expand the foldable range starting at a line, if any."""
+
+        fold_range = next(
+            (
+                candidate
+                for candidate in self._fold_ranges
+                if candidate.start_line == start_line
+            ),
+            None,
+        )
+
+        if fold_range is None:
+            return
+
+        self._set_fold_collapsed(
+            fold_range,
+            start_line
+            not in self._collapsed_start_lines,
+        )
+
+    def _set_fold_collapsed(
+        self,
+        fold_range: FoldRange,
+        collapsed: bool,
+    ) -> None:
+        if collapsed:
+            self._hide_range(
+                fold_range,
+            )
+            self._collapsed_start_lines.add(
+                fold_range.start_line,
+            )
+        else:
+            self._show_range(
+                fold_range,
+            )
+            self._collapsed_start_lines.discard(
+                fold_range.start_line,
+            )
+
+            # Re-hide any nested range that was already collapsed on its
+            # own -- expanding the parent must not silently expand it too.
+            for nested_range in self._fold_ranges:
+                if (
+                    nested_range.start_line
+                    in self._collapsed_start_lines
+                    and fold_range.start_line
+                    < nested_range.start_line
+                    < fold_range.end_line
+                ):
+                    self._hide_range(
+                        nested_range,
+                    )
+
+        document = self.document()
+        document.markContentsDirty(
+            0,
+            document.characterCount(),
+        )
+        self._update_line_number_area_width()
+        self._line_number_area.update()
+        self.viewport().update()
+
+    def _hide_range(
+        self,
+        fold_range: FoldRange,
+    ) -> None:
+        for block_number in range(
+            fold_range.start_line,
+            fold_range.end_line,
+        ):
+            block = self.document().findBlockByNumber(
+                block_number,
+            )
+
+            if block.isValid():
+                block.setVisible(
+                    False,
+                )
+
+    def _show_range(
+        self,
+        fold_range: FoldRange,
+    ) -> None:
+        for block_number in range(
+            fold_range.start_line,
+            fold_range.end_line,
+        ):
+            block = self.document().findBlockByNumber(
+                block_number,
+            )
+
+            if block.isValid():
+                block.setVisible(
+                    True,
+                )
+
+    def _expand_all_folds(
+        self,
+    ) -> None:
+        """Force every block visible, regardless of what's tracked as folded.
+
+        Used as a full reset (folding turned off, or the document structure
+        shifted underneath a fold) rather than a normal toggle, so it does
+        not try to map stale collapsed start lines onto current fold
+        ranges -- that mapping is exactly what may no longer be valid.
+        """
+
+        if not self._collapsed_start_lines:
+            return
+
+        document = self.document()
+
+        for block_number in range(
+            document.blockCount(),
+        ):
+            block = document.findBlockByNumber(
+                block_number,
+            )
+
+            if block.isValid():
+                block.setVisible(
+                    True,
+                )
+
+        self._collapsed_start_lines = set()
+        document.markContentsDirty(
+            0,
+            document.characterCount(),
+        )
+
+    def _update_fold_ranges(
+        self,
+        _new_block_count: int = 0,
+    ) -> None:
+        if not self._folding_enabled:
+            self._fold_ranges = ()
+            return
+
+        self._fold_ranges = compute_fold_ranges(
+            self.toPlainText(),
+        )
+        valid_start_lines = {
+            fold_range.start_line
+            for fold_range in self._fold_ranges
+        }
+
+        if not self._collapsed_start_lines.issubset(
+            valid_start_lines,
+        ):
+            # The document structure changed underneath a fold (lines were
+            # added/removed); the safest recovery is to expand everything
+            # rather than risk hiding the wrong lines.
+            self._expand_all_folds()
+
+        self._line_number_area.update()
+
 
 class EditorTabsWidget(QTabWidget):
     """Docks every open document from a `DocumentService` as its own tab."""
@@ -720,6 +1169,8 @@ class EditorTabsWidget(QTabWidget):
         *,
         document_service: DocumentService,
         theme: Theme,
+        editor_settings: EditorSettings | None = None,
+        guide_settings: CobolGuideSettings | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build an empty editor tab area backed by a document service."""
@@ -746,6 +1197,16 @@ class EditorTabsWidget(QTabWidget):
 
         self._document_service = document_service
         self._theme = theme
+        self._editor_settings = (
+            editor_settings
+            if editor_settings is not None
+            else EditorSettings()
+        )
+        self._guide_settings = (
+            guide_settings
+            if guide_settings is not None
+            else CobolGuideSettings()
+        )
 
         self.setTabsClosable(
             True,
@@ -783,6 +1244,36 @@ class EditorTabsWidget(QTabWidget):
                 index,
             ).apply_theme(
                 theme,
+            )
+
+    def apply_editor_settings(
+        self,
+        editor_settings: EditorSettings,
+    ) -> None:
+        """Apply the configured font and tab width to every open tab."""
+
+        self._editor_settings = editor_settings
+
+        for index in range(self.count()):
+            self._editor_at(
+                index,
+            ).apply_editor_settings(
+                editor_settings,
+            )
+
+    def apply_guide_settings(
+        self,
+        guide_settings: CobolGuideSettings,
+    ) -> None:
+        """Change which coding-area guides every open tab shows."""
+
+        self._guide_settings = guide_settings
+
+        for index in range(self.count()):
+            self._editor_at(
+                index,
+            ).apply_guide_settings(
+                guide_settings,
             )
 
     def open_path(
@@ -940,6 +1431,8 @@ class EditorTabsWidget(QTabWidget):
             document_id=workspace_document.document_id,
             initial_text=workspace_document.document.text,
             theme=self._theme,
+            editor_settings=self._editor_settings,
+            guide_settings=self._guide_settings,
             path=workspace_document.document.path,
         )
         document_id = workspace_document.document_id

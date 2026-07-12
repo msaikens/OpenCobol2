@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.documents import DocumentService
 from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import (
     create_builtin_theme_registry,
     DARK_THEME_ID,
@@ -1089,3 +1090,148 @@ def test_apply_theme_recolors_the_syntax_highlighter(
         for format_range in block.layout().formats()
     }
     assert colors["DISPLAY"] == "#0000ff"
+
+
+def test_new_tab_uses_a_monospace_font_by_default(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    assert editor.font().fixedPitch()
+    assert editor.font().pointSize() == 11
+
+
+def test_new_tab_applies_configured_font_and_tab_width(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            font_family="Courier New",
+            font_size=18,
+            tab_width=8,
+        ),
+    )
+
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    assert editor.font().family() == "Courier New"
+    assert editor.font().pointSize() == 18
+    char_width = editor.fontMetrics().horizontalAdvance(
+        " ",
+    )
+    assert editor.tabStopDistance() == (
+        char_width * 8
+    )
+
+
+def test_new_tab_uses_configured_guide_settings(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        guide_settings=CobolGuideSettings(
+            show_area_a=False,
+        ),
+    )
+
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    assert (
+        editor._guides._guide_settings.show_area_a
+        is False
+    )
+
+
+def test_apply_editor_settings_updates_every_open_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+
+    tabs.apply_editor_settings(
+        EditorSettings(
+            font_family="Consolas",
+            font_size=20,
+            tab_width=2,
+        )
+    )
+
+    for index in range(tabs.count()):
+        editor = tabs.widget(
+            index,
+        )
+        assert editor.font().family() == "Consolas"
+        assert editor.font().pointSize() == 20
+
+
+def test_apply_editor_settings_affects_tabs_opened_afterward(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.apply_editor_settings(
+        EditorSettings(
+            font_family="Consolas",
+            font_size=20,
+            tab_width=2,
+        )
+    )
+    tabs.new_file()
+
+    editor = tabs.widget(0)
+    assert editor.font().family() == "Consolas"
+    assert editor.font().pointSize() == 20
+
+
+def test_apply_guide_settings_updates_every_open_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+
+    tabs.apply_guide_settings(
+        CobolGuideSettings(
+            show_reference_area=False,
+        )
+    )
+
+    for index in range(tabs.count()):
+        editor = tabs.widget(
+            index,
+        )
+        assert (
+            editor._guides._guide_settings
+            .show_reference_area
+            is False
+        )
+
+
+def test_source_editor_widget_apply_guide_settings_delegates(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    editor.apply_guide_settings(
+        CobolGuideSettings(
+            show_indicator_column=False,
+        )
+    )
+
+    assert (
+        editor._guides._guide_settings
+        .show_indicator_column
+        is False
+    )

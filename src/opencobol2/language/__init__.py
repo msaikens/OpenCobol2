@@ -25,12 +25,22 @@ from opencobol2.language.diagnostics import (
     LexDiagnostic,
     ParseDiagnostic,
 )
+from opencobol2.language.folding import (
+    compute_fold_ranges,
+    FoldRange,
+)
 from opencobol2.language.keywords import (
     RESERVED_WORDS,
     is_reserved_word,
 )
 from opencobol2.language.lexer import (
     CobolLexer,
+    FIXED_FORMAT_AREA_A_END_COLUMN,
+    FIXED_FORMAT_CONTENT_END_COLUMN,
+    FIXED_FORMAT_CONTENT_START_COLUMN,
+    FIXED_FORMAT_INDICATOR_COLUMN,
+    FIXED_FORMAT_REFERENCE_AREA_START_COLUMN,
+    FIXED_FORMAT_SEQUENCE_AREA_WIDTH,
     LexResult,
     tokenize_cobol_source,
 )
@@ -72,6 +82,13 @@ __all__ = [
     "EnvironmentDivisionNode",
     "EvaluateStatement",
     "EvaluateWhenBranch",
+    "FIXED_FORMAT_AREA_A_END_COLUMN",
+    "FIXED_FORMAT_CONTENT_END_COLUMN",
+    "FIXED_FORMAT_CONTENT_START_COLUMN",
+    "FIXED_FORMAT_INDICATOR_COLUMN",
+    "FIXED_FORMAT_REFERENCE_AREA_START_COLUMN",
+    "FIXED_FORMAT_SEQUENCE_AREA_WIDTH",
+    "FoldRange",
     "GenericStatement",
     "GobackStatement",
     "IdentificationDivisionNode",
@@ -96,6 +113,7 @@ __all__ = [
     "Token",
     "TokenKind",
     "analyze_compilation_unit",
+    "compute_fold_ranges",
     "is_reserved_word",
     "parse_cobol_tokens",
     "tokenize_cobol_source",
