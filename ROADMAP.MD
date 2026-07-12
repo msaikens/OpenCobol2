@@ -165,7 +165,7 @@ The application shell now renders for real (`src/opencobol2/gui/`): a `MainWindo
 * ⬜ Terminal
 * ✅ Git window — both dock panels now have real content, sharing one repository auto-discovered from the open project's root:
   * `GitChangesWidget` (`opencobol2.gui.git_changes`): working-tree status, branch name, staged/unstaged file lists, stage/unstage via double-click or Stage All/Unstage All, and commit with a message box — verified against a real `git` repository, which caught and fixed a real bug in `GitService.unstage_all()` (`git rm --recursive` isn't a valid long option, only `-r` is).
-  * `GitRepositoryWidget` (`opencobol2.gui.git_repository`): four tabs — Branches (current branch marked, double-click to switch), Tags, Remotes, and History (last 100 commits) — all populated from real `GitService` calls (`list_branches`, `list_tags`, `get_remotes`, `get_history`). No create/delete/rename actions for branches/tags/remotes yet — browsing and branch switching only.
+  * `GitRepositoryWidget` (`opencobol2.gui.git_repository`): four tabs — Branches (current branch marked, double-click to switch, New Branch button, right-click Delete), Tags (New Tag button prompting for an optional annotation message, right-click Delete), Remotes (Add Remote button, right-click Rename/Remove), and History (last 100 commits, read-only) — all wired to real `GitService` calls. Destructive actions (delete/remove) require a confirmation prompt. No editing of remote URLs after creation, no branch/tag rename.
 * ⬜ Search window (Find Results dock panel renders; real content not built)
 * ⬜ Outline
 * ⬜ Bookmarks

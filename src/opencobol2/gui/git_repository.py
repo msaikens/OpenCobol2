@@ -6,10 +6,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -23,16 +27,34 @@ from opencobol2.git import (
     GitTag,
 )
 from opencobol2.services.git import (
+    GitBranchAlreadyExistsError,
     GitBranchNotFoundError,
     GitCommandFailedError,
     GitCommandTimedOutError,
     GitExecutableUnavailableError,
+    GitRemoteAlreadyExistsError,
+    GitRemoteNameError,
+    GitRemoteNotFoundError,
+    GitRemoteUrlError,
     GitRepositoryNotFoundError,
     GitService,
+    GitTagAlreadyExistsError,
+    GitTagNotFoundError,
 )
 
 
 _NAME_DATA_ROLE = Qt.ItemDataRole.UserRole
+
+# Every real Git failure this panel's mutating actions can trigger, besides
+# the domain-specific already-exists/not-found errors each action also
+# catches: a missing repository mid-operation, a missing `git` executable,
+# a failed command, or a timeout.
+_COMMON_GIT_ERRORS = (
+    GitRepositoryNotFoundError,
+    GitExecutableUnavailableError,
+    GitCommandFailedError,
+    GitCommandTimedOutError,
+)
 
 
 class GitRepositoryWidget(QWidget):
@@ -86,19 +108,34 @@ class GitRepositoryWidget(QWidget):
             self._switch_to_item,
         )
         self._tabs.addTab(
-            self._branches_list,
+            _build_tab(
+                self._branches_list,
+                "New Branch...",
+                self._new_branch,
+                self._show_branch_context_menu,
+            ),
             "Branches",
         )
 
         self._tags_list = QListWidget()
         self._tabs.addTab(
-            self._tags_list,
+            _build_tab(
+                self._tags_list,
+                "New Tag...",
+                self._new_tag,
+                self._show_tag_context_menu,
+            ),
             "Tags",
         )
 
         self._remotes_list = QListWidget()
         self._tabs.addTab(
-            self._remotes_list,
+            _build_tab(
+                self._remotes_list,
+                "Add Remote...",
+                self._add_remote,
+                self._show_remote_context_menu,
+            ),
             "Remotes",
         )
 
@@ -221,8 +258,15 @@ class GitRepositoryWidget(QWidget):
         self._tags_list.clear()
 
         for tag in tags:
-            self._tags_list.addItem(
+            item = QListWidgetItem(
                 f"{tag.name} ({tag.target_oid[:7]})",
+            )
+            item.setData(
+                _NAME_DATA_ROLE,
+                tag.name,
+            )
+            self._tags_list.addItem(
+                item,
             )
 
     def _render_remotes(
@@ -234,8 +278,15 @@ class GitRepositoryWidget(QWidget):
         self._remotes_list.clear()
 
         for remote in remotes:
-            self._remotes_list.addItem(
+            item = QListWidgetItem(
                 f"{remote.name} ({remote.fetch_url})",
+            )
+            item.setData(
+                _NAME_DATA_ROLE,
+                remote.name,
+            )
+            self._remotes_list.addItem(
+                item,
             )
 
     def _render_history(
@@ -273,9 +324,7 @@ class GitRepositoryWidget(QWidget):
             )
         except (
             GitBranchNotFoundError,
-            GitExecutableUnavailableError,
-            GitCommandFailedError,
-            GitCommandTimedOutError,
+            *_COMMON_GIT_ERRORS,
         ) as error:
             QMessageBox.critical(
                 self,
@@ -287,3 +336,447 @@ class GitRepositoryWidget(QWidget):
             return
 
         self.refresh()
+
+    def _new_branch(
+        self,
+    ) -> None:
+        """Prompt for a name and create a new local branch."""
+
+        if self._repository_path is None:
+            return
+
+        name, ok = QInputDialog.getText(
+            self,
+            "New Branch",
+            "Branch name:",
+        )
+
+        if not ok or not name.strip():
+            return
+
+        try:
+            self._git_service.create_branch(
+                self._repository_path,
+                name,
+            )
+        except (
+            GitBranchAlreadyExistsError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "New Branch Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+    def _show_branch_context_menu(
+        self,
+        position,
+    ) -> None:
+        """Show a context menu with a delete action for one branch item."""
+
+        item = self._branches_list.itemAt(
+            position,
+        )
+
+        if item is None:
+            return
+
+        branch_name = item.data(
+            _NAME_DATA_ROLE,
+        )
+        menu = QMenu(
+            self,
+        )
+        delete_action = menu.addAction(
+            "Delete Branch",
+        )
+        chosen_action = menu.exec(
+            self._branches_list.mapToGlobal(
+                position,
+            ),
+        )
+
+        if chosen_action is delete_action:
+            self._delete_branch(
+                branch_name,
+            )
+
+    def _delete_branch(
+        self,
+        branch_name: str,
+    ) -> None:
+        """Delete one branch after confirmation."""
+
+        if not _confirm(
+            self,
+            "Delete Branch",
+            f"Delete branch {branch_name!r}?",
+        ):
+            return
+
+        try:
+            self._git_service.delete_branch(
+                self._repository_path,
+                branch_name,
+            )
+        except (
+            GitBranchNotFoundError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Delete Branch Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+    def _new_tag(
+        self,
+    ) -> None:
+        """Prompt for a name (and optional message) and create a new tag."""
+
+        if self._repository_path is None:
+            return
+
+        name, ok = QInputDialog.getText(
+            self,
+            "New Tag",
+            "Tag name:",
+        )
+
+        if not ok or not name.strip():
+            return
+
+        message, _ = QInputDialog.getText(
+            self,
+            "New Tag",
+            "Annotation message (leave blank for a lightweight tag):",
+        )
+
+        try:
+            self._git_service.create_tag(
+                self._repository_path,
+                name,
+                message=(
+                    message.strip()
+                    if message.strip()
+                    else None
+                ),
+            )
+        except (
+            GitTagAlreadyExistsError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "New Tag Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+    def _show_tag_context_menu(
+        self,
+        position,
+    ) -> None:
+        """Show a context menu with a delete action for one tag item."""
+
+        item = self._tags_list.itemAt(
+            position,
+        )
+
+        if item is None:
+            return
+
+        tag_name = item.data(
+            _NAME_DATA_ROLE,
+        )
+        menu = QMenu(
+            self,
+        )
+        delete_action = menu.addAction(
+            "Delete Tag",
+        )
+        chosen_action = menu.exec(
+            self._tags_list.mapToGlobal(
+                position,
+            ),
+        )
+
+        if chosen_action is delete_action:
+            self._delete_tag(
+                tag_name,
+            )
+
+    def _delete_tag(
+        self,
+        tag_name: str,
+    ) -> None:
+        """Delete one tag after confirmation."""
+
+        if not _confirm(
+            self,
+            "Delete Tag",
+            f"Delete tag {tag_name!r}?",
+        ):
+            return
+
+        try:
+            self._git_service.delete_tag(
+                self._repository_path,
+                tag_name,
+            )
+        except (
+            GitTagNotFoundError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Delete Tag Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+    def _add_remote(
+        self,
+    ) -> None:
+        """Prompt for a name and URL and add a new remote."""
+
+        if self._repository_path is None:
+            return
+
+        name, ok = QInputDialog.getText(
+            self,
+            "Add Remote",
+            "Remote name:",
+        )
+
+        if not ok or not name.strip():
+            return
+
+        url, ok = QInputDialog.getText(
+            self,
+            "Add Remote",
+            "Remote URL:",
+        )
+
+        if not ok or not url.strip():
+            return
+
+        try:
+            self._git_service.add_remote(
+                self._repository_path,
+                name,
+                url,
+            )
+        except (
+            GitRemoteAlreadyExistsError,
+            GitRemoteNameError,
+            GitRemoteUrlError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Add Remote Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+    def _show_remote_context_menu(
+        self,
+        position,
+    ) -> None:
+        """Show a context menu with remove/rename actions for one remote item."""
+
+        item = self._remotes_list.itemAt(
+            position,
+        )
+
+        if item is None:
+            return
+
+        remote_name = item.data(
+            _NAME_DATA_ROLE,
+        )
+        menu = QMenu(
+            self,
+        )
+        rename_action = menu.addAction(
+            "Rename Remote...",
+        )
+        remove_action = menu.addAction(
+            "Remove Remote",
+        )
+        chosen_action = menu.exec(
+            self._remotes_list.mapToGlobal(
+                position,
+            ),
+        )
+
+        if chosen_action is remove_action:
+            self._remove_remote(
+                remote_name,
+            )
+        elif chosen_action is rename_action:
+            self._rename_remote(
+                remote_name,
+            )
+
+    def _remove_remote(
+        self,
+        remote_name: str,
+    ) -> None:
+        """Remove one remote after confirmation."""
+
+        if not _confirm(
+            self,
+            "Remove Remote",
+            f"Remove remote {remote_name!r}?",
+        ):
+            return
+
+        try:
+            self._git_service.remove_remote(
+                self._repository_path,
+                remote_name,
+            )
+        except (
+            GitRemoteNotFoundError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Remove Remote Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+    def _rename_remote(
+        self,
+        remote_name: str,
+    ) -> None:
+        """Rename one remote to a new, user-provided name."""
+
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Remote",
+            "New remote name:",
+            text=remote_name,
+        )
+
+        if not ok or not new_name.strip():
+            return
+
+        try:
+            self._git_service.rename_remote(
+                self._repository_path,
+                remote_name,
+                new_name,
+            )
+        except (
+            GitRemoteNotFoundError,
+            GitRemoteAlreadyExistsError,
+            GitRemoteNameError,
+            *_COMMON_GIT_ERRORS,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Rename Remote Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self.refresh()
+
+
+def _build_tab(
+    list_widget: QListWidget,
+    add_button_label: str,
+    add_button_handler,
+    context_menu_handler,
+) -> QWidget:
+    """Build one tab page: an action button above a context-menu-enabled list."""
+
+    tab = QWidget()
+    layout = QVBoxLayout(
+        tab,
+    )
+    layout.setContentsMargins(
+        0,
+        0,
+        0,
+        0,
+    )
+
+    button_row = QHBoxLayout()
+    add_button = QPushButton(
+        add_button_label,
+    )
+    add_button.clicked.connect(
+        add_button_handler,
+    )
+    button_row.addWidget(
+        add_button,
+    )
+    button_row.addStretch()
+    layout.addLayout(
+        button_row,
+    )
+
+    list_widget.setContextMenuPolicy(
+        Qt.ContextMenuPolicy.CustomContextMenu,
+    )
+    list_widget.customContextMenuRequested.connect(
+        context_menu_handler,
+    )
+    layout.addWidget(
+        list_widget,
+    )
+
+    return tab
+
+
+def _confirm(
+    parent: QWidget,
+    title: str,
+    message: str,
+) -> bool:
+    """Ask a yes/no confirmation question before a destructive Git action."""
+
+    return (
+        QMessageBox.question(
+            parent,
+            title,
+            message,
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+        )
+        == QMessageBox.StandardButton.Yes
+    )

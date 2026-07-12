@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+from unittest.mock import patch
 
 import pytest
+from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.services.git import GitService
@@ -341,3 +343,356 @@ def test_widget_rejects_non_git_service(
         GitRepositoryWidget(
             git_service=object(),  # type: ignore[arg-type]
         )
+
+
+def test_new_branch_creates_branch(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QInputDialog.getText",
+        return_value=(
+            "feature-y",
+            True,
+        ),
+    ):
+        widget._new_branch()
+
+    labels = [
+        widget._branches_list.item(
+            index,
+        ).text()
+        for index in range(
+            widget._branches_list.count(),
+        )
+    ]
+    assert any(
+        "feature-y" in label
+        for label in labels
+    )
+
+
+def test_new_branch_cancelled_does_nothing(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+    original_count = (
+        widget._branches_list.count()
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QInputDialog.getText",
+        return_value=(
+            "",
+            False,
+        ),
+    ):
+        widget._new_branch()
+
+    assert (
+        widget._branches_list.count()
+        == original_count
+    )
+
+
+def test_delete_branch_removes_it_when_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QMessageBox.question",
+        return_value=(
+            QMessageBox.StandardButton.Yes
+        ),
+    ):
+        widget._delete_branch(
+            "feature-x",
+        )
+
+    labels = [
+        widget._branches_list.item(
+            index,
+        ).text()
+        for index in range(
+            widget._branches_list.count(),
+        )
+    ]
+    assert not any(
+        "feature-x" in label
+        for label in labels
+    )
+
+
+def test_delete_branch_kept_when_not_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QMessageBox.question",
+        return_value=(
+            QMessageBox.StandardButton.No
+        ),
+    ):
+        widget._delete_branch(
+            "feature-x",
+        )
+
+    labels = [
+        widget._branches_list.item(
+            index,
+        ).text()
+        for index in range(
+            widget._branches_list.count(),
+        )
+    ]
+    assert any(
+        "feature-x" in label
+        for label in labels
+    )
+
+
+def test_delete_branch_reports_error_for_unknown_branch(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.git_repository."
+            "QMessageBox.question",
+            return_value=(
+                QMessageBox.StandardButton.Yes
+            ),
+        ),
+        patch(
+            "opencobol2.gui.git_repository."
+            "QMessageBox.critical",
+        ) as mock_critical,
+    ):
+        widget._delete_branch(
+            "does-not-exist",
+        )
+
+    mock_critical.assert_called_once()
+
+
+def test_new_tag_creates_lightweight_tag(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QInputDialog.getText",
+        side_effect=[
+            (
+                "v2.0",
+                True,
+            ),
+            (
+                "",
+                True,
+            ),
+        ],
+    ):
+        widget._new_tag()
+
+    labels = [
+        widget._tags_list.item(
+            index,
+        ).text()
+        for index in range(
+            widget._tags_list.count(),
+        )
+    ]
+    assert any(
+        "v2.0" in label
+        for label in labels
+    )
+
+
+def test_delete_tag_removes_it_when_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QMessageBox.question",
+        return_value=(
+            QMessageBox.StandardButton.Yes
+        ),
+    ):
+        widget._delete_tag(
+            "v1.0",
+        )
+
+    assert widget._tags_list.count() == 0
+
+
+def test_add_remote_creates_remote(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+    # The fixture already adds an "origin" remote; use a different name.
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QInputDialog.getText",
+        side_effect=[
+            (
+                "upstream",
+                True,
+            ),
+            (
+                "https://example.com/upstream.git",
+                True,
+            ),
+        ],
+    ):
+        widget._add_remote()
+
+    labels = [
+        widget._remotes_list.item(
+            index,
+        ).text()
+        for index in range(
+            widget._remotes_list.count(),
+        )
+    ]
+    assert any(
+        "upstream" in label
+        for label in labels
+    )
+
+
+def test_remove_remote_deletes_it_when_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QMessageBox.question",
+        return_value=(
+            QMessageBox.StandardButton.Yes
+        ),
+    ):
+        widget._remove_remote(
+            "origin",
+        )
+
+    assert widget._remotes_list.count() == 0
+
+
+def test_rename_remote_renames_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with patch(
+        "opencobol2.gui.git_repository."
+        "QInputDialog.getText",
+        return_value=(
+            "renamed",
+            True,
+        ),
+    ):
+        widget._rename_remote(
+            "origin",
+        )
+
+    labels = [
+        widget._remotes_list.item(
+            index,
+        ).text()
+        for index in range(
+            widget._remotes_list.count(),
+        )
+    ]
+    assert any(
+        "renamed" in label
+        for label in labels
+    )
+    assert not any(
+        label.startswith(
+            "origin ",
+        )
+        for label in labels
+    )
