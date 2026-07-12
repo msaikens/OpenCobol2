@@ -27,6 +27,10 @@ def _create_colors(
         "diagnostic_error": "#F14C4C",
         "diagnostic_warning": "#CCA700",
         "diagnostic_information": "#3794FF",
+        "syntax_keyword": "#569CD6",
+        "syntax_string": "#CE9178",
+        "syntax_number": "#B5CEA8",
+        "syntax_comment": "#6A9955",
     }
     values.update(overrides)
 

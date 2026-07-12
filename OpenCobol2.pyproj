@@ -636,6 +636,7 @@
     <Compile Include="src\opencobol2\gui\project_properties_dialog.py" />
     <Compile Include="src\opencobol2\gui\settings_dialog.py" />
     <Compile Include="src\opencobol2\gui\status_bar.py" />
+    <Compile Include="src\opencobol2\gui\syntax_highlighter.py" />
     <Compile Include="src\opencobol2\gui\theming.py" />
     <Compile Include="src\opencobol2\gui\toolbars.py" />
     <Compile Include="src\opencobol2\gui\tool_windows.py" />

@@ -1427,6 +1427,65 @@ def test_double_clicking_project_file_opens_it_in_editor(
     )
 
 
+def test_opened_cbl_file_is_syntax_highlighted_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+
+    root_item = explorer._tree.topLevelItem(
+        0,
+    )
+    file_item = root_item.child(
+        0,
+    )
+    explorer._handle_item_double_clicked(
+        file_item,
+        0,
+    )
+
+    editor = editor_tabs.widget(
+        0,
+    )
+    block = editor.document().findBlockByNumber(
+        0,
+    )
+    colors = {
+        block.text()[
+            format_range.start:format_range.start
+            + format_range.length
+        ]: format_range.format.foreground()
+        .color()
+        .name()
+        for format_range in block.layout().formats()
+    }
+
+    assert colors["IDENTIFICATION"] == "#569cd6"
+    assert colors["DIVISION"] == "#569cd6"
+
+
 def test_file_menu_new_open_save_actions_work_end_to_end(
     qapp,
     tmp_path: Path,

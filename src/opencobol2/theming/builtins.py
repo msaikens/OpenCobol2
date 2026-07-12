@@ -38,6 +38,10 @@ def _create_light_theme() -> Theme:
             diagnostic_error="#E51400",
             diagnostic_warning="#BF8803",
             diagnostic_information="#1A85FF",
+            syntax_keyword="#0000FF",
+            syntax_string="#A31515",
+            syntax_number="#098658",
+            syntax_comment="#008000",
         ),
     )
 
@@ -62,6 +66,10 @@ def _create_dark_theme() -> Theme:
             diagnostic_error="#F14C4C",
             diagnostic_warning="#CCA700",
             diagnostic_information="#3794FF",
+            syntax_keyword="#569CD6",
+            syntax_string="#CE9178",
+            syntax_number="#B5CEA8",
+            syntax_comment="#6A9955",
         ),
     )
 
@@ -86,6 +94,10 @@ def _create_high_contrast_light_theme() -> Theme:
             diagnostic_error="#FF0000",
             diagnostic_warning="#B35900",
             diagnostic_information="#0000FF",
+            syntax_keyword="#0000FF",
+            syntax_string="#A31515",
+            syntax_number="#098658",
+            syntax_comment="#006400",
         ),
     )
 
@@ -110,6 +122,10 @@ def _create_high_contrast_dark_theme() -> Theme:
             diagnostic_error="#FF0000",
             diagnostic_warning="#FFFF00",
             diagnostic_information="#00FFFF",
+            syntax_keyword="#3399FF",
+            syntax_string="#FFA500",
+            syntax_number="#90EE90",
+            syntax_comment="#C0C0C0",
         ),
     )
 

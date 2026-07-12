@@ -163,7 +163,7 @@ Items are read-only — there is no click-to-execute-a-command support yet. The 
 
 OpenCobol2 has a Qt-independent color theme model, independent of any rendered stylesheet:
 
-* `Theme`, `ThemeColors`, and `ThemeKind` models describing a named palette (background, foreground, accent, selection, editor, line-number, current-line, and diagnostic-severity colors) validated as `#RRGGBB` hex values.
+* `Theme`, `ThemeColors`, and `ThemeKind` models describing a named palette (background, foreground, accent, selection, editor, line-number, current-line, diagnostic-severity, and syntax-token colors) validated as `#RRGGBB` hex values.
 * A `ThemeRegistry` for registering and resolving themes by ID, plus a built-in catalog of four themes: Light, Dark, High Contrast Light, and High Contrast Dark.
 * A `ThemeService` that tracks the active theme against a registry and validates theme switches.
 * The active theme selection is persisted as part of application settings.
@@ -242,7 +242,9 @@ Each editor also renders a real line-number gutter and highlights the current li
 
 Edit > Find (Ctrl+F) and Edit > Replace (Ctrl+H) open a real in-editor find bar as a floating overlay on the active tab — both were already registered commands with menu contributions but no handler, so triggering them previously would have raised `BuiltInCommandHandlerNotConfiguredError`. The bar supports forward/backward find with wraparound, an optional "Match case" toggle, Replace, and Replace All, all built on Qt's own `QPlainTextEdit.find()` rather than hand-rolled search logic.
 
-Not yet built: syntax highlighting (the `Theme`/`ThemeColors` model has no token-color fields yet, though the COBOL lexer's token stream is already well-suited to drive one), folding, a minimap, multiple cursors, split editors, and File > Open Recent File (unlike Open Recent Project, there is no persisted recent-files list wired up yet — the menu currently lists nothing).
+Files recognized as COBOL (`.cbl`/`.cob`, and untitled/new documents — this IDE has no other file type to open or create yet) get real syntax highlighting: `CobolSyntaxHighlighter` (`opencobol2.gui.syntax_highlighter`) tokenizes the whole document with the real COBOL lexer (`opencobol2.language.tokenize_cobol_source`) and colors reserved words, string/alphanumeric literals, numeric literals, and comments from four new `Theme.colors` fields (`syntax_keyword`, `syntax_string`, `syntax_number`, `syntax_comment`, added to all four built-in themes). It re-lexes the whole buffer on the first `highlightBlock()` call after the text changes rather than incrementally per line — an honest first-cut trade-off, fine for typical COBOL source files but not built to scale to very large ones. `apply_theme()` recolors and rehighlights live, same as the line-number gutter above. Non-recognized files (anything else opened in the editor) get no highlighting at all.
+
+Not yet built: code folding, a minimap, multiple cursors, split editors, and File > Open Recent File (unlike Open Recent Project, there is no persisted recent-files list wired up yet — the menu currently lists nothing).
 
 ### COBOL language services (lexer, parser, semantic analysis)
 

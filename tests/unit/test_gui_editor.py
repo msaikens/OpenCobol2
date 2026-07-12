@@ -987,3 +987,105 @@ def test_find_bar_replace_all_button_reports_count(
         editor.toPlainText()
         == "two two two"
     )
+
+
+def test_opening_a_cbl_file_attaches_a_syntax_highlighter(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    tabs = _build_tabs()
+
+    tabs.open_path(
+        file_path,
+    )
+
+    assert (
+        tabs.widget(0)._highlighter
+        is not None
+    )
+
+
+def test_opening_a_cob_file_attaches_a_syntax_highlighter(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cob"
+    file_path.write_text(
+        "x",
+    )
+    tabs = _build_tabs()
+
+    tabs.open_path(
+        file_path,
+    )
+
+    assert (
+        tabs.widget(0)._highlighter
+        is not None
+    )
+
+
+def test_opening_a_non_cobol_file_has_no_syntax_highlighter(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text(
+        "DISPLAY this is not cobol",
+    )
+    tabs = _build_tabs()
+
+    tabs.open_path(
+        file_path,
+    )
+
+    assert tabs.widget(0)._highlighter is None
+
+
+def test_new_untitled_file_attaches_a_syntax_highlighter(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.new_file()
+
+    assert (
+        tabs.widget(0)._highlighter
+        is not None
+    )
+
+
+def test_apply_theme_recolors_the_syntax_highlighter(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "       DISPLAY X.",
+    )
+
+    light_theme = _build_theme(
+        LIGHT_THEME_ID,
+    )
+    tabs.apply_theme(
+        light_theme,
+    )
+
+    block = editor.document().findBlockByNumber(
+        0,
+    )
+    colors = {
+        block.text()[
+            format_range.start:format_range.start
+            + format_range.length
+        ]: format_range.format.foreground()
+        .color()
+        .name()
+        for format_range in block.layout().formats()
+    }
+    assert colors["DISPLAY"] == "#0000ff"

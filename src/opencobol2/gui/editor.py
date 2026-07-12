@@ -36,7 +36,29 @@ from opencobol2.documents import (
     TextDocument,
     WorkspaceDocument,
 )
+from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
 from opencobol2.theming import Theme
+
+
+_COBOL_SOURCE_EXTENSIONS = (
+    ".cbl",
+    ".cob",
+)
+
+
+def _is_cobol_source(
+    path: Path | None,
+) -> bool:
+    """Return whether a path is recognized COBOL source, or is untitled.
+
+    Untitled (unsaved) documents are treated as COBOL source too, since
+    this IDE has no other file type to open or create yet.
+    """
+
+    return (
+        path is None
+        or path.suffix.lower() in _COBOL_SOURCE_EXTENSIONS
+    )
 
 
 class _LineNumberArea(QWidget):
@@ -282,6 +304,7 @@ class SourceEditorWidget(QPlainTextEdit):
         document_id: UUID,
         initial_text: str,
         theme: Theme,
+        path: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Build an editor preloaded with one document's text."""
@@ -305,6 +328,17 @@ class SourceEditorWidget(QPlainTextEdit):
         )
         self._find_bar.hide()
 
+        self._highlighter = (
+            CobolSyntaxHighlighter(
+                self.document(),
+                theme=theme,
+            )
+            if _is_cobol_source(
+                path,
+            )
+            else None
+        )
+
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
         )
@@ -325,7 +359,7 @@ class SourceEditorWidget(QPlainTextEdit):
         self,
         theme: Theme,
     ) -> None:
-        """Recolor the line-number gutter and current-line highlight."""
+        """Recolor the line-number gutter, current-line highlight, and syntax."""
 
         self._line_number_color = QColor(
             theme.colors.line_number_foreground,
@@ -335,6 +369,11 @@ class SourceEditorWidget(QPlainTextEdit):
         )
         self._highlight_current_line()
         self._line_number_area.update()
+
+        if self._highlighter is not None:
+            self._highlighter.apply_theme(
+                theme,
+            )
 
     def line_number_area_width(
         self,
@@ -901,6 +940,7 @@ class EditorTabsWidget(QTabWidget):
             document_id=workspace_document.document_id,
             initial_text=workspace_document.document.text,
             theme=self._theme,
+            path=workspace_document.document.path,
         )
         document_id = workspace_document.document_id
         editor.textChanged.connect(

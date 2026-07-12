@@ -24,6 +24,10 @@ _COLOR_FIELD_NAMES = (
     "diagnostic_error",
     "diagnostic_warning",
     "diagnostic_information",
+    "syntax_keyword",
+    "syntax_string",
+    "syntax_number",
+    "syntax_comment",
 )
 
 
@@ -52,6 +56,10 @@ class ThemeColors:
     diagnostic_error: str
     diagnostic_warning: str
     diagnostic_information: str
+    syntax_keyword: str
+    syntax_string: str
+    syntax_number: str
+    syntax_comment: str
 
     def __post_init__(self) -> None:
         """Validate and normalize every color role."""
