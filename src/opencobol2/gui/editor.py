@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -14,6 +14,7 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QResizeEvent,
+    QTextBlock,
     QTextCursor,
     QTextDocument,
     QTextFormat,
@@ -39,10 +40,16 @@ from opencobol2.documents import (
     TextDocument,
     WorkspaceDocument,
 )
+from opencobol2.gui.bookmarks_panel import BookmarkEntry
 from opencobol2.gui.coding_area_guides import CodingAreaGuides
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
 from opencobol2.gui.welcome_page import WelcomePageWidget
-from opencobol2.language import compute_fold_ranges, FoldRange
+from opencobol2.language import (
+    compute_fold_ranges,
+    compute_outline,
+    FoldRange,
+    OutlineNode,
+)
 from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import Theme
 
@@ -316,6 +323,9 @@ class _FindReplaceBar(QWidget):
 class SourceEditorWidget(QPlainTextEdit):
     """A plain-text editor for exactly one open document."""
 
+    bookmarks_changed = Signal()
+    """Emitted whenever a bookmark is toggled on or off."""
+
     def __init__(
         self,
         *,
@@ -359,14 +369,15 @@ class SourceEditorWidget(QPlainTextEdit):
             else CobolGuideSettings(),
         )
 
+        self.is_cobol_source = _is_cobol_source(
+            path,
+        )
         self._highlighter = (
             CobolSyntaxHighlighter(
                 self.document(),
                 theme=theme,
             )
-            if _is_cobol_source(
-                path,
-            )
+            if self.is_cobol_source
             else None
         )
         self._folding_enabled = False
@@ -377,6 +388,14 @@ class SourceEditorWidget(QPlainTextEdit):
         self._collapsed_start_lines: set[
             int,
         ] = set()
+        self._bookmarked_blocks: list[
+            QTextBlock,
+        ] = []
+        self._bookmark_color = QColor(
+            255,
+            165,
+            0,
+        )
 
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
@@ -534,6 +553,9 @@ class SourceEditorWidget(QPlainTextEdit):
             if self._folding_enabled
             else frozenset()
         )
+        bookmarked_lines = set(
+            self.bookmarked_lines,
+        )
         number_width = (
             self._line_number_area.width()
             - 4
@@ -598,6 +620,15 @@ class SourceEditorWidget(QPlainTextEdit):
                         self.fontMetrics().height(),
                         Qt.AlignmentFlag.AlignCenter,
                         marker,
+                    )
+
+                if line_number in bookmarked_lines:
+                    painter.fillRect(
+                        0,
+                        top,
+                        4,
+                        bottom - top,
+                        self._bookmark_color,
                     )
 
             block = block.next()
@@ -896,6 +927,62 @@ class SourceEditorWidget(QPlainTextEdit):
         )
         self.setFocus()
         self.ensureCursorVisible()
+
+    def toggle_bookmark_at_cursor(
+        self,
+    ) -> None:
+        """Toggle a bookmark on the cursor's current line.
+
+        Bookmarks are stored as `QTextBlock` handles rather than plain
+        line numbers, so they keep tracking the same physical line of
+        text (via Qt's own block bookkeeping) when edits elsewhere shift
+        line numbers around them -- the same class of staleness problem
+        `_expand_all_folds()` had to be fixed for earlier.
+        """
+
+        self._prune_invalid_bookmarks()
+        cursor_block = self.textCursor().block()
+        cursor_line = cursor_block.blockNumber()
+
+        for index, block in enumerate(
+            self._bookmarked_blocks,
+        ):
+            if block.blockNumber() == cursor_line:
+                del self._bookmarked_blocks[
+                    index
+                ]
+                break
+        else:
+            self._bookmarked_blocks.append(
+                cursor_block,
+            )
+
+        self._line_number_area.update()
+        self.bookmarks_changed.emit()
+
+    @property
+    def bookmarked_lines(
+        self,
+    ) -> tuple[int, ...]:
+        """Return every bookmarked 1-based line number, sorted."""
+
+        self._prune_invalid_bookmarks()
+
+        return tuple(
+            sorted(
+                block.blockNumber() + 1
+                for block in self._bookmarked_blocks
+            )
+        )
+
+    def _prune_invalid_bookmarks(
+        self,
+    ) -> None:
+        self._bookmarked_blocks = [
+            block
+            for block in self._bookmarked_blocks
+            if block.isValid()
+        ]
 
     def _reveal_find_bar(
         self,
@@ -1199,6 +1286,12 @@ class SourceEditorWidget(QPlainTextEdit):
 class EditorTabsWidget(QTabWidget):
     """Docks every open document from a `DocumentService` as its own tab."""
 
+    active_document_changed = Signal()
+    """Emitted when the active tab switches, or its text changes."""
+
+    bookmarks_changed = Signal()
+    """Emitted whenever any open tab's bookmarks change."""
+
     def __init__(
         self,
         *,
@@ -1248,6 +1341,9 @@ class EditorTabsWidget(QTabWidget):
         )
         self.tabCloseRequested.connect(
             self._close_tab,
+        )
+        self.currentChanged.connect(
+            lambda _index: self.active_document_changed.emit()
         )
 
         self._welcome_page = WelcomePageWidget(
@@ -1538,6 +1634,14 @@ class EditorTabsWidget(QTabWidget):
                 document_id,
             )
         )
+        editor.textChanged.connect(
+            lambda: self._handle_active_editor_text_changed(
+                document_id,
+            )
+        )
+        editor.bookmarks_changed.connect(
+            self.bookmarks_changed.emit,
+        )
 
         index = self.addTab(
             editor,
@@ -1579,6 +1683,131 @@ class EditorTabsWidget(QTabWidget):
         )
         self._refresh_tab_chrome(
             document_id,
+        )
+
+    def _handle_active_editor_text_changed(
+        self,
+        document_id: UUID,
+    ) -> None:
+        """Re-announce the active document changing on a same-tab edit."""
+
+        if self._editor_for(
+            document_id,
+        ) is self.currentWidget():
+            self.active_document_changed.emit()
+
+    def current_outline(
+        self,
+    ) -> tuple[OutlineNode, ...]:
+        """Return the active tab's COBOL outline, or `()` if none applies."""
+
+        editor = self.currentWidget()
+
+        if (
+            isinstance(
+                editor,
+                SourceEditorWidget,
+            )
+            and editor.is_cobol_source
+        ):
+            return compute_outline(
+                editor.toPlainText(),
+            )
+
+        return ()
+
+    def go_to_active_line(
+        self,
+        line_number: int,
+        column: int = 1,
+    ) -> None:
+        """Move the active tab's cursor to a 1-based line/column."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.go_to_line(
+                line_number,
+                column,
+            )
+
+    def toggle_bookmark_on_active_tab(
+        self,
+    ) -> None:
+        """Toggle a bookmark on the active tab's cursor line, if any."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.toggle_bookmark_at_cursor()
+
+    def all_bookmarks(
+        self,
+    ) -> tuple[BookmarkEntry, ...]:
+        """Return every bookmark across every open tab."""
+
+        entries: list[BookmarkEntry] = []
+
+        for index in range(
+            self.count(),
+        ):
+            editor = self._editor_at(
+                index,
+            )
+            workspace_document = (
+                self._document_service.workspace.get_document(
+                    editor.document_id,
+                )
+            )
+
+            for line in editor.bookmarked_lines:
+                block = editor.document().findBlockByNumber(
+                    line - 1,
+                )
+                entries.append(
+                    BookmarkEntry(
+                        document_id=editor.document_id,
+                        display_name=_display_name(
+                            workspace_document.document,
+                        ),
+                        line=line,
+                        text=block.text().strip(),
+                    )
+                )
+
+        return tuple(
+            entries,
+        )
+
+    def reveal_bookmark(
+        self,
+        document_id: UUID,
+        line_number: int,
+        column: int = 1,
+    ) -> None:
+        """Activate the tab for a document and move its cursor to a line."""
+
+        index = self._index_for(
+            document_id,
+        )
+
+        if index < 0:
+            return
+
+        self.setCurrentIndex(
+            index,
+        )
+        self._editor_at(
+            index,
+        ).go_to_line(
+            line_number,
+            column,
         )
 
     def _refresh_tab_chrome(

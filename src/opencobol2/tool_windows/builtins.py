@@ -19,6 +19,9 @@ class BuiltInToolWindowIds:
     PROBLEMS = "problems"
     FIND_RESULTS = "find-results"
     TERMINAL = "terminal"
+    OUTLINE = "outline"
+    TASK_LIST = "task-list"
+    BOOKMARKS = "bookmarks"
     GIT_CHANGES = "git-changes"
     GIT_REPOSITORY = "git-repository"
 
@@ -117,6 +120,59 @@ def create_builtin_tool_window_registry(
             default_pinned=False,
             accessibility_description=(
                 "Run shell commands and view their output."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.OUTLINE,
+            title="Outline",
+            default_area=ToolWindowArea.RIGHT,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "Browse the active document's divisions, "
+                "sections, and paragraphs."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.TASK_LIST,
+            title="Task List",
+            default_area=ToolWindowArea.BOTTOM,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "List TODO and FIXME comments across the "
+                "open project."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.BOOKMARKS,
+            title="Bookmarks",
+            default_area=ToolWindowArea.BOTTOM,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "List bookmarked lines across open documents."
             ),
         ),
         ToolWindowDefinition(

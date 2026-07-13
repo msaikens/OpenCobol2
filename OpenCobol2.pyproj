@@ -621,6 +621,7 @@
     <Compile Include="src\opencobol2\git\tags.py" />
     <Compile Include="src\opencobol2\git\__init__.py" />
     <Compile Include="src\opencobol2\gui\application.py" />
+    <Compile Include="src\opencobol2\gui\bookmarks_panel.py" />
     <Compile Include="src\opencobol2\gui\build_commands.py" />
     <Compile Include="src\opencobol2\gui\coding_area_guides.py" />
     <Compile Include="src\opencobol2\gui\command_menus.py" />
@@ -631,6 +632,7 @@
     <Compile Include="src\opencobol2\gui\git_changes.py" />
     <Compile Include="src\opencobol2\gui\git_repository.py" />
     <Compile Include="src\opencobol2\gui\main_window.py" />
+    <Compile Include="src\opencobol2\gui\outline_panel.py" />
     <Compile Include="src\opencobol2\gui\output_panel.py" />
     <Compile Include="src\opencobol2\gui\problems_panel.py" />
     <Compile Include="src\opencobol2\gui\project_commands.py" />
@@ -640,6 +642,8 @@
     <Compile Include="src\opencobol2\gui\settings_dialog.py" />
     <Compile Include="src\opencobol2\gui\status_bar.py" />
     <Compile Include="src\opencobol2\gui\syntax_highlighter.py" />
+    <Compile Include="src\opencobol2\gui\task_list_commands.py" />
+    <Compile Include="src\opencobol2\gui\task_list_panel.py" />
     <Compile Include="src\opencobol2\gui\terminal_panel.py" />
     <Compile Include="src\opencobol2\gui\theming.py" />
     <Compile Include="src\opencobol2\gui\toolbars.py" />
@@ -651,8 +655,10 @@
     <Compile Include="src\opencobol2\language\folding.py" />
     <Compile Include="src\opencobol2\language\keywords.py" />
     <Compile Include="src\opencobol2\language\lexer.py" />
+    <Compile Include="src\opencobol2\language\outline.py" />
     <Compile Include="src\opencobol2\language\parser.py" />
     <Compile Include="src\opencobol2\language\semantic.py" />
+    <Compile Include="src\opencobol2\language\task_list.py" />
     <Compile Include="src\opencobol2\language\tokens.py" />
     <Compile Include="src\opencobol2\language\__init__.py" />
     <Compile Include="src\opencobol2\project\models.py" />
@@ -756,6 +762,7 @@
     <Compile Include="src\opencobol2\toolchains\__init__.py" />
     <Compile Include="src\opencobol2\__init__.py" />
     <Compile Include="tests\unit\test_gui_application.py" />
+    <Compile Include="tests\unit\test_gui_bookmarks_panel.py" />
     <Compile Include="tests\unit\test_gui_build_commands.py" />
     <Compile Include="tests\unit\test_gui_coding_area_guides.py" />
     <Compile Include="tests\unit\test_gui_command_menus.py" />
@@ -767,6 +774,7 @@
     <Compile Include="tests\unit\test_gui_git_changes.py" />
     <Compile Include="tests\unit\test_gui_git_repository.py" />
     <Compile Include="tests\unit\test_gui_main_window.py" />
+    <Compile Include="tests\unit\test_gui_outline_panel.py" />
     <Compile Include="tests\unit\test_gui_output_panel.py" />
     <Compile Include="tests\unit\test_gui_problems_panel.py" />
     <Compile Include="tests\unit\test_gui_project_commands.py" />
@@ -776,12 +784,16 @@
     <Compile Include="tests\unit\test_gui_settings_dialog.py" />
     <Compile Include="tests\unit\test_gui_status_bar.py" />
     <Compile Include="tests\unit\test_gui_syntax_highlighter.py" />
+    <Compile Include="tests\unit\test_gui_task_list_commands.py" />
+    <Compile Include="tests\unit\test_gui_task_list_panel.py" />
     <Compile Include="tests\unit\test_gui_terminal_panel.py" />
     <Compile Include="tests\unit\test_gui_theming.py" />
     <Compile Include="tests\unit\test_gui_toolbars.py" />
     <Compile Include="tests\unit\test_gui_tool_windows.py" />
     <Compile Include="tests\unit\test_gui_welcome_page.py" />
     <Compile Include="tests\unit\test_language_folding.py" />
+    <Compile Include="tests\unit\test_language_outline.py" />
+    <Compile Include="tests\unit\test_language_task_list.py" />
     <Compile Include="tests\unit\test_local_compiler_process.py" />
     <Compile Include="tests\unit\test_project_model.py" />
     <Compile Include="tests\unit\test_project_process.py" />

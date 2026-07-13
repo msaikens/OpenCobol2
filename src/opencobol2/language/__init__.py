@@ -33,6 +33,10 @@ from opencobol2.language.keywords import (
     RESERVED_WORDS,
     is_reserved_word,
 )
+from opencobol2.language.outline import (
+    compute_outline,
+    OutlineNode,
+)
 from opencobol2.language.lexer import (
     CobolLexer,
     FIXED_FORMAT_AREA_A_END_COLUMN,
@@ -48,6 +52,11 @@ from opencobol2.language.parser import (
     CobolParser,
     ParseResult,
     parse_cobol_tokens,
+)
+from opencobol2.language.task_list import (
+    compute_task_list_entries,
+    DEFAULT_TASK_TAGS,
+    TaskListEntry,
 )
 from opencobol2.language.semantic import (
     DataNameReference,
@@ -78,6 +87,7 @@ __all__ = [
     "DataNameReference",
     "DataSectionNode",
     "DataSymbol",
+    "DEFAULT_TASK_TAGS",
     "DisplayStatement",
     "EnvironmentDivisionNode",
     "EvaluateStatement",
@@ -96,6 +106,7 @@ __all__ = [
     "LexDiagnostic",
     "LexResult",
     "MoveStatement",
+    "OutlineNode",
     "ParagraphNode",
     "ParseDiagnostic",
     "ParseResult",
@@ -110,10 +121,13 @@ __all__ = [
     "SourceSpan",
     "StopRunStatement",
     "SymbolTable",
+    "TaskListEntry",
     "Token",
     "TokenKind",
     "analyze_compilation_unit",
     "compute_fold_ranges",
+    "compute_outline",
+    "compute_task_list_entries",
     "is_reserved_word",
     "parse_cobol_tokens",
     "tokenize_cobol_source",

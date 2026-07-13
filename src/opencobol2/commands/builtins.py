@@ -69,6 +69,7 @@ class BuiltInCommandIds:
     EDIT_REPLACE = "edit.replace"
     EDIT_FIND_IN_FILES = "edit.find-in-files"
     EDIT_GO_TO = "edit.go-to"
+    EDIT_TOGGLE_BOOKMARK = "edit.toggle-bookmark"
 
     VIEW_COMMAND_PALETTE = "view.command-palette"
     VIEW_PROJECT_EXPLORER = "view.project-explorer"
@@ -76,6 +77,9 @@ class BuiltInCommandIds:
     VIEW_PROBLEMS = "view.problems"
     VIEW_FIND_RESULTS = "view.find-results"
     VIEW_TERMINAL = "view.terminal"
+    VIEW_OUTLINE = "view.outline"
+    VIEW_TASK_LIST = "view.task-list"
+    VIEW_BOOKMARKS = "view.bookmarks"
     VIEW_GIT_CHANGES = "view.git-changes"
     VIEW_GIT_REPOSITORY = "view.git-repository"
 
@@ -454,6 +458,13 @@ _EXTERNAL_COMMANDS = (
         default_shortcuts=("Ctrl+G",),
     ),
     _CommandMetadata(
+        command_id=BuiltInCommandIds.EDIT_TOGGLE_BOOKMARK,
+        title="Toggle Bookmark",
+        description="Toggle a bookmark on the current line.",
+        category="Edit",
+        default_shortcuts=("Ctrl+F2",),
+    ),
+    _CommandMetadata(
         command_id=BuiltInCommandIds.VIEW_COMMAND_PALETTE,
         title="Command Palette",
         description="Search and execute application commands.",
@@ -617,6 +628,24 @@ _TOOL_WINDOW_COMMANDS = (
         "Terminal",
         "Show and focus the Terminal tool window.",
         BuiltInToolWindowIds.TERMINAL,
+    ),
+    (
+        BuiltInCommandIds.VIEW_OUTLINE,
+        "Outline",
+        "Show and focus the Outline tool window.",
+        BuiltInToolWindowIds.OUTLINE,
+    ),
+    (
+        BuiltInCommandIds.VIEW_TASK_LIST,
+        "Task List",
+        "Show and focus the Task List tool window.",
+        BuiltInToolWindowIds.TASK_LIST,
+    ),
+    (
+        BuiltInCommandIds.VIEW_BOOKMARKS,
+        "Bookmarks",
+        "Show and focus the Bookmarks tool window.",
+        BuiltInToolWindowIds.BOOKMARKS,
     ),
     (
         BuiltInCommandIds.VIEW_GIT_CHANGES,
@@ -1066,6 +1095,10 @@ def _register_edit_surface(
                 "core.menu.edit.go-to",
                 BuiltInCommandIds.EDIT_GO_TO,
             ),
+            (
+                "core.menu.edit.toggle-bookmark",
+                BuiltInCommandIds.EDIT_TOGGLE_BOOKMARK,
+            ),
         ),
         start=1,
     ):
@@ -1120,6 +1153,18 @@ def _register_view_surface(
             (
                 "core.menu.view.terminal",
                 BuiltInCommandIds.VIEW_TERMINAL,
+            ),
+            (
+                "core.menu.view.outline",
+                BuiltInCommandIds.VIEW_OUTLINE,
+            ),
+            (
+                "core.menu.view.task-list",
+                BuiltInCommandIds.VIEW_TASK_LIST,
+            ),
+            (
+                "core.menu.view.bookmarks",
+                BuiltInCommandIds.VIEW_BOOKMARKS,
             ),
             (
                 "core.menu.view.git-changes",

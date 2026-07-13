@@ -211,6 +211,36 @@ def _terminal_content(
     )
 
 
+def _outline_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "outline",
+        ).widget()
+    )
+
+
+def _task_list_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "task-list",
+        ).widget()
+    )
+
+
+def _bookmarks_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "bookmarks",
+        ).widget()
+    )
+
+
 def test_create_main_window_wires_builtin_registries(
     qapp,
     tmp_path: Path,
@@ -235,7 +265,7 @@ def test_create_main_window_wires_builtin_registries(
         len(
             window.dock_manager.dock_widgets,
         )
-        == 7
+        == 10
     )
     assert (
         window.windowTitle()
@@ -2602,3 +2632,550 @@ def test_terminal_panel_runs_a_real_command_end_to_end(
         "ran for real"
         in terminal_widget._output_log.toPlainText()
     )
+
+
+def test_outline_populates_when_a_cobol_file_is_opened(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           DISPLAY \"HI\".\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    outline_widget = _outline_content(
+        window,
+    )
+
+    editor_tabs.open_path(
+        file_path,
+    )
+
+    assert outline_widget.topLevelItemCount() == 2
+    assert (
+        outline_widget.topLevelItem(0).text(0)
+        == "IDENTIFICATION DIVISION (DEMO)"
+    )
+    procedure_item = outline_widget.topLevelItem(1)
+    assert procedure_item.text(0) == "PROCEDURE DIVISION"
+    assert procedure_item.child(0).text(0) == "MAIN-PARA"
+
+
+def test_outline_refreshes_when_switching_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    first_path = tmp_path / "one.cbl"
+    first_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. ONE.\n"
+    )
+    second_path = tmp_path / "two.cbl"
+    second_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TWO.\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    outline_widget = _outline_content(
+        window,
+    )
+    editor_tabs.open_path(
+        first_path,
+    )
+    editor_tabs.open_path(
+        second_path,
+    )
+    assert (
+        outline_widget.topLevelItem(0).text(0)
+        == "IDENTIFICATION DIVISION (TWO)"
+    )
+
+    editor_tabs.setCurrentIndex(
+        0,
+    )
+
+    assert (
+        outline_widget.topLevelItem(0).text(0)
+        == "IDENTIFICATION DIVISION (ONE)"
+    )
+
+
+def test_outline_clears_when_the_last_tab_closes(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    outline_widget = _outline_content(
+        window,
+    )
+    editor_tabs.open_path(
+        file_path,
+    )
+    assert outline_widget.topLevelItemCount() == 1
+
+    editor_tabs.close_active_document()
+
+    assert outline_widget.topLevelItemCount() == 0
+
+
+def test_double_clicking_an_outline_entry_moves_the_editor_cursor(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           DISPLAY \"HI\".\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    outline_widget = _outline_content(
+        window,
+    )
+    editor_tabs.open_path(
+        file_path,
+    )
+    procedure_item = outline_widget.topLevelItem(1)
+    paragraph_item = procedure_item.child(0)
+
+    outline_widget._handle_item_double_clicked(
+        paragraph_item,
+        0,
+    )
+
+    cursor = editor_tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 3
+
+
+def test_view_outline_menu_action_runs_without_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+
+    _find_action(
+        view_menu,
+        "Outline",
+    ).trigger()
+
+
+def test_task_list_populates_when_the_project_opens(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "      * TODO wire this up\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    task_list_widget = _task_list_content(
+        window,
+    )
+
+    assert task_list_widget.row_count == 1
+    assert (
+        task_list_widget._table.item(0, 0).text()
+        == "TODO"
+    )
+
+
+def test_task_list_is_empty_with_no_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    task_list_widget = _task_list_content(
+        window,
+    )
+
+    assert task_list_widget.row_count == 0
+
+
+def test_task_list_refresh_button_rescans_the_project(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    source_path = tmp_path / "main.cbl"
+    source_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    task_list_widget = _task_list_content(
+        window,
+    )
+    assert task_list_widget.row_count == 0
+
+    source_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "      * FIXME added after bootstrap\n"
+    )
+    task_list_widget.refresh_requested.emit()
+
+    assert task_list_widget.row_count == 1
+    assert (
+        task_list_widget._table.item(0, 0).text()
+        == "FIXME"
+    )
+
+
+def test_task_list_refreshes_when_a_new_project_opens(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "      * TODO from the new project\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "project.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    task_list_widget = _task_list_content(
+        window,
+    )
+    assert task_list_widget.row_count == 0
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    assert task_list_widget.row_count == 1
+
+
+def test_double_clicking_a_task_entry_opens_it_at_the_matched_location(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "      * TODO jump here\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    task_list_widget = _task_list_content(
+        window,
+    )
+    editor_tabs = window.centralWidget()
+
+    task_list_widget._handle_cell_double_clicked(
+        0,
+        0,
+    )
+
+    assert editor_tabs.count() == 1
+    cursor = editor_tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 2
+
+
+def test_view_task_list_menu_action_runs_without_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+
+    _find_action(
+        view_menu,
+        "Task List",
+    ).trigger()
+
+
+def test_toggle_bookmark_menu_action_adds_a_bookmark(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+        "line two\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    editor_tabs.widget(0).go_to_line(
+        2,
+    )
+    bookmarks_widget = _bookmarks_content(
+        window,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Toggle Bookmark",
+    ).trigger()
+
+    assert bookmarks_widget.rowCount() == 1
+    assert bookmarks_widget.item(0, 0).text() == "main.cbl"
+    assert bookmarks_widget.item(0, 1).text() == "2"
+
+
+def test_toggle_bookmark_menu_action_twice_removes_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    bookmarks_widget = _bookmarks_content(
+        window,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Toggle Bookmark",
+    ).trigger()
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Toggle Bookmark",
+    ).trigger()
+
+    assert bookmarks_widget.rowCount() == 0
+
+
+def test_double_clicking_a_bookmark_navigates_to_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    editor_tabs.widget(0).go_to_line(
+        3,
+    )
+    editor_tabs.toggle_bookmark_on_active_tab()
+    bookmarks_widget = _bookmarks_content(
+        window,
+    )
+
+    editor_tabs.new_file()
+    assert editor_tabs.currentIndex() == 1
+
+    bookmarks_widget._handle_cell_double_clicked(
+        0,
+        0,
+    )
+
+    assert editor_tabs.currentIndex() == 0
+    cursor = editor_tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 2
+
+
+def test_view_bookmarks_menu_action_runs_without_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+
+    _find_action(
+        view_menu,
+        "Bookmarks",
+    ).trigger()

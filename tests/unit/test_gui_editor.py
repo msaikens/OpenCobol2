@@ -6,11 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtGui import QTextDocument
+from PySide6.QtGui import QTextCursor, QTextDocument
 from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.documents import DocumentService
-from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.gui.editor import EditorTabsWidget, SourceEditorWidget
 from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import (
     create_builtin_theme_registry,
@@ -1358,3 +1358,497 @@ def test_go_to_line_with_an_out_of_range_line_does_nothing(
     )
 
     assert editor.textCursor().blockNumber() == 0
+
+
+def test_is_cobol_source_true_for_a_cbl_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "x",
+    )
+    tabs = _build_tabs()
+
+    tabs.open_path(
+        file_path,
+    )
+
+    assert tabs.widget(0).is_cobol_source is True
+
+
+def test_is_cobol_source_false_for_a_non_cobol_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text(
+        "x",
+    )
+    tabs = _build_tabs()
+
+    tabs.open_path(
+        file_path,
+    )
+
+    assert tabs.widget(0).is_cobol_source is False
+
+
+def test_current_outline_returns_outline_for_the_active_cobol_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+    )
+
+    outline = tabs.current_outline()
+
+    assert [
+        node.name
+        for node in outline
+    ] == ["IDENTIFICATION DIVISION (DEMO)"]
+
+
+def test_current_outline_is_empty_for_a_non_cobol_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+
+    assert tabs.current_outline() == ()
+
+
+def test_current_outline_is_empty_when_no_tabs_are_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert tabs.current_outline() == ()
+
+
+def test_go_to_active_line_moves_the_cursor_in_the_current_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "line one\n"
+        "line two\n"
+    )
+
+    tabs.go_to_active_line(
+        2,
+        6,
+    )
+
+    cursor = tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 1
+    assert cursor.columnNumber() == 5
+
+
+def test_go_to_active_line_does_nothing_when_no_tabs_are_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.go_to_active_line(
+        1,
+    )
+
+
+def test_active_document_changed_emits_on_tab_switch(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    received = []
+    tabs.active_document_changed.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    tabs.setCurrentIndex(
+        0,
+    )
+
+    assert received == [True]
+
+
+def test_active_document_changed_emits_when_the_active_tab_is_edited(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    received = []
+    tabs.active_document_changed.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    tabs.widget(0).setPlainText(
+        "changed",
+    )
+
+    assert received == [True]
+
+
+def test_active_document_changed_does_not_emit_for_a_background_tab_edit(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    background_editor = tabs.widget(0)
+    assert tabs.currentIndex() == 1
+    received = []
+    tabs.active_document_changed.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    background_editor.setPlainText(
+        "changed in the background",
+    )
+
+    assert received == []
+
+
+def test_toggle_bookmark_adds_a_bookmark_at_the_cursor_line(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+    editor.go_to_line(
+        2,
+    )
+
+    editor.toggle_bookmark_at_cursor()
+
+    assert editor.bookmarked_lines == (2,)
+
+
+def test_toggle_bookmark_twice_removes_it(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one\n"
+        "line two\n"
+    )
+    editor.go_to_line(
+        1,
+    )
+
+    editor.toggle_bookmark_at_cursor()
+    editor.toggle_bookmark_at_cursor()
+
+    assert editor.bookmarked_lines == ()
+
+
+def test_bookmarked_lines_are_sorted(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "one\n"
+        "two\n"
+        "three\n"
+    )
+
+    editor.go_to_line(
+        3,
+    )
+    editor.toggle_bookmark_at_cursor()
+    editor.go_to_line(
+        1,
+    )
+    editor.toggle_bookmark_at_cursor()
+
+    assert editor.bookmarked_lines == (
+        1,
+        3,
+    )
+
+
+def test_toggle_bookmark_emits_bookmarks_changed(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    received = []
+    editor.bookmarks_changed.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    editor.toggle_bookmark_at_cursor()
+
+    assert received == [True]
+
+
+def test_bookmark_follows_its_line_when_lines_shift_above_it(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+    editor.go_to_line(
+        3,
+    )
+    editor.toggle_bookmark_at_cursor()
+    assert editor.bookmarked_lines == (3,)
+
+    cursor = editor.textCursor()
+    cursor.movePosition(
+        QTextCursor.MoveOperation.Start,
+    )
+    cursor.insertText(
+        "a new line\nanother new line\n",
+    )
+
+    # The bookmark stays attached to "line three" itself, which has now
+    # shifted down to line 5 -- not to whatever text now occupies line 3.
+    assert editor.bookmarked_lines == (5,)
+    assert (
+        "line three"
+        in editor.document()
+        .findBlockByNumber(
+            4,
+        )
+        .text()
+    )
+
+
+def test_bookmarked_line_paints_a_marker_in_the_gutter(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=(
+            "line one\n"
+            "line two\n"
+            "line three\n"
+        ),
+        theme=_build_theme(),
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+
+    editor.go_to_line(
+        2,
+    )
+    editor.toggle_bookmark_at_cursor()
+
+    image = (
+        editor._line_number_area.grab().toImage()
+    )
+    block = editor.document().findBlockByNumber(
+        1,
+    )
+    marker_rect = editor.blockBoundingGeometry(
+        block,
+    ).translated(
+        editor.contentOffset(),
+    )
+    y = int(
+        marker_rect.center().y(),
+    )
+
+    assert (
+        image.pixelColor(
+            2,
+            y,
+        )
+        == editor._bookmark_color
+    )
+
+
+def test_toggle_bookmark_on_active_tab_toggles_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "should not be bookmarked\n",
+    )
+    tabs.setCurrentIndex(
+        1,
+    )
+    tabs.widget(1).setPlainText(
+        "line one\n"
+        "line two\n",
+    )
+    tabs.widget(1).go_to_line(
+        2,
+    )
+
+    tabs.toggle_bookmark_on_active_tab()
+
+    assert tabs.widget(1).bookmarked_lines == (2,)
+    assert tabs.widget(0).bookmarked_lines == ()
+
+
+def test_toggle_bookmark_on_active_tab_does_nothing_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.toggle_bookmark_on_active_tab()
+
+
+def test_all_bookmarks_aggregates_across_open_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    tabs = _build_tabs()
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "one\n"
+        "two\n"
+        "three\n",
+    )
+    tabs.open_path(
+        file_path,
+    )
+    tabs.widget(0).go_to_line(
+        2,
+    )
+    tabs.widget(0).toggle_bookmark_at_cursor()
+
+    tabs.new_file()
+    tabs.widget(1).setPlainText(
+        "alpha\n"
+        "beta\n",
+    )
+    tabs.widget(1).go_to_line(
+        1,
+    )
+    tabs.widget(1).toggle_bookmark_at_cursor()
+
+    entries = tabs.all_bookmarks()
+
+    assert len(
+        entries,
+    ) == 2
+    named_entry = next(
+        entry
+        for entry in entries
+        if entry.display_name == "main.cbl"
+    )
+    assert named_entry.line == 2
+    assert named_entry.text == "two"
+    untitled_entry = next(
+        entry
+        for entry in entries
+        if entry.display_name == "Untitled"
+    )
+    assert untitled_entry.line == 1
+    assert untitled_entry.text == "alpha"
+
+
+def test_all_bookmarks_is_empty_with_no_bookmarks(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+
+    assert tabs.all_bookmarks() == ()
+
+
+def test_reveal_bookmark_activates_the_tab_and_moves_the_cursor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    document_id = tabs.widget(0).document_id
+    tabs.widget(0).setPlainText(
+        "line one\n"
+        "line two\n",
+    )
+    tabs.new_file()
+    assert tabs.currentIndex() == 1
+
+    tabs.reveal_bookmark(
+        document_id,
+        2,
+        3,
+    )
+
+    assert tabs.currentIndex() == 0
+    cursor = tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 1
+    assert cursor.columnNumber() == 2
+
+
+def test_reveal_bookmark_with_an_unknown_document_id_does_nothing(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    tabs = _build_tabs()
+    tabs.new_file()
+
+    tabs.reveal_bookmark(
+        uuid4(),
+        1,
+    )
+
+    assert tabs.currentIndex() == 0
+
+
+def test_editor_tabs_bookmarks_changed_forwards_from_a_background_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    background_editor = tabs.widget(0)
+    assert tabs.currentIndex() == 1
+    received = []
+    tabs.bookmarks_changed.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    background_editor.toggle_bookmark_at_cursor()
+
+    assert received == [True]

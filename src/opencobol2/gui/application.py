@@ -34,11 +34,13 @@ from opencobol2.gui.command_palette import (
 from opencobol2.gui.compiler_profiles_dialog import (
     create_show_compiler_profiles_handler,
 )
+from opencobol2.gui.bookmarks_panel import BookmarksWidget
 from opencobol2.gui.editor import EditorTabsWidget
 from opencobol2.gui.find_results_panel import FindResultsWidget
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
 from opencobol2.gui.main_window import MainWindow
+from opencobol2.gui.outline_panel import OutlineWidget
 from opencobol2.gui.output_panel import OutputWidget
 from opencobol2.gui.problems_panel import ProblemsWidget
 from opencobol2.gui.project_commands import (
@@ -59,6 +61,8 @@ from opencobol2.gui.search_commands import (
 from opencobol2.gui.settings_dialog import (
     create_show_settings_handler,
 )
+from opencobol2.gui.task_list_commands import scan_project_for_tasks
+from opencobol2.gui.task_list_panel import TaskListWidget
 from opencobol2.gui.terminal_panel import TerminalWidget
 from opencobol2.project import Project
 from opencobol2.services.accessibility import AccessibilityService
@@ -352,6 +356,9 @@ def create_main_window(
             else None
         ),
     )
+    outline_widget = OutlineWidget()
+    task_list_widget = TaskListWidget()
+    bookmarks_widget = BookmarksWidget()
 
     compiler_provider_registry = (
         create_builtin_compiler_provider_registry()
@@ -532,6 +539,11 @@ def create_main_window(
                             ),
                         )
                     ),
+                    BuiltInCommandIds.EDIT_TOGGLE_BOOKMARK: (
+                        lambda context: (
+                            editor_tabs_widget.toggle_bookmark_on_active_tab()
+                        )
+                    ),
                     BuiltInCommandIds.PROJECT_OPEN: (
                         create_project_open_handler(
                             project_explorer=project_explorer,
@@ -688,11 +700,33 @@ def create_main_window(
             BuiltInToolWindowIds.TERMINAL: (
                 lambda: terminal_widget
             ),
+            BuiltInToolWindowIds.OUTLINE: (
+                lambda: outline_widget
+            ),
+            BuiltInToolWindowIds.TASK_LIST: (
+                lambda: task_list_widget
+            ),
+            BuiltInToolWindowIds.BOOKMARKS: (
+                lambda: bookmarks_widget
+            ),
         },
         status_bar_service=status_bar_service,
         central_widget=editor_tabs_widget,
     )
     main_window_holder[0] = window
+
+    def _refresh_task_list() -> None:
+        current_project = project_explorer.project
+
+        if current_project is None:
+            task_list_widget.clear_tasks()
+            return
+
+        task_list_widget.set_tasks(
+            scan_project_for_tasks(
+                current_project,
+            )
+        )
 
     def _on_project_changed(
         changed_project: Project | None,
@@ -721,6 +755,7 @@ def create_main_window(
             if changed_project is not None
             else None
         )
+        _refresh_task_list()
 
     project_explorer.project_changed.connect(
         _on_project_changed,
@@ -779,6 +814,49 @@ def create_main_window(
 
     find_results_widget.result_activated.connect(
         _handle_find_result_activated,
+    )
+
+    def _refresh_outline() -> None:
+        outline_widget.set_outline(
+            editor_tabs_widget.current_outline(),
+        )
+
+    editor_tabs_widget.active_document_changed.connect(
+        _refresh_outline,
+    )
+    outline_widget.line_activated.connect(
+        editor_tabs_widget.go_to_active_line,
+    )
+
+    def _handle_task_entry_activated(
+        path: Path,
+        line: int,
+        column: int,
+    ) -> None:
+        editor_tabs_widget.open_path_at_line(
+            path,
+            line,
+            column,
+        )
+
+    task_list_widget.refresh_requested.connect(
+        _refresh_task_list,
+    )
+    task_list_widget.entry_activated.connect(
+        _handle_task_entry_activated,
+    )
+    _refresh_task_list()
+
+    def _refresh_bookmarks() -> None:
+        bookmarks_widget.set_bookmarks(
+            editor_tabs_widget.all_bookmarks(),
+        )
+
+    editor_tabs_widget.bookmarks_changed.connect(
+        _refresh_bookmarks,
+    )
+    bookmarks_widget.entry_activated.connect(
+        editor_tabs_widget.reveal_bookmark,
     )
 
     return window
