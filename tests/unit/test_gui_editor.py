@@ -12,7 +12,11 @@ from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.documents import DocumentService
-from opencobol2.gui.editor import EditorTabsWidget, SourceEditorWidget
+from opencobol2.gui.editor import (
+    _BREAKPOINT_MARKER_WIDTH,
+    EditorTabsWidget,
+    SourceEditorWidget,
+)
 from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import (
     create_builtin_theme_registry,
@@ -1695,7 +1699,7 @@ def test_bookmarked_line_paints_a_marker_in_the_gutter(
 
     assert (
         image.pixelColor(
-            2,
+            _BREAKPOINT_MARKER_WIDTH + 2,
             y,
         )
         == editor._bookmark_color
@@ -2348,10 +2352,15 @@ def test_hover_info_at_returns_none_off_an_identifier(
         400,
     )
     editor.show()
-    # Column 8 of line 1 is inside a reserved word, not an identifier.
+    # The period ending "STOP RUN." on line 9 is neither an identifier
+    # nor a documented reserved word.
     editor.go_to_line(
-        1,
-        8,
+        9,
+        editor.document()
+        .findBlockByNumber(8)
+        .text()
+        .index(".")
+        + 1,
     )
 
     assert (
@@ -2433,6 +2442,45 @@ def test_tooltip_event_shows_hover_info_for_a_recognized_symbol(
     assert "WS-COUNT" in shown_text
 
 
+def test_tooltip_event_shows_hover_info_for_a_documented_reserved_word(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    point = _point_for_usage(
+        editor,
+        8,
+        "MOVE",
+    )
+
+    with patch(
+        "opencobol2.gui.editor.QToolTip.showText",
+    ) as mock_show_text:
+        handled = editor.event(
+            QHelpEvent(
+                QEvent.Type.ToolTip,
+                point,
+                editor.mapToGlobal(
+                    point,
+                ),
+            )
+        )
+
+    assert handled is True
+    assert mock_show_text.called
+    shown_text = mock_show_text.call_args.args[1]
+    assert "MOVE" in shown_text
+
+
 def test_tooltip_event_hides_the_tooltip_when_nothing_is_found(
     qapp,
 ) -> None:
@@ -2447,9 +2495,15 @@ def test_tooltip_event_hides_the_tooltip_when_nothing_is_found(
         400,
     )
     editor.show()
+    # The period ending "STOP RUN." on line 9 is neither an identifier
+    # nor a documented reserved word.
     editor.go_to_line(
-        1,
-        8,
+        9,
+        editor.document()
+        .findBlockByNumber(8)
+        .text()
+        .index(".")
+        + 1,
     )
     point = editor.cursorRect().center()
 
@@ -2594,6 +2648,160 @@ def test_minimap_setting_round_trips_through_apply_editor_settings(
     assert editor._minimap_area.isVisible() is False
 
 
+_RENAME_COLLISION_SAMPLE = (
+    "       IDENTIFICATION DIVISION.\n"
+    "       PROGRAM-ID. DEMO.\n"
+    "       DATA DIVISION.\n"
+    "       WORKING-STORAGE SECTION.\n"
+    "       01 WS-COUNT PIC 9(3).\n"
+    "       01 WS-COUNT-TOTAL PIC 9(5).\n"
+    "       PROCEDURE DIVISION.\n"
+    "       MAIN-PARA.\n"
+    "           MOVE 1 TO WS-COUNT\n"
+    "           MOVE WS-COUNT TO WS-COUNT-TOTAL\n"
+    "           STOP RUN.\n"
+)
+
+
+def test_rename_symbol_at_cursor_renames_every_occurrence(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    count = editor.rename_symbol_at_cursor(
+        "WS-TOTAL",
+    )
+
+    assert count == 2
+    assert "WS-COUNT" not in editor.toPlainText()
+    assert (
+        editor.toPlainText().count(
+            "WS-TOTAL",
+        )
+        == 2
+    )
+
+
+def test_rename_symbol_at_cursor_does_not_touch_a_longer_identifier_sharing_a_prefix(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _RENAME_COLLISION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        9,
+        "WS-COUNT",
+    )
+
+    count = editor.rename_symbol_at_cursor(
+        "WS-TOTAL",
+    )
+
+    assert count == 3
+    text = editor.toPlainText()
+    assert "WS-COUNT-TOTAL" in text
+    assert "WS-COUNT " not in text
+    assert "WS-COUNT\n" not in text
+    assert text.count("WS-TOTAL") == 3
+
+
+def test_rename_symbol_at_cursor_is_undoable_as_one_step(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    original_text = editor.toPlainText()
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    editor.rename_symbol_at_cursor(
+        "WS-TOTAL",
+    )
+    editor.undo()
+
+    assert editor.toPlainText() == original_text
+
+
+def test_rename_symbol_at_cursor_returns_zero_off_an_identifier(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    # Column 1 of line 1 is inside a reserved word, not an identifier.
+    editor.go_to_line(
+        1,
+        8,
+    )
+
+    assert (
+        editor.rename_symbol_at_cursor(
+            "WS-TOTAL",
+        )
+        == 0
+    )
+
+
+def test_rename_symbol_on_active_tab_delegates_to_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    count = tabs.rename_symbol_on_active_tab(
+        "WS-TOTAL",
+    )
+
+    assert count == 2
+    assert "WS-COUNT" not in editor.toPlainText()
+
+
+def test_rename_symbol_on_active_tab_is_zero_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert (
+        tabs.rename_symbol_on_active_tab(
+            "WS-TOTAL",
+        )
+        == 0
+    )
+
+
 def test_print_active_tab_is_false_with_no_tabs_open(
     qapp,
 ) -> None:
@@ -2613,3 +2821,397 @@ def test_print_active_tab_prints_the_active_document(
     )
 
     assert tabs.print_active_tab(QPrinter()) is True
+
+
+def test_toggle_breakpoint_adds_a_breakpoint_at_the_cursor_line(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+    editor.go_to_line(
+        2,
+    )
+
+    editor.toggle_breakpoint_at_cursor()
+
+    assert editor.breakpoint_lines == (2,)
+
+
+def test_toggle_breakpoint_twice_removes_it(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one\n"
+        "line two\n"
+    )
+    editor.go_to_line(
+        1,
+    )
+
+    editor.toggle_breakpoint_at_cursor()
+    editor.toggle_breakpoint_at_cursor()
+
+    assert editor.breakpoint_lines == ()
+
+
+def test_breakpointed_lines_are_sorted(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "one\n"
+        "two\n"
+        "three\n"
+    )
+
+    editor.go_to_line(
+        3,
+    )
+    editor.toggle_breakpoint_at_cursor()
+    editor.go_to_line(
+        1,
+    )
+    editor.toggle_breakpoint_at_cursor()
+
+    assert editor.breakpoint_lines == (
+        1,
+        3,
+    )
+
+
+def test_toggle_breakpoint_emits_breakpoints_changed(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    received = []
+    editor.breakpoints_changed.connect(
+        lambda: received.append(
+            True,
+        )
+    )
+
+    editor.toggle_breakpoint_at_cursor()
+
+    assert received == [True]
+
+
+def test_breakpoint_follows_its_line_when_lines_shift_above_it(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+    editor.go_to_line(
+        3,
+    )
+    editor.toggle_breakpoint_at_cursor()
+    assert editor.breakpoint_lines == (3,)
+
+    cursor = editor.textCursor()
+    cursor.movePosition(
+        QTextCursor.MoveOperation.Start,
+    )
+    cursor.insertText(
+        "a new line\nanother new line\n",
+    )
+
+    # The breakpoint stays attached to "line three" itself, which has
+    # now shifted down to line 5 -- not to whatever text now occupies
+    # line 3.
+    assert editor.breakpoint_lines == (5,)
+    assert (
+        "line three"
+        in editor.document()
+        .findBlockByNumber(
+            4,
+        )
+        .text()
+    )
+
+
+def test_breakpointed_line_paints_a_marker_in_the_gutter(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=(
+            "line one\n"
+            "line two\n"
+            "line three\n"
+        ),
+        theme=_build_theme(),
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+
+    editor.go_to_line(
+        2,
+    )
+    editor.toggle_breakpoint_at_cursor()
+
+    image = (
+        editor._line_number_area.grab().toImage()
+    )
+    block = editor.document().findBlockByNumber(
+        1,
+    )
+    marker_rect = editor.blockBoundingGeometry(
+        block,
+    ).translated(
+        editor.contentOffset(),
+    )
+    y = int(
+        marker_rect.center().y(),
+    )
+
+    assert (
+        image.pixelColor(
+            _BREAKPOINT_MARKER_WIDTH // 2,
+            y,
+        )
+        == editor._breakpoint_color
+    )
+
+
+def test_toggle_breakpoint_on_active_tab_toggles_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "should not have a breakpoint\n",
+    )
+    tabs.setCurrentIndex(
+        1,
+    )
+    tabs.widget(1).setPlainText(
+        "line one\n"
+        "line two\n",
+    )
+    tabs.widget(1).go_to_line(
+        2,
+    )
+
+    tabs.toggle_breakpoint_on_active_tab()
+
+    assert tabs.widget(1).breakpoint_lines == (2,)
+    assert tabs.widget(0).breakpoint_lines == ()
+
+
+def test_toggle_breakpoint_on_active_tab_does_nothing_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.toggle_breakpoint_on_active_tab()
+
+
+def test_all_breakpoints_aggregates_across_open_tabs(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "alpha one\n"
+        "alpha two\n",
+    )
+    tabs.widget(0).go_to_line(
+        2,
+    )
+    tabs.widget(0).toggle_breakpoint_at_cursor()
+    tabs.widget(1).setPlainText(
+        "beta one\n"
+        "beta two\n",
+    )
+    tabs.widget(1).go_to_line(
+        1,
+    )
+    tabs.widget(1).toggle_breakpoint_at_cursor()
+
+    entries = tabs.all_breakpoints()
+
+    assert {
+        (entry.line, entry.text)
+        for entry in entries
+    } == {
+        (2, "alpha two"),
+        (1, "beta one"),
+    }
+
+
+def test_reveal_breakpoint_activates_the_tab_and_moves_the_cursor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.new_file()
+    tabs.widget(1).setPlainText(
+        "line one\n"
+        "line two\n"
+        "line three\n",
+    )
+    tabs.setCurrentIndex(
+        0,
+    )
+    document_id = tabs.widget(1).document_id
+
+    tabs.reveal_breakpoint(
+        document_id,
+        3,
+    )
+
+    assert tabs.currentIndex() == 1
+    assert tabs.widget(1).textCursor().blockNumber() == 2
+
+
+def test_format_document_trims_trailing_whitespace(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one   \n"
+        "line two\n"
+        "line three\t\t\n",
+    )
+
+    changed = editor.format_document()
+
+    assert changed is True
+    assert editor.toPlainText() == (
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+
+
+def test_format_document_expands_tabs_when_insert_spaces_is_enabled(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            insert_spaces=True,
+            tab_width=4,
+        ),
+    )
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "\tindented\n",
+    )
+
+    editor.format_document()
+
+    assert editor.toPlainText() == (
+        "    indented\n"
+    )
+
+
+def test_format_document_leaves_tabs_alone_when_insert_spaces_is_disabled(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            insert_spaces=False,
+        ),
+    )
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "\tindented   \n",
+    )
+
+    changed = editor.format_document()
+
+    assert changed is True
+    assert editor.toPlainText() == (
+        "\tindented\n"
+    )
+
+
+def test_format_document_returns_false_when_nothing_changes(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "already clean\n"
+        "no trailing space\n",
+    )
+
+    assert editor.format_document() is False
+
+
+def test_format_document_is_undoable_as_one_step(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one   \n"
+        "line two\t\n",
+    )
+    original_text = editor.toPlainText()
+
+    editor.format_document()
+    editor.undo()
+
+    assert editor.toPlainText() == original_text
+
+
+def test_format_active_tab_delegates_to_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line one   \n",
+    )
+
+    changed = tabs.format_active_tab()
+
+    assert changed is True
+    assert editor.toPlainText() == "line one\n"
+
+
+def test_format_active_tab_is_false_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert tabs.format_active_tab() is False

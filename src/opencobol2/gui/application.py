@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QInputDialog
 
 from opencobol2.accessibility import AccessibilityProfileRegistry
 from opencobol2.commands import CommandContext
@@ -36,7 +36,11 @@ from opencobol2.gui.compiler_profiles_dialog import (
     create_show_compiler_profiles_handler,
 )
 from opencobol2.gui.bookmarks_panel import BookmarksWidget
-from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.gui.breakpoints_panel import BreakpointsWidget
+from opencobol2.gui.editor import (
+    EditorTabsWidget,
+    SourceEditorWidget,
+)
 from opencobol2.gui.find_results_panel import FindResultsWidget
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
@@ -360,6 +364,7 @@ def create_main_window(
     outline_widget = OutlineWidget()
     task_list_widget = TaskListWidget()
     bookmarks_widget = BookmarksWidget()
+    breakpoints_widget = BreakpointsWidget()
 
     compiler_provider_registry = (
         create_builtin_compiler_provider_registry()
@@ -437,6 +442,37 @@ def create_main_window(
             results,
         )
         _reveal_find_results()
+
+    def _handle_rename_symbol() -> None:
+        """Prompt for a new name and rename every reference under the cursor."""
+
+        editor = editor_tabs_widget.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return
+
+        locations = editor.references_at_cursor()
+
+        if not locations:
+            return
+
+        new_name, accepted = QInputDialog.getText(
+            main_window_holder[0],
+            "Rename Symbol",
+            "New name:",
+            text=locations[0].name,
+        )
+        stripped_new_name = new_name.strip()
+
+        if not accepted or not stripped_new_name:
+            return
+
+        editor_tabs_widget.rename_symbol_on_active_tab(
+            stripped_new_name,
+        )
 
     def _handle_file_print() -> None:
         """Print the active tab's document contents, after a Print dialog."""
@@ -578,6 +614,11 @@ def create_main_window(
                             editor_tabs_widget.toggle_bookmark_on_active_tab()
                         )
                     ),
+                    BuiltInCommandIds.EDIT_TOGGLE_BREAKPOINT: (
+                        lambda context: (
+                            editor_tabs_widget.toggle_breakpoint_on_active_tab()
+                        )
+                    ),
                     BuiltInCommandIds.EDIT_GO_TO_DEFINITION: (
                         lambda context: (
                             editor_tabs_widget.go_to_definition_on_active_tab()
@@ -586,6 +627,16 @@ def create_main_window(
                     BuiltInCommandIds.EDIT_FIND_ALL_REFERENCES: (
                         lambda context: (
                             _handle_find_all_references()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_RENAME: (
+                        lambda context: (
+                            _handle_rename_symbol()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_FORMAT_DOCUMENT: (
+                        lambda context: (
+                            editor_tabs_widget.format_active_tab()
                         )
                     ),
                     BuiltInCommandIds.PROJECT_OPEN: (
@@ -753,6 +804,9 @@ def create_main_window(
             BuiltInToolWindowIds.BOOKMARKS: (
                 lambda: bookmarks_widget
             ),
+            BuiltInToolWindowIds.BREAKPOINTS: (
+                lambda: breakpoints_widget
+            ),
         },
         status_bar_service=status_bar_service,
         central_widget=editor_tabs_widget,
@@ -910,6 +964,18 @@ def create_main_window(
     )
     bookmarks_widget.entry_activated.connect(
         editor_tabs_widget.reveal_bookmark,
+    )
+
+    def _refresh_breakpoints() -> None:
+        breakpoints_widget.set_breakpoints(
+            editor_tabs_widget.all_breakpoints(),
+        )
+
+    editor_tabs_widget.breakpoints_changed.connect(
+        _refresh_breakpoints,
+    )
+    breakpoints_widget.entry_activated.connect(
+        editor_tabs_widget.reveal_breakpoint,
     )
 
     return window

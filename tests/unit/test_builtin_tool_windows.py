@@ -24,6 +24,7 @@ def test_builtin_registry_contains_standard_tool_windows() -> None:
         BuiltInToolWindowIds.OUTLINE,
         BuiltInToolWindowIds.TASK_LIST,
         BuiltInToolWindowIds.BOOKMARKS,
+        BuiltInToolWindowIds.BREAKPOINTS,
         BuiltInToolWindowIds.GIT_CHANGES,
         BuiltInToolWindowIds.GIT_REPOSITORY,
     )

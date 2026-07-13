@@ -71,8 +71,11 @@ class BuiltInCommandIds:
     EDIT_FIND_IN_FILES = "edit.find-in-files"
     EDIT_GO_TO = "edit.go-to"
     EDIT_TOGGLE_BOOKMARK = "edit.toggle-bookmark"
+    EDIT_TOGGLE_BREAKPOINT = "edit.toggle-breakpoint"
     EDIT_GO_TO_DEFINITION = "edit.go-to-definition"
     EDIT_FIND_ALL_REFERENCES = "edit.find-all-references"
+    EDIT_RENAME = "edit.rename"
+    EDIT_FORMAT_DOCUMENT = "edit.format-document"
 
     VIEW_COMMAND_PALETTE = "view.command-palette"
     VIEW_PROJECT_EXPLORER = "view.project-explorer"
@@ -83,6 +86,7 @@ class BuiltInCommandIds:
     VIEW_OUTLINE = "view.outline"
     VIEW_TASK_LIST = "view.task-list"
     VIEW_BOOKMARKS = "view.bookmarks"
+    VIEW_BREAKPOINTS = "view.breakpoints"
     VIEW_GIT_CHANGES = "view.git-changes"
     VIEW_GIT_REPOSITORY = "view.git-repository"
 
@@ -476,6 +480,15 @@ _EXTERNAL_COMMANDS = (
     ),
     _CommandMetadata(
         command_id=(
+            BuiltInCommandIds.EDIT_TOGGLE_BREAKPOINT
+        ),
+        title="Toggle Breakpoint",
+        description="Toggle a breakpoint on the current line.",
+        category="Edit",
+        default_shortcuts=("F9",),
+    ),
+    _CommandMetadata(
+        command_id=(
             BuiltInCommandIds.EDIT_GO_TO_DEFINITION
         ),
         title="Go to Definition",
@@ -497,6 +510,28 @@ _EXTERNAL_COMMANDS = (
         ),
         category="Edit",
         default_shortcuts=("Shift+F12",),
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.EDIT_RENAME,
+        title="Rename Symbol",
+        description=(
+            "Rename the data name or paragraph/section under the "
+            "cursor, and every reference to it."
+        ),
+        category="Edit",
+        default_shortcuts=("F2",),
+    ),
+    _CommandMetadata(
+        command_id=(
+            BuiltInCommandIds.EDIT_FORMAT_DOCUMENT
+        ),
+        title="Format Document",
+        description=(
+            "Trim trailing whitespace on every line, and expand "
+            "tabs to spaces if configured."
+        ),
+        category="Edit",
+        default_shortcuts=("Shift+Alt+F",),
     ),
     _CommandMetadata(
         command_id=BuiltInCommandIds.VIEW_COMMAND_PALETTE,
@@ -680,6 +715,12 @@ _TOOL_WINDOW_COMMANDS = (
         "Bookmarks",
         "Show and focus the Bookmarks tool window.",
         BuiltInToolWindowIds.BOOKMARKS,
+    ),
+    (
+        BuiltInCommandIds.VIEW_BREAKPOINTS,
+        "Breakpoints",
+        "Show and focus the Breakpoints tool window.",
+        BuiltInToolWindowIds.BREAKPOINTS,
     ),
     (
         BuiltInCommandIds.VIEW_GIT_CHANGES,
@@ -1145,6 +1186,10 @@ def _register_edit_surface(
                 BuiltInCommandIds.EDIT_TOGGLE_BOOKMARK,
             ),
             (
+                "core.menu.edit.toggle-breakpoint",
+                BuiltInCommandIds.EDIT_TOGGLE_BREAKPOINT,
+            ),
+            (
                 "core.menu.edit.go-to-definition",
                 BuiltInCommandIds.EDIT_GO_TO_DEFINITION,
             ),
@@ -1165,6 +1210,26 @@ def _register_edit_surface(
             order * 10,
             separator_before=(order == 1),
         )
+
+    _register_command_contribution(
+        registry,
+        "core.menu.edit.rename",
+        BuiltInCommandIds.EDIT_RENAME,
+        BuiltInCommandSurfaceIds.EDIT,
+        "refactor",
+        40,
+        10,
+        separator_before=True,
+    )
+    _register_command_contribution(
+        registry,
+        "core.menu.edit.format-document",
+        BuiltInCommandIds.EDIT_FORMAT_DOCUMENT,
+        BuiltInCommandSurfaceIds.EDIT,
+        "refactor",
+        40,
+        20,
+    )
 
 
 def _register_view_surface(
@@ -1218,6 +1283,10 @@ def _register_view_surface(
             (
                 "core.menu.view.bookmarks",
                 BuiltInCommandIds.VIEW_BOOKMARKS,
+            ),
+            (
+                "core.menu.view.breakpoints",
+                BuiltInCommandIds.VIEW_BREAKPOINTS,
             ),
             (
                 "core.menu.view.git-changes",

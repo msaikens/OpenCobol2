@@ -245,6 +245,16 @@ def _bookmarks_content(
     )
 
 
+def _breakpoints_content(
+    window,
+):
+    return (
+        window.dock_manager.get_dock_widget(
+            "breakpoints",
+        ).widget()
+    )
+
+
 def test_create_main_window_wires_builtin_registries(
     qapp,
     tmp_path: Path,
@@ -269,7 +279,7 @@ def test_create_main_window_wires_builtin_registries(
         len(
             window.dock_manager.dock_widgets,
         )
-        == 10
+        == 11
     )
     assert (
         window.windowTitle()
@@ -3272,6 +3282,154 @@ def test_view_bookmarks_menu_action_runs_without_error(
     ).trigger()
 
 
+def test_toggle_breakpoint_menu_action_adds_a_breakpoint(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+        "line two\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    editor_tabs.widget(0).go_to_line(
+        2,
+    )
+    breakpoints_widget = _breakpoints_content(
+        window,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Toggle Breakpoint",
+    ).trigger()
+
+    assert breakpoints_widget.rowCount() == 1
+    assert breakpoints_widget.item(0, 0).text() == "main.cbl"
+    assert breakpoints_widget.item(0, 1).text() == "2"
+
+
+def test_toggle_breakpoint_menu_action_twice_removes_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    breakpoints_widget = _breakpoints_content(
+        window,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Toggle Breakpoint",
+    ).trigger()
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Toggle Breakpoint",
+    ).trigger()
+
+    assert breakpoints_widget.rowCount() == 0
+
+
+def test_double_clicking_a_breakpoint_navigates_to_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "line one\n"
+        "line two\n"
+        "line three\n"
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    editor_tabs.widget(0).go_to_line(
+        3,
+    )
+    editor_tabs.toggle_breakpoint_on_active_tab()
+    breakpoints_widget = _breakpoints_content(
+        window,
+    )
+
+    editor_tabs.new_file()
+    assert editor_tabs.currentIndex() == 1
+
+    breakpoints_widget._handle_cell_double_clicked(
+        0,
+        0,
+    )
+
+    assert editor_tabs.currentIndex() == 0
+    cursor = editor_tabs.widget(0).textCursor()
+    assert cursor.blockNumber() == 2
+
+
+def test_view_breakpoints_menu_action_runs_without_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+
+    _find_action(
+        view_menu,
+        "Breakpoints",
+    ).trigger()
+
+
 def test_problems_panel_shows_live_diagnostics_for_the_active_tab(
     qapp,
     tmp_path: Path,
@@ -3603,3 +3761,130 @@ def test_print_menu_action_does_nothing_when_dialog_is_rejected(
         ).trigger()
 
     assert not mock_print_active_tab.called
+
+
+def test_rename_symbol_menu_action_renames_every_reference(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.application.QInputDialog.getText",
+        return_value=(
+            "WS-TOTAL",
+            True,
+        ),
+    ):
+        _find_action(
+            edit_menu,
+            "Rename Symbol",
+        ).trigger()
+
+    assert "WS-COUNT" not in editor.toPlainText()
+    assert (
+        editor.toPlainText().count(
+            "WS-TOTAL",
+        )
+        == 2
+    )
+
+
+def test_rename_symbol_menu_action_does_nothing_when_dialog_is_cancelled(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    original_text = editor.toPlainText()
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.application.QInputDialog.getText",
+        return_value=(
+            "WS-TOTAL",
+            False,
+        ),
+    ):
+        _find_action(
+            edit_menu,
+            "Rename Symbol",
+        ).trigger()
+
+    assert editor.toPlainText() == original_text
+
+
+def test_format_document_menu_action_trims_trailing_whitespace(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "line one   \n"
+        "line two\n",
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Format Document",
+    ).trigger()
+
+    assert editor.toPlainText() == (
+        "line one\n"
+        "line two\n"
+    )

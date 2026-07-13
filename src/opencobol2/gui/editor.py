@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from uuid import UUID
 
@@ -54,6 +55,7 @@ from opencobol2.documents import (
     WorkspaceDocument,
 )
 from opencobol2.gui.bookmarks_panel import BookmarkEntry
+from opencobol2.gui.breakpoints_panel import BreakpointEntry
 from opencobol2.gui.coding_area_guides import CodingAreaGuides
 from opencobol2.gui.find_results_panel import FindResult
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
@@ -76,6 +78,10 @@ from opencobol2.theming import Theme
 
 
 _FOLD_MARKER_WIDTH = 14
+
+
+_BREAKPOINT_MARKER_WIDTH = 10
+_BOOKMARK_MARKER_WIDTH = 4
 
 
 _MINIMAP_WIDTH = 80
@@ -398,6 +404,9 @@ class SourceEditorWidget(QPlainTextEdit):
     bookmarks_changed = Signal()
     """Emitted whenever a bookmark is toggled on or off."""
 
+    breakpoints_changed = Signal()
+    """Emitted whenever a breakpoint is toggled on or off."""
+
     def __init__(
         self,
         *,
@@ -474,6 +483,14 @@ class SourceEditorWidget(QPlainTextEdit):
             255,
             165,
             0,
+        )
+        self._breakpointed_blocks: list[
+            QTextBlock,
+        ] = []
+        self._breakpoint_color = QColor(
+            224,
+            60,
+            60,
         )
 
         self.blockCountChanged.connect(
@@ -557,6 +574,8 @@ class SourceEditorWidget(QPlainTextEdit):
     ) -> None:
         """Apply the configured font and tab width."""
 
+        self._editor_settings = editor_settings
+
         if editor_settings.font_family:
             font = QFont(
                 editor_settings.font_family,
@@ -629,6 +648,7 @@ class SourceEditorWidget(QPlainTextEdit):
 
         width = (
             12
+            + _BREAKPOINT_MARKER_WIDTH
             + self.fontMetrics().horizontalAdvance(
                 "9",
             )
@@ -667,9 +687,16 @@ class SourceEditorWidget(QPlainTextEdit):
         bookmarked_lines = set(
             self.bookmarked_lines,
         )
+        breakpoint_lines = set(
+            self.breakpoint_lines,
+        )
+        marker_width = (
+            _BREAKPOINT_MARKER_WIDTH
+            + _BOOKMARK_MARKER_WIDTH
+        )
         number_width = (
             self._line_number_area.width()
-            - 4
+            - marker_width
             - (
                 _FOLD_MARKER_WIDTH
                 if self._folding_enabled
@@ -707,7 +734,7 @@ class SourceEditorWidget(QPlainTextEdit):
             ):
                 line_number = block_number + 1
                 painter.drawText(
-                    0,
+                    marker_width,
                     top,
                     number_width,
                     self.fontMetrics().height(),
@@ -725,7 +752,8 @@ class SourceEditorWidget(QPlainTextEdit):
                         else "-"
                     )
                     painter.drawText(
-                        number_width,
+                        marker_width
+                        + number_width,
                         top,
                         _FOLD_MARKER_WIDTH,
                         self.fontMetrics().height(),
@@ -735,11 +763,37 @@ class SourceEditorWidget(QPlainTextEdit):
 
                 if line_number in bookmarked_lines:
                     painter.fillRect(
-                        0,
+                        _BREAKPOINT_MARKER_WIDTH,
                         top,
-                        4,
+                        _BOOKMARK_MARKER_WIDTH,
                         bottom - top,
                         self._bookmark_color,
+                    )
+
+                if line_number in breakpoint_lines:
+                    painter.setPen(
+                        Qt.PenStyle.NoPen,
+                    )
+                    painter.setBrush(
+                        self._breakpoint_color,
+                    )
+                    diameter = min(
+                        _BREAKPOINT_MARKER_WIDTH,
+                        bottom - top,
+                    ) - 2
+                    painter.drawEllipse(
+                        QPointF(
+                            _BREAKPOINT_MARKER_WIDTH / 2,
+                            (top + bottom) / 2,
+                        ),
+                        diameter / 2,
+                        diameter / 2,
+                    )
+                    painter.setBrush(
+                        Qt.BrushStyle.NoBrush,
+                    )
+                    painter.setPen(
+                        self._line_number_color,
                     )
 
             block = block.next()
@@ -1136,6 +1190,63 @@ class SourceEditorWidget(QPlainTextEdit):
             if block.isValid()
         ]
 
+    def toggle_breakpoint_at_cursor(
+        self,
+    ) -> None:
+        """Toggle a breakpoint on the cursor's current line.
+
+        Editor-side state only, purely visual -- there is no debugger
+        backend yet (Phase 6 is still untouched) to actually break
+        execution. Stored as `QTextBlock` handles for the same reason
+        bookmarks are: keeping a breakpoint tracking its physical line
+        of text across edits elsewhere, not whatever line now has the
+        same number.
+        """
+
+        self._prune_invalid_breakpoints()
+        cursor_block = self.textCursor().block()
+        cursor_line = cursor_block.blockNumber()
+
+        for index, block in enumerate(
+            self._breakpointed_blocks,
+        ):
+            if block.blockNumber() == cursor_line:
+                del self._breakpointed_blocks[
+                    index
+                ]
+                break
+        else:
+            self._breakpointed_blocks.append(
+                cursor_block,
+            )
+
+        self._line_number_area.update()
+        self.breakpoints_changed.emit()
+
+    @property
+    def breakpoint_lines(
+        self,
+    ) -> tuple[int, ...]:
+        """Return every breakpointed 1-based line number, sorted."""
+
+        self._prune_invalid_breakpoints()
+
+        return tuple(
+            sorted(
+                block.blockNumber() + 1
+                for block in self._breakpointed_blocks
+            )
+        )
+
+    def _prune_invalid_breakpoints(
+        self,
+    ) -> None:
+        self._breakpointed_blocks = [
+            block
+            for block in self._breakpointed_blocks
+            if block.isValid()
+        ]
+
     @property
     def diagnostics(
         self,
@@ -1185,6 +1296,135 @@ class SourceEditorWidget(QPlainTextEdit):
             line=cursor.blockNumber() + 1,
             column=cursor.columnNumber() + 1,
         )
+
+    def rename_symbol_at_cursor(
+        self,
+        new_name: str,
+    ) -> int:
+        """Replace every reference to whatever the cursor is on with a new name.
+
+        Single-file only, same scope as `references_at_cursor` itself.
+
+        Deliberately does NOT trust `SourceLocation.column` as the exact
+        start of the name text: two documented AST precision limits --
+        a data item's own definition location points at its level
+        number, not its name, and a MOVE target's reference location
+        points at the MOVE statement's own start, not the target name --
+        make that unsafe for an editing operation (unlike navigation,
+        where landing a few characters off is a minor UX issue, not
+        overwritten source code). Instead, each affected LINE is
+        rewritten by matching the old name as a whole COBOL word --
+        bounded by anything other than a letter, digit, or hyphen, since
+        hyphens are legal name characters -- so every real occurrence on
+        that line is renamed regardless of exactly where the AST says it
+        starts, and a same-named-but-longer identifier sharing a prefix
+        (`WS-COUNT-TOTAL`) is never partially matched.
+        """
+
+        locations = self.references_at_cursor()
+
+        if not locations:
+            return 0
+
+        old_name = locations[0].name
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9-])"
+            + re.escape(
+                old_name,
+            )
+            + r"(?![A-Za-z0-9-])",
+            re.IGNORECASE,
+        )
+
+        edit_cursor = self.textCursor()
+        edit_cursor.beginEditBlock()
+        total_replacements = 0
+
+        for line in sorted(
+            {
+                location.line
+                for location in locations
+            },
+            reverse=True,
+        ):
+            block = self.document().findBlockByNumber(
+                line - 1,
+            )
+            original_text = block.text()
+            new_text, count = pattern.subn(
+                new_name,
+                original_text,
+            )
+
+            if not count:
+                continue
+
+            total_replacements += count
+            line_cursor = QTextCursor(
+                block,
+            )
+            line_cursor.movePosition(
+                QTextCursor.MoveOperation.EndOfBlock,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            line_cursor.insertText(
+                new_text,
+            )
+
+        edit_cursor.endEditBlock()
+        return total_replacements
+
+    def format_document(
+        self,
+    ) -> bool:
+        """Trim trailing whitespace on every line; expand tabs if configured.
+
+        Deliberately conservative: fixed-format COBOL source is
+        column-sensitive, so this never attempts COBOL-aware
+        re-indentation. Converting literal tab characters to spaces only
+        happens when `EditorSettings.insert_spaces` is enabled -- the
+        reverse direction (spaces to tabs) is a lossy, ambiguous guess
+        about which runs of spaces "should" become a tab, so it's never
+        done. Returns whether anything actually changed, and applies
+        every change inside one undo step.
+        """
+
+        document = self.document()
+        changed = False
+        edit_cursor = self.textCursor()
+        edit_cursor.beginEditBlock()
+
+        for line_index in range(
+            document.blockCount(),
+        ):
+            block = document.findBlockByNumber(
+                line_index,
+            )
+            original_text = block.text()
+            formatted_text = original_text.rstrip()
+
+            if self._editor_settings.insert_spaces:
+                formatted_text = formatted_text.expandtabs(
+                    self._editor_settings.tab_width,
+                )
+
+            if formatted_text == original_text:
+                continue
+
+            changed = True
+            line_cursor = QTextCursor(
+                block,
+            )
+            line_cursor.movePosition(
+                QTextCursor.MoveOperation.EndOfBlock,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            line_cursor.insertText(
+                formatted_text,
+            )
+
+        edit_cursor.endEditBlock()
+        return changed
 
     def hover_info_at(
         self,
@@ -1666,6 +1906,9 @@ class EditorTabsWidget(QTabWidget):
     bookmarks_changed = Signal()
     """Emitted whenever any open tab's bookmarks change."""
 
+    breakpoints_changed = Signal()
+    """Emitted whenever any open tab's breakpoints change."""
+
     def __init__(
         self,
         *,
@@ -2077,6 +2320,9 @@ class EditorTabsWidget(QTabWidget):
         editor.bookmarks_changed.connect(
             self.bookmarks_changed.emit,
         )
+        editor.breakpoints_changed.connect(
+            self.breakpoints_changed.emit,
+        )
 
         index = self.addTab(
             editor,
@@ -2201,6 +2447,24 @@ class EditorTabsWidget(QTabWidget):
 
         return editor.go_to_definition()
 
+    def rename_symbol_on_active_tab(
+        self,
+        new_name: str,
+    ) -> int:
+        """Rename every reference to whatever the active tab's cursor is on."""
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return 0
+
+        return editor.rename_symbol_at_cursor(
+            new_name,
+        )
+
     def print_active_tab(
         self,
         printer: QPrinter,
@@ -2219,6 +2483,21 @@ class EditorTabsWidget(QTabWidget):
             printer,
         )
         return True
+
+    def format_active_tab(
+        self,
+    ) -> bool:
+        """Format the active tab's document contents, if one is open."""
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return False
+
+        return editor.format_document()
 
     def find_references_for_active_tab(
         self,
@@ -2339,6 +2618,83 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Activate the tab for a document and move its cursor to a line."""
 
+        self._reveal_document_location(
+            document_id,
+            line_number,
+            column,
+        )
+
+    def toggle_breakpoint_on_active_tab(
+        self,
+    ) -> None:
+        """Toggle a breakpoint on the active tab's cursor line, if any."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.toggle_breakpoint_at_cursor()
+
+    def all_breakpoints(
+        self,
+    ) -> tuple[BreakpointEntry, ...]:
+        """Return every breakpoint across every open tab."""
+
+        entries: list[BreakpointEntry] = []
+
+        for index in range(
+            self.count(),
+        ):
+            editor = self._editor_at(
+                index,
+            )
+            workspace_document = (
+                self._document_service.workspace.get_document(
+                    editor.document_id,
+                )
+            )
+
+            for line in editor.breakpoint_lines:
+                block = editor.document().findBlockByNumber(
+                    line - 1,
+                )
+                entries.append(
+                    BreakpointEntry(
+                        document_id=editor.document_id,
+                        display_name=_display_name(
+                            workspace_document.document,
+                        ),
+                        line=line,
+                        text=block.text().strip(),
+                    )
+                )
+
+        return tuple(
+            entries,
+        )
+
+    def reveal_breakpoint(
+        self,
+        document_id: UUID,
+        line_number: int,
+        column: int = 1,
+    ) -> None:
+        """Activate the tab for a document and move its cursor to a line."""
+
+        self._reveal_document_location(
+            document_id,
+            line_number,
+            column,
+        )
+
+    def _reveal_document_location(
+        self,
+        document_id: UUID,
+        line_number: int,
+        column: int,
+    ) -> None:
         index = self._index_for(
             document_id,
         )
