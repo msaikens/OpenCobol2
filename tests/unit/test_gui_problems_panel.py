@@ -101,3 +101,111 @@ def test_set_diagnostics_replaces_previous_rows(
 
     assert widget.rowCount() == 1
     assert widget.item(0, 4).text() == "only one now"
+
+
+def test_set_live_diagnostics_populates_rows(
+    qapp,
+) -> None:
+    widget = ProblemsWidget()
+
+    widget.set_live_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.ERROR,
+                message="undefined data name",
+                source_path=Path(
+                    "main.cbl",
+                ),
+                line=3,
+                column=12,
+            ),
+        )
+    )
+
+    assert widget.rowCount() == 1
+    assert widget.item(0, 4).text() == (
+        "undefined data name"
+    )
+
+
+def test_build_and_live_diagnostics_coexist(
+    qapp,
+) -> None:
+    widget = ProblemsWidget()
+    widget.set_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.ERROR,
+                message="build failure",
+            ),
+        )
+    )
+
+    widget.set_live_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.WARNING,
+                message="live warning",
+            ),
+        )
+    )
+
+    assert widget.rowCount() == 2
+    assert widget.item(0, 4).text() == "build failure"
+    assert widget.item(1, 4).text() == "live warning"
+
+
+def test_clear_diagnostics_does_not_clear_live_diagnostics(
+    qapp,
+) -> None:
+    widget = ProblemsWidget()
+    widget.set_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.ERROR,
+                message="build failure",
+            ),
+        )
+    )
+    widget.set_live_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.WARNING,
+                message="live warning",
+            ),
+        )
+    )
+
+    widget.clear_diagnostics()
+
+    assert widget.rowCount() == 1
+    assert widget.item(0, 4).text() == "live warning"
+
+
+def test_set_live_diagnostics_does_not_clear_build_diagnostics(
+    qapp,
+) -> None:
+    widget = ProblemsWidget()
+    widget.set_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.ERROR,
+                message="build failure",
+            ),
+        )
+    )
+
+    widget.set_live_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.WARNING,
+                message="live warning",
+            ),
+        )
+    )
+    widget.set_live_diagnostics(
+        (),
+    )
+
+    assert widget.rowCount() == 1
+    assert widget.item(0, 4).text() == "build failure"

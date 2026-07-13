@@ -176,6 +176,13 @@ def _encode_settings(
                 settings.editor.indentation_width
             ),
             "code_folding": settings.editor.code_folding,
+            "show_minimap": settings.editor.show_minimap,
+            "autosave_enabled": (
+                settings.editor.autosave_enabled
+            ),
+            "autosave_interval_seconds": (
+                settings.editor.autosave_interval_seconds
+            ),
         },
         "cobol": {
             "default_source_format": (
@@ -576,6 +583,27 @@ def _decode_editor_settings(
                 defaults.code_folding,
             ),
             "Code folding",
+        ),
+        show_minimap=_require_boolean(
+            settings.get(
+                "show_minimap",
+                defaults.show_minimap,
+            ),
+            "Show minimap",
+        ),
+        autosave_enabled=_require_boolean(
+            settings.get(
+                "autosave_enabled",
+                defaults.autosave_enabled,
+            ),
+            "Autosave enabled",
+        ),
+        autosave_interval_seconds=_require_integer(
+            settings.get(
+                "autosave_interval_seconds",
+                defaults.autosave_interval_seconds,
+            ),
+            "Autosave interval",
         ),
     )
 

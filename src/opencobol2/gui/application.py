@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import QApplication
 
 from opencobol2.accessibility import AccessibilityProfileRegistry
@@ -426,6 +427,34 @@ def create_main_window(
         )
         dock_widget.raise_()
 
+    def _handle_find_all_references() -> None:
+        """Find every reference to whatever the active tab's cursor is on."""
+
+        results = (
+            editor_tabs_widget.find_references_for_active_tab()
+        )
+        find_results_widget.set_results(
+            results,
+        )
+        _reveal_find_results()
+
+    def _handle_file_print() -> None:
+        """Print the active tab's document contents, after a Print dialog."""
+
+        printer = QPrinter()
+        dialog = QPrintDialog(
+            printer,
+            main_window_holder[0],
+        )
+
+        if (
+            dialog.exec()
+            == QPrintDialog.DialogCode.Accepted
+        ):
+            editor_tabs_widget.print_active_tab(
+                printer,
+            )
+
     def _handle_show_project_properties() -> None:
         """Open Project Properties for the currently displayed project."""
 
@@ -505,6 +534,11 @@ def create_main_window(
                             editor_tabs_widget.save_all_documents()
                         )
                     ),
+                    BuiltInCommandIds.FILE_PRINT: (
+                        lambda context: (
+                            _handle_file_print()
+                        )
+                    ),
                     BuiltInCommandIds.FILE_CLOSE: (
                         lambda context: (
                             editor_tabs_widget.close_active_document()
@@ -542,6 +576,16 @@ def create_main_window(
                     BuiltInCommandIds.EDIT_TOGGLE_BOOKMARK: (
                         lambda context: (
                             editor_tabs_widget.toggle_bookmark_on_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_GO_TO_DEFINITION: (
+                        lambda context: (
+                            editor_tabs_widget.go_to_definition_on_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_FIND_ALL_REFERENCES: (
+                        lambda context: (
+                            _handle_find_all_references()
                         )
                     ),
                     BuiltInCommandIds.PROJECT_OPEN: (
@@ -821,8 +865,17 @@ def create_main_window(
             editor_tabs_widget.current_outline(),
         )
 
+    def _refresh_live_diagnostics() -> None:
+        problems_widget.set_live_diagnostics(
+            editor_tabs_widget.current_diagnostics(),
+        )
+
+    def _handle_active_document_changed() -> None:
+        _refresh_outline()
+        _refresh_live_diagnostics()
+
     editor_tabs_widget.active_document_changed.connect(
-        _refresh_outline,
+        _handle_active_document_changed,
     )
     outline_widget.line_activated.connect(
         editor_tabs_widget.go_to_active_line,

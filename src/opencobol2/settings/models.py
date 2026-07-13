@@ -157,6 +157,9 @@ class EditorSettings:
     automatic_indentation: bool = True
     indentation_width: int = 4
     code_folding: bool = True
+    show_minimap: bool = True
+    autosave_enabled: bool = False
+    autosave_interval_seconds: int = 60
 
     def __post_init__(self) -> None:
         """Validate editor settings."""
@@ -201,6 +204,18 @@ class EditorSettings:
         _require_boolean(
             self.code_folding,
             "Code folding",
+        )
+        _require_boolean(
+            self.show_minimap,
+            "Show minimap",
+        )
+        _require_boolean(
+            self.autosave_enabled,
+            "Autosave enabled",
+        )
+        _require_positive_integer(
+            self.autosave_interval_seconds,
+            "Autosave interval",
         )
 
 

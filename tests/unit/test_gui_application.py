@@ -8,8 +8,11 @@ import sys
 from unittest.mock import patch
 
 from PySide6.QtGui import QPalette
+from PySide6.QtPrintSupport import QPrintDialog
 from PySide6.QtWidgets import QMessageBox
 
+from opencobol2.compiler import CompilerDiagnostic
+from opencobol2.compiler.diagnostics import DiagnosticSeverity
 from opencobol2.compiler.providers import (
     CompilerProfile,
     CUSTOM_COMPILER_PROVIDER_ID,
@@ -30,6 +33,7 @@ from opencobol2.project import (
 from opencobol2.theming import LIGHT_THEME_ID
 from opencobol2.settings import (
     CompilerSettings,
+    EditorSettings,
     ExternalToolSettings,
     SettingsService,
     SettingsStorage,
@@ -1145,6 +1149,93 @@ def test_settings_menu_action_toggles_code_folding_on_open_editor_tabs(
 
     assert editor._folding_enabled is False
     assert editor._fold_ranges == ()
+
+
+def test_settings_menu_action_enables_autosave_on_the_running_window(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    assert not editor_tabs._autosave_timer.isActive()
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        dialog_self._autosave_check.setChecked(
+            True,
+        )
+        dialog_self._autosave_interval_spin.setValue(
+            20,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert editor_tabs._autosave_timer.isActive()
+    assert editor_tabs._autosave_timer.interval() == 20000
+
+
+def test_autosave_sweep_saves_a_modified_document_end_to_end(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    settings_service.update_editor(
+        EditorSettings(
+            autosave_enabled=True,
+            autosave_interval_seconds=20,
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "original",
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    editor_tabs.widget(0).setPlainText(
+        "changed by the user",
+    )
+    assert editor_tabs._autosave_timer.isActive()
+
+    editor_tabs._handle_autosave_timeout()
+
+    assert (
+        file_path.read_text()
+        == "changed by the user"
+    )
+    assert editor_tabs.tabText(0) == "main.cbl"
 
 
 def test_bootstrap_uses_configured_git_executable_path(
@@ -3179,3 +3270,336 @@ def test_view_bookmarks_menu_action_runs_without_error(
         view_menu,
         "Bookmarks",
     ).trigger()
+
+
+def test_problems_panel_shows_live_diagnostics_for_the_active_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "       DISPLAY 'UNCLOSED",
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    problems_widget = _problems_content(
+        window,
+    )
+
+    editor_tabs.open_path(
+        file_path,
+    )
+
+    assert problems_widget.rowCount() >= 1
+    messages = [
+        problems_widget.item(
+            row,
+            4,
+        ).text()
+        for row in range(
+            problems_widget.rowCount(),
+        )
+    ]
+    assert any(
+        "not terminated" in message
+        for message in messages
+    )
+
+
+def test_problems_panel_live_diagnostics_follow_the_active_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    broken_path = tmp_path / "broken.cbl"
+    broken_path.write_text(
+        "       DISPLAY 'UNCLOSED",
+    )
+    clean_path = tmp_path / "clean.cbl"
+    clean_path.write_text(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        '           DISPLAY "HELLO".\n'
+        "           STOP RUN.\n",
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    problems_widget = _problems_content(
+        window,
+    )
+    editor_tabs.open_path(
+        broken_path,
+    )
+    assert problems_widget.rowCount() >= 1
+
+    editor_tabs.open_path(
+        clean_path,
+    )
+
+    assert problems_widget.rowCount() == 0
+
+
+def test_problems_panel_build_diagnostics_survive_live_diagnostics(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "       DISPLAY 'UNCLOSED",
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    problems_widget = _problems_content(
+        window,
+    )
+    problems_widget.set_diagnostics(
+        (
+            CompilerDiagnostic(
+                severity=DiagnosticSeverity.ERROR,
+                message="build failure",
+            ),
+        )
+    )
+
+    editor_tabs.open_path(
+        file_path,
+    )
+
+    messages = [
+        problems_widget.item(
+            row,
+            4,
+        ).text()
+        for row in range(
+            problems_widget.rowCount(),
+        )
+    ]
+    assert "build failure" in messages
+    assert any(
+        "not terminated" in message
+        for message in messages
+    )
+
+
+_NAVIGATION_SAMPLE = (
+    "       IDENTIFICATION DIVISION.\n"
+    "       PROGRAM-ID. DEMO.\n"
+    "       DATA DIVISION.\n"
+    "       WORKING-STORAGE SECTION.\n"
+    "       01 WS-COUNT PIC 9(3).\n"
+    "       PROCEDURE DIVISION.\n"
+    "       MAIN-PARA.\n"
+    "           MOVE 1 TO WS-COUNT\n"
+    "           STOP RUN.\n"
+)
+
+
+def _go_to_usage(
+    editor,
+    line: int,
+    name: str,
+) -> None:
+    column = (
+        editor.document()
+        .findBlockByNumber(
+            line - 1,
+        )
+        .text()
+        .index(
+            name,
+        )
+        + 1
+    )
+    editor.go_to_line(
+        line,
+        column,
+    )
+
+
+def test_go_to_definition_menu_action_moves_the_cursor(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        _NAVIGATION_SAMPLE,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    editor = editor_tabs.widget(0)
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Go to Definition",
+    ).trigger()
+
+    assert editor.textCursor().blockNumber() == 4
+
+
+def test_find_all_references_menu_action_populates_find_results(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        _NAVIGATION_SAMPLE,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(
+        file_path,
+    )
+    _go_to_usage(
+        editor_tabs.widget(0),
+        8,
+        "WS-COUNT",
+    )
+    find_results_widget = _find_results_content(
+        window,
+    )
+    dock_widget = window.dock_manager.get_dock_widget(
+        "find-results",
+    )
+    assert dock_widget.isHidden()
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Find All References",
+    ).trigger()
+
+    assert find_results_widget.rowCount() == 2
+    assert not dock_widget.isHidden()
+
+
+def test_print_menu_action_prints_when_dialog_is_accepted(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with (
+        patch(
+            "opencobol2.gui.application.QPrintDialog.exec",
+            return_value=(
+                QPrintDialog.DialogCode.Accepted
+            ),
+        ),
+        patch.object(
+            type(
+                editor_tabs,
+            ),
+            "print_active_tab",
+        ) as mock_print_active_tab,
+    ):
+        _find_action(
+            file_menu,
+            "Print",
+        ).trigger()
+
+    assert mock_print_active_tab.called
+
+
+def test_print_menu_action_does_nothing_when_dialog_is_rejected(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with (
+        patch(
+            "opencobol2.gui.application.QPrintDialog.exec",
+            return_value=(
+                QPrintDialog.DialogCode.Rejected
+            ),
+        ),
+        patch.object(
+            type(
+                editor_tabs,
+            ),
+            "print_active_tab",
+        ) as mock_print_active_tab,
+    ):
+        _find_action(
+            file_menu,
+            "Print",
+        ).trigger()
+
+    assert not mock_print_active_tab.called

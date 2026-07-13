@@ -223,6 +223,31 @@ class SettingsDialog(QDialog):
             self._code_folding_check,
         )
 
+        self._show_minimap_check = QCheckBox()
+        form.addRow(
+            "Minimap:",
+            self._show_minimap_check,
+        )
+
+        self._autosave_check = QCheckBox()
+        form.addRow(
+            "Autosave:",
+            self._autosave_check,
+        )
+
+        self._autosave_interval_spin = QSpinBox()
+        self._autosave_interval_spin.setRange(
+            5,
+            3600,
+        )
+        self._autosave_interval_spin.setSuffix(
+            " s",
+        )
+        form.addRow(
+            "Autosave interval:",
+            self._autosave_interval_spin,
+        )
+
         return tab
 
     def _build_cobol_tab(
@@ -385,6 +410,15 @@ class SettingsDialog(QDialog):
         self._code_folding_check.setChecked(
             settings.editor.code_folding,
         )
+        self._show_minimap_check.setChecked(
+            settings.editor.show_minimap,
+        )
+        self._autosave_check.setChecked(
+            settings.editor.autosave_enabled,
+        )
+        self._autosave_interval_spin.setValue(
+            settings.editor.autosave_interval_seconds,
+        )
 
         source_format_index = (
             self._source_format_combo.findData(
@@ -444,6 +478,15 @@ class SettingsDialog(QDialog):
                     self._indentation_width_spin.value()
                 ),
                 code_folding=self._code_folding_check.isChecked(),
+                show_minimap=(
+                    self._show_minimap_check.isChecked()
+                ),
+                autosave_enabled=(
+                    self._autosave_check.isChecked()
+                ),
+                autosave_interval_seconds=(
+                    self._autosave_interval_spin.value()
+                ),
             )
         )
         self._settings_service.update_cobol(

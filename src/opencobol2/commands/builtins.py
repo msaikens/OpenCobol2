@@ -53,6 +53,7 @@ class BuiltInCommandIds:
     FILE_SAVE_AS = "file.save-as"
     FILE_SAVE_ALL = "file.save-all"
     PROJECT_SAVE_AS = "project.save-as"
+    FILE_PRINT = "file.print"
     FILE_CLOSE = "file.close"
     FILE_CLOSE_ALL = "file.close-all"
     PROJECT_CLOSE = "project.close"
@@ -70,6 +71,8 @@ class BuiltInCommandIds:
     EDIT_FIND_IN_FILES = "edit.find-in-files"
     EDIT_GO_TO = "edit.go-to"
     EDIT_TOGGLE_BOOKMARK = "edit.toggle-bookmark"
+    EDIT_GO_TO_DEFINITION = "edit.go-to-definition"
+    EDIT_FIND_ALL_REFERENCES = "edit.find-all-references"
 
     VIEW_COMMAND_PALETTE = "view.command-palette"
     VIEW_PROJECT_EXPLORER = "view.project-explorer"
@@ -355,6 +358,13 @@ _EXTERNAL_COMMANDS = (
         category="File",
     ),
     _CommandMetadata(
+        command_id=BuiltInCommandIds.FILE_PRINT,
+        title="Print",
+        description="Print the active document.",
+        category="File",
+        default_shortcuts=("Ctrl+P",),
+    ),
+    _CommandMetadata(
         command_id=BuiltInCommandIds.FILE_CLOSE,
         title="Close File",
         description="Close the active document.",
@@ -463,6 +473,30 @@ _EXTERNAL_COMMANDS = (
         description="Toggle a bookmark on the current line.",
         category="Edit",
         default_shortcuts=("Ctrl+F2",),
+    ),
+    _CommandMetadata(
+        command_id=(
+            BuiltInCommandIds.EDIT_GO_TO_DEFINITION
+        ),
+        title="Go to Definition",
+        description=(
+            "Jump to the definition of the data name or "
+            "paragraph/section under the cursor."
+        ),
+        category="Edit",
+        default_shortcuts=("F12",),
+    ),
+    _CommandMetadata(
+        command_id=(
+            BuiltInCommandIds.EDIT_FIND_ALL_REFERENCES
+        ),
+        title="Find All References",
+        description=(
+            "List every reference to the data name or "
+            "paragraph/section under the cursor."
+        ),
+        category="Edit",
+        default_shortcuts=("Shift+F12",),
     ),
     _CommandMetadata(
         command_id=BuiltInCommandIds.VIEW_COMMAND_PALETTE,
@@ -953,6 +987,17 @@ def _register_file_surface(
 
     _register_command_contribution(
         registry,
+        "core.menu.file.print",
+        BuiltInCommandIds.FILE_PRINT,
+        BuiltInCommandSurfaceIds.FILE,
+        "print",
+        35,
+        10,
+        separator_before=True,
+    )
+
+    _register_command_contribution(
+        registry,
         "core.menu.file.close-file",
         BuiltInCommandIds.FILE_CLOSE,
         BuiltInCommandSurfaceIds.FILE,
@@ -1098,6 +1143,14 @@ def _register_edit_surface(
             (
                 "core.menu.edit.toggle-bookmark",
                 BuiltInCommandIds.EDIT_TOGGLE_BOOKMARK,
+            ),
+            (
+                "core.menu.edit.go-to-definition",
+                BuiltInCommandIds.EDIT_GO_TO_DEFINITION,
+            ),
+            (
+                "core.menu.edit.find-all-references",
+                BuiltInCommandIds.EDIT_FIND_ALL_REFERENCES,
             ),
         ),
         start=1,

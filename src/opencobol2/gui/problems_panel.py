@@ -1,4 +1,4 @@
-"""A table view of parsed compiler diagnostics."""
+"""A table view of compiler diagnostics and live editor diagnostics."""
 
 from __future__ import annotations
 
@@ -24,7 +24,15 @@ _COLUMN_HEADERS = (
 
 
 class ProblemsWidget(QTableWidget):
-    """Shows parsed compiler diagnostics from the most recent build."""
+    """Shows build diagnostics alongside the active editor's live ones.
+
+    The two sources are tracked separately so neither wipes out the
+    other: running a build doesn't erase what the active editor is
+    currently flagging, and switching/editing tabs doesn't erase the
+    last build's results. "Live" is scoped to the active editor tab
+    only, not every open tab or the whole project -- the same scope
+    Outline uses.
+    """
 
     def __init__(
         self,
@@ -53,20 +61,60 @@ class ProblemsWidget(QTableWidget):
             False,
         )
 
+        self._build_diagnostics: tuple[
+            CompilerDiagnostic,
+            ...,
+        ] = ()
+        self._live_diagnostics: tuple[
+            CompilerDiagnostic,
+            ...,
+        ] = ()
+
     def set_diagnostics(
         self,
         diagnostics: Sequence[CompilerDiagnostic],
     ) -> None:
-        """Replace the table's contents with a new set of diagnostics."""
+        """Replace the build diagnostics shown (from the most recent build)."""
 
+        self._build_diagnostics = tuple(
+            diagnostics,
+        )
+        self._render_rows()
+
+    def clear_diagnostics(
+        self,
+    ) -> None:
+        """Remove every build diagnostic from the table."""
+
+        self._build_diagnostics = ()
+        self._render_rows()
+
+    def set_live_diagnostics(
+        self,
+        diagnostics: Sequence[CompilerDiagnostic],
+    ) -> None:
+        """Replace the active editor tab's live diagnostics."""
+
+        self._live_diagnostics = tuple(
+            diagnostics,
+        )
+        self._render_rows()
+
+    def _render_rows(
+        self,
+    ) -> None:
+        all_diagnostics = (
+            self._build_diagnostics
+            + self._live_diagnostics
+        )
         self.setRowCount(
             len(
-                diagnostics,
+                all_diagnostics,
             ),
         )
 
         for row, diagnostic in enumerate(
-            diagnostics,
+            all_diagnostics,
         ):
             self.setItem(
                 row,
@@ -115,12 +163,3 @@ class ProblemsWidget(QTableWidget):
                     diagnostic.message,
                 ),
             )
-
-    def clear_diagnostics(
-        self,
-    ) -> None:
-        """Remove every row from the diagnostics table."""
-
-        self.setRowCount(
-            0,
-        )

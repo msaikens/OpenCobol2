@@ -87,6 +87,9 @@ def test_settings_round_trip_preserves_custom_configuration(
             automatic_indentation=False,
             indentation_width=6,
             code_folding=False,
+            show_minimap=False,
+            autosave_enabled=True,
+            autosave_interval_seconds=45,
         ),
         cobol=CobolSettings(
             default_source_format=(
@@ -144,6 +147,20 @@ def test_settings_round_trip_preserves_custom_configuration(
     assert (
         loaded_settings.editor.font_family
         == "Cascadia Mono"
+    )
+    assert (
+        loaded_settings.editor.show_minimap
+        is False
+    )
+    assert (
+        loaded_settings.editor.autosave_enabled
+        is True
+    )
+    assert (
+        loaded_settings
+        .editor
+        .autosave_interval_seconds
+        == 45
     )
     assert (
         loaded_settings

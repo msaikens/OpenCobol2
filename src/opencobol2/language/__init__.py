@@ -33,6 +33,16 @@ from opencobol2.language.keywords import (
     RESERVED_WORDS,
     is_reserved_word,
 )
+from opencobol2.language.hover import (
+    compute_hover,
+    HoverInfo,
+)
+from opencobol2.language.navigation import (
+    find_definition,
+    find_references,
+    identifier_at,
+    SourceLocation,
+)
 from opencobol2.language.outline import (
     compute_outline,
     OutlineNode,
@@ -57,6 +67,9 @@ from opencobol2.language.task_list import (
     compute_task_list_entries,
     DEFAULT_TASK_TAGS,
     TaskListEntry,
+)
+from opencobol2.language.source_diagnostics import (
+    compute_source_diagnostics,
 )
 from opencobol2.language.semantic import (
     DataNameReference,
@@ -101,6 +114,7 @@ __all__ = [
     "FoldRange",
     "GenericStatement",
     "GobackStatement",
+    "HoverInfo",
     "IdentificationDivisionNode",
     "IfStatement",
     "LexDiagnostic",
@@ -117,6 +131,7 @@ __all__ = [
     "ProcedureSymbol",
     "ProcedureSymbolKind",
     "SemanticAnalysisResult",
+    "SourceLocation",
     "SourcePosition",
     "SourceSpan",
     "StopRunStatement",
@@ -126,8 +141,13 @@ __all__ = [
     "TokenKind",
     "analyze_compilation_unit",
     "compute_fold_ranges",
+    "compute_hover",
     "compute_outline",
+    "compute_source_diagnostics",
     "compute_task_list_entries",
+    "find_definition",
+    "find_references",
+    "identifier_at",
     "is_reserved_word",
     "parse_cobol_tokens",
     "tokenize_cobol_source",

@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtGui import QTextCursor, QTextDocument
+from PySide6.QtCore import QEvent, QPoint
+from PySide6.QtGui import QHelpEvent, QTextCursor, QTextDocument
+from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.documents import DocumentService
@@ -1852,3 +1854,762 @@ def test_editor_tabs_bookmarks_changed_forwards_from_a_background_tab(
     background_editor.toggle_bookmark_at_cursor()
 
     assert received == [True]
+
+
+def test_autosave_disabled_by_default_does_not_start_the_timer(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert not tabs._autosave_timer.isActive()
+
+
+def test_autosave_enabled_starts_the_timer_with_the_configured_interval(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            autosave_enabled=True,
+            autosave_interval_seconds=30,
+        ),
+    )
+
+    assert tabs._autosave_timer.isActive()
+    assert tabs._autosave_timer.interval() == 30000
+
+
+def test_apply_editor_settings_reconfigures_the_autosave_timer(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    assert not tabs._autosave_timer.isActive()
+
+    tabs.apply_editor_settings(
+        EditorSettings(
+            autosave_enabled=True,
+            autosave_interval_seconds=15,
+        )
+    )
+
+    assert tabs._autosave_timer.isActive()
+    assert tabs._autosave_timer.interval() == 15000
+
+    tabs.apply_editor_settings(
+        EditorSettings(
+            autosave_enabled=False,
+        )
+    )
+
+    assert not tabs._autosave_timer.isActive()
+
+
+def test_autosave_timeout_saves_a_modified_named_document(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "original",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    tabs.widget(0).setPlainText(
+        "changed",
+    )
+
+    tabs._handle_autosave_timeout()
+
+    assert file_path.read_text() == "changed"
+    assert tabs.tabText(0) == "main.cbl"
+
+
+def test_autosave_timeout_skips_an_untitled_document(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "some text",
+    )
+
+    tabs._handle_autosave_timeout()
+
+
+def test_autosave_timeout_skips_an_unmodified_document(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "original",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+
+    tabs._handle_autosave_timeout()
+
+    assert file_path.read_text() == "original"
+
+
+def test_autosave_timeout_continues_past_a_save_failure(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    document_service = DocumentService()
+    tabs = _build_tabs(
+        document_service,
+    )
+    first_path = tmp_path / "first.cbl"
+    first_path.write_text(
+        "one",
+    )
+    second_path = tmp_path / "second.cbl"
+    second_path.write_text(
+        "two",
+    )
+    tabs.open_path(
+        first_path,
+    )
+    tabs.open_path(
+        second_path,
+    )
+    tabs.widget(0).setPlainText(
+        "one changed",
+    )
+    tabs.widget(1).setPlainText(
+        "two changed",
+    )
+
+    with patch.object(
+        DocumentService,
+        "save_document",
+        side_effect=[
+            OSError(
+                "boom",
+            ),
+            None,
+        ],
+    ) as mock_save_document:
+        tabs._handle_autosave_timeout()
+
+    assert mock_save_document.call_count == 2
+    assert mock_save_document.call_args_list[0].args == (
+        tabs.widget(0).document_id,
+    )
+    assert mock_save_document.call_args_list[1].args == (
+        tabs.widget(1).document_id,
+    )
+
+
+def test_diagnostics_reports_a_lex_diagnostic_for_cobol_files(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    editor.setPlainText(
+        "       DISPLAY 'UNCLOSED",
+    )
+
+    assert editor.is_cobol_source
+    assert any(
+        "not terminated" in diagnostic.message
+        for diagnostic in editor.diagnostics
+    )
+
+
+def test_diagnostics_is_empty_for_a_non_cobol_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text(
+        "       DISPLAY 'UNCLOSED",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+
+    assert tabs.widget(0).diagnostics == ()
+
+
+def test_current_diagnostics_converts_to_compiler_diagnostic(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "       DISPLAY 'UNCLOSED",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+
+    diagnostics = tabs.current_diagnostics()
+
+    assert len(diagnostics) >= 1
+    assert diagnostics[0].source_path == file_path
+    assert "not terminated" in diagnostics[0].message
+
+
+def test_current_diagnostics_uses_no_path_for_untitled_documents(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "       DISPLAY 'UNCLOSED",
+    )
+
+    diagnostics = tabs.current_diagnostics()
+
+    assert len(diagnostics) >= 1
+    assert diagnostics[0].source_path is None
+
+
+def test_current_diagnostics_is_empty_when_no_tabs_are_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert tabs.current_diagnostics() == ()
+
+
+def test_current_diagnostics_is_empty_for_clean_source(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        '           DISPLAY "HELLO".\n'
+        "           STOP RUN.\n",
+    )
+
+    assert tabs.current_diagnostics() == ()
+
+
+_NAVIGATION_SAMPLE = (
+    "       IDENTIFICATION DIVISION.\n"
+    "       PROGRAM-ID. DEMO.\n"
+    "       DATA DIVISION.\n"
+    "       WORKING-STORAGE SECTION.\n"
+    "       01 WS-COUNT PIC 9(3).\n"
+    "       PROCEDURE DIVISION.\n"
+    "       MAIN-PARA.\n"
+    "           MOVE 1 TO WS-COUNT\n"
+    "           STOP RUN.\n"
+)
+
+
+def _go_to_usage(
+    editor,
+    line: int,
+    name: str,
+) -> None:
+    column = (
+        editor.document()
+        .findBlockByNumber(
+            line - 1,
+        )
+        .text()
+        .index(
+            name,
+        )
+        + 1
+    )
+    editor.go_to_line(
+        line,
+        column,
+    )
+
+
+def test_go_to_definition_moves_the_cursor_to_the_definition(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    found = editor.go_to_definition()
+
+    assert found is True
+    assert editor.textCursor().blockNumber() == 4
+
+
+def test_go_to_definition_returns_false_when_nothing_is_found(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    # Column 1 of line 1 is inside a reserved word, not an identifier.
+    editor.go_to_line(
+        1,
+        8,
+    )
+
+    assert editor.go_to_definition() is False
+
+
+def test_references_at_cursor_finds_every_usage(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    locations = editor.references_at_cursor()
+
+    assert {
+        location.line
+        for location in locations
+    } == {5, 8}
+
+
+def test_go_to_definition_on_active_tab_delegates_to_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    found = tabs.go_to_definition_on_active_tab()
+
+    assert found is True
+    assert editor.textCursor().blockNumber() == 4
+
+
+def test_go_to_definition_on_active_tab_is_false_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert tabs.go_to_definition_on_active_tab() is False
+
+
+def test_find_references_for_active_tab_returns_find_results(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        _NAVIGATION_SAMPLE,
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    _go_to_usage(
+        tabs.widget(0),
+        8,
+        "WS-COUNT",
+    )
+
+    results = tabs.find_references_for_active_tab()
+
+    assert {
+        result.line
+        for result in results
+    } == {5, 8}
+    assert all(
+        result.path == file_path
+        for result in results
+    )
+
+
+def test_find_references_for_active_tab_is_empty_for_untitled_documents(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    _go_to_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    assert tabs.find_references_for_active_tab() == ()
+
+
+def test_find_references_for_active_tab_is_empty_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert tabs.find_references_for_active_tab() == ()
+
+
+def _point_for_usage(
+    editor,
+    line: int,
+    name: str,
+) -> QPoint:
+    text = (
+        editor.document()
+        .findBlockByNumber(
+            line - 1,
+        )
+        .text()
+    )
+    start_column = text.index(name) + 1
+    middle_column = start_column + len(name) // 2
+    editor.go_to_line(
+        line,
+        middle_column,
+    )
+
+    return editor.cursorRect().center()
+
+
+def test_hover_info_at_describes_a_data_item_under_the_cursor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    point = _point_for_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    info = editor.hover_info_at(
+        point,
+    )
+
+    assert info is not None
+    assert info.kind == "data-item"
+    assert "WS-COUNT" in info.detail
+
+
+def test_hover_info_at_returns_none_off_an_identifier(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    # Column 8 of line 1 is inside a reserved word, not an identifier.
+    editor.go_to_line(
+        1,
+        8,
+    )
+
+    assert (
+        editor.hover_info_at(
+            editor.cursorRect().center(),
+        )
+        is None
+    )
+
+
+def test_hover_info_at_returns_none_for_non_cobol_files(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text(
+        _NAVIGATION_SAMPLE,
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    editor = tabs.widget(0)
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+
+    assert editor.is_cobol_source is False
+    assert (
+        editor.hover_info_at(
+            _point_for_usage(
+                editor,
+                8,
+                "WS-COUNT",
+            ),
+        )
+        is None
+    )
+
+
+def test_tooltip_event_shows_hover_info_for_a_recognized_symbol(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    point = _point_for_usage(
+        editor,
+        8,
+        "WS-COUNT",
+    )
+
+    with patch(
+        "opencobol2.gui.editor.QToolTip.showText",
+    ) as mock_show_text:
+        handled = editor.event(
+            QHelpEvent(
+                QEvent.Type.ToolTip,
+                point,
+                editor.mapToGlobal(
+                    point,
+                ),
+            )
+        )
+
+    assert handled is True
+    assert mock_show_text.called
+    shown_text = mock_show_text.call_args.args[1]
+    assert "WS-COUNT" in shown_text
+
+
+def test_tooltip_event_hides_the_tooltip_when_nothing_is_found(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NAVIGATION_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    editor.go_to_line(
+        1,
+        8,
+    )
+    point = editor.cursorRect().center()
+
+    with patch(
+        "opencobol2.gui.editor.QToolTip.hideText",
+    ) as mock_hide_text:
+        handled = editor.event(
+            QHelpEvent(
+                QEvent.Type.ToolTip,
+                point,
+                editor.mapToGlobal(
+                    point,
+                ),
+            )
+        )
+
+    assert handled is True
+    assert mock_hide_text.called
+
+
+def _build_editor_with_lines(
+    line_count: int,
+) -> SourceEditorWidget:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="\n".join(
+            f"line {index}"
+            for index in range(line_count)
+        ),
+        theme=_build_theme(),
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+
+    return editor
+
+
+def test_minimap_is_visible_and_sized_by_default(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(50)
+
+    assert editor._minimap_area.isVisible()
+    assert editor.minimap_area_width() > 0
+
+
+def test_minimap_reserves_space_on_the_viewport_right_edge(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(50)
+
+    margins = editor.viewportMargins()
+
+    assert margins.right() == editor.minimap_area_width()
+
+
+def test_minimap_is_hidden_when_disabled_via_settings(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(50)
+
+    editor.apply_editor_settings(
+        EditorSettings(
+            show_minimap=False,
+        )
+    )
+
+    assert editor._minimap_area.isVisible() is False
+    assert editor.minimap_area_width() == 0
+
+
+def test_minimap_line_for_position_maps_top_and_bottom(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(100)
+
+    top_line = editor.minimap_line_for_position(0)
+    bottom_line = editor.minimap_line_for_position(
+        editor._minimap_area.height() - 1,
+    )
+
+    assert top_line == 0
+    assert bottom_line == 99
+
+
+def test_minimap_line_for_position_clamps_out_of_range_input(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(10)
+
+    assert editor.minimap_line_for_position(-5) == 0
+    assert (
+        editor.minimap_line_for_position(
+            100_000,
+        )
+        == 9
+    )
+
+
+def test_handle_minimap_click_moves_the_cursor_to_that_line(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(100)
+
+    editor.handle_minimap_click(
+        QPoint(
+            10,
+            editor._minimap_area.height() - 1,
+        )
+    )
+
+    assert editor.textCursor().blockNumber() == 99
+
+
+def test_minimap_paints_without_raising_on_an_empty_document(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(0)
+
+    editor._minimap_area.update()
+    qapp.processEvents()
+
+
+def test_minimap_setting_round_trips_through_apply_editor_settings(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.apply_editor_settings(
+        EditorSettings(
+            show_minimap=False,
+        )
+    )
+    tabs.new_file()
+
+    editor = tabs.widget(0)
+
+    assert editor._minimap_area.isVisible() is False
+
+
+def test_print_active_tab_is_false_with_no_tabs_open(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    assert tabs.print_active_tab(QPrinter()) is False
+
+
+def test_print_active_tab_prints_the_active_document(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+    )
+
+    assert tabs.print_active_tab(QPrinter()) is True

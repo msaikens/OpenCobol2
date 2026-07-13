@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtGui import QTextCharFormat
 from PySide6.QtWidgets import QPlainTextEdit
 
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
@@ -48,6 +49,26 @@ def _colored_substrings(
         .color()
         .name()
         for format_range in block.layout().formats()
+    }
+
+
+def _underlined_substrings(
+    editor: QPlainTextEdit,
+    line_number: int,
+) -> dict[str, str]:
+    block = editor.document().findBlockByNumber(
+        line_number,
+    )
+    text = block.text()
+
+    return {
+        text[
+            format_range.start:format_range.start
+            + format_range.length
+        ]: format_range.format.underlineColor().name()
+        for format_range in block.layout().formats()
+        if format_range.format.underlineStyle()
+        != QTextCharFormat.UnderlineStyle.NoUnderline
     }
 
 
@@ -195,3 +216,99 @@ def test_malformed_source_does_not_crash(
         '           DISPLAY "still unterminated',
     )
     assert highlighter is not None
+
+
+def test_clean_source_has_no_diagnostic_underlines(
+    qapp,
+) -> None:
+    editor, _ = _build_editor_and_highlighter(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        '           DISPLAY "HELLO".\n'
+        "           STOP RUN.\n",
+    )
+
+    for line_number in range(6):
+        assert (
+            _underlined_substrings(
+                editor,
+                line_number,
+            )
+            == {}
+        )
+
+
+def test_a_lex_diagnostic_is_underlined_in_red(
+    qapp,
+) -> None:
+    editor, _ = _build_editor_and_highlighter(
+        "       DISPLAY 'UNCLOSED",
+    )
+
+    underlines = _underlined_substrings(
+        editor,
+        0,
+    )
+
+    assert any(
+        color == "#e03c3c"
+        for color in underlines.values()
+    )
+
+
+def test_a_semantic_diagnostic_is_underlined(
+    qapp,
+) -> None:
+    editor, _ = _build_editor_and_highlighter(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           MOVE 1 TO WS-MISSING\n"
+        "           STOP RUN.\n",
+    )
+
+    underlines = _underlined_substrings(
+        editor,
+        4,
+    )
+
+    # The AST's MoveStatement only carries its target names as plain
+    # strings (no per-name span), so the diagnostic points at the
+    # statement's own start ("MOVE") rather than at "WS-MISSING" itself --
+    # an inherent precision limit of today's AST, not a highlighter bug.
+    assert "MOVE" in underlines
+
+
+def test_editing_away_a_diagnostic_removes_its_underline(
+    qapp,
+) -> None:
+    editor, _ = _build_editor_and_highlighter(
+        "       DISPLAY 'UNCLOSED",
+    )
+    assert (
+        _underlined_substrings(
+            editor,
+            0,
+        )
+        != {}
+    )
+
+    editor.setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        "           DISPLAY 'CLOSED'.\n"
+        "           STOP RUN.\n",
+    )
+
+    for line_number in range(5):
+        assert (
+            _underlined_substrings(
+                editor,
+                line_number,
+            )
+            == {}
+        )

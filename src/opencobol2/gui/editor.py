@@ -5,7 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -19,6 +29,7 @@ from PySide6.QtGui import (
     QTextDocument,
     QTextFormat,
 )
+from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -30,10 +41,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTabWidget,
     QTextEdit,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
+from opencobol2.compiler import CompilerDiagnostic
 from opencobol2.documents import (
     DocumentAlreadyOpenError,
     DocumentService,
@@ -42,19 +55,31 @@ from opencobol2.documents import (
 )
 from opencobol2.gui.bookmarks_panel import BookmarkEntry
 from opencobol2.gui.coding_area_guides import CodingAreaGuides
+from opencobol2.gui.find_results_panel import FindResult
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
 from opencobol2.gui.welcome_page import WelcomePageWidget
 from opencobol2.language import (
     compute_fold_ranges,
+    compute_hover,
     compute_outline,
+    find_definition,
+    find_references,
     FoldRange,
+    HoverInfo,
+    LexDiagnostic,
     OutlineNode,
+    ParseDiagnostic,
+    SourceLocation,
 )
 from opencobol2.settings import CobolGuideSettings, EditorSettings
 from opencobol2.theming import Theme
 
 
 _FOLD_MARKER_WIDTH = 14
+
+
+_MINIMAP_WIDTH = 80
+_MINIMAP_MAX_LINE_CHARS = 80
 
 
 _COBOL_SOURCE_EXTENSIONS = (
@@ -114,6 +139,53 @@ class _LineNumberArea(QWidget):
         self._editor.handle_line_number_area_click(
             event.position().toPoint(),
         )
+
+
+class _MinimapArea(QWidget):
+    """The scaled-down document-overview strip alongside one editor."""
+
+    def __init__(
+        self,
+        editor: SourceEditorWidget,
+    ) -> None:
+        super().__init__(
+            editor,
+        )
+
+        self._editor = editor
+
+    def sizeHint(
+        self,
+    ) -> QSize:
+        return QSize(
+            self._editor.minimap_area_width(),
+            0,
+        )
+
+    def paintEvent(
+        self,
+        event: QPaintEvent,
+    ) -> None:
+        self._editor.paint_minimap(
+            event,
+        )
+
+    def mousePressEvent(
+        self,
+        event: QMouseEvent,
+    ) -> None:
+        self._editor.handle_minimap_click(
+            event.position().toPoint(),
+        )
+
+    def mouseMoveEvent(
+        self,
+        event: QMouseEvent,
+    ) -> None:
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._editor.handle_minimap_click(
+                event.position().toPoint(),
+            )
 
 
 class _FindReplaceBar(QWidget):
@@ -353,6 +425,13 @@ class SourceEditorWidget(QPlainTextEdit):
         self._line_number_area = _LineNumberArea(
             self,
         )
+        self._minimap_enabled = True
+        self._minimap_area = _MinimapArea(
+            self,
+        )
+        self._apply_minimap_colors(
+            theme,
+        )
         self._find_bar = _FindReplaceBar(
             self,
         )
@@ -406,6 +485,12 @@ class SourceEditorWidget(QPlainTextEdit):
         self.updateRequest.connect(
             self._update_line_number_area,
         )
+        self.updateRequest.connect(
+            self._update_minimap,
+        )
+        self.blockCountChanged.connect(
+            self._update_minimap,
+        )
         self.cursorPositionChanged.connect(
             self._highlight_current_line,
         )
@@ -436,6 +521,10 @@ class SourceEditorWidget(QPlainTextEdit):
         )
         self._highlight_current_line()
         self._line_number_area.update()
+        self._apply_minimap_colors(
+            theme,
+        )
+        self._minimap_area.update()
         self._guides.apply_theme(
             theme,
         )
@@ -444,6 +533,23 @@ class SourceEditorWidget(QPlainTextEdit):
             self._highlighter.apply_theme(
                 theme,
             )
+
+    def _apply_minimap_colors(
+        self,
+        theme: Theme,
+    ) -> None:
+        self._minimap_foreground_color = QColor(
+            theme.colors.editor_foreground,
+        )
+        self._minimap_viewport_color = QColor(
+            theme.colors.current_line_highlight,
+        )
+
+    def _update_minimap(
+        self,
+        *_args,
+    ) -> None:
+        self._minimap_area.update()
 
     def apply_editor_settings(
         self,
@@ -489,7 +595,12 @@ class SourceEditorWidget(QPlainTextEdit):
             self._expand_all_folds()
 
         self._update_fold_ranges()
+        self._minimap_enabled = editor_settings.show_minimap
+        self._minimap_area.setVisible(
+            self._minimap_enabled,
+        )
         self._update_line_number_area_width()
+        self._position_minimap_area()
         self.viewport().update()
 
     def apply_guide_settings(
@@ -657,7 +768,22 @@ class SourceEditorWidget(QPlainTextEdit):
                 contents_rect.height(),
             )
         )
+        self._position_minimap_area()
         self._position_find_bar()
+
+    def _position_minimap_area(
+        self,
+    ) -> None:
+        contents_rect = self.contentsRect()
+        width = self.minimap_area_width()
+        self._minimap_area.setGeometry(
+            QRect(
+                contents_rect.right() - width,
+                contents_rect.top(),
+                width,
+                contents_rect.height(),
+            )
+        )
 
     def paintEvent(
         self,
@@ -677,6 +803,32 @@ class SourceEditorWidget(QPlainTextEdit):
             painter,
         )
         painter.end()
+
+    def event(
+        self,
+        event: QEvent,
+    ) -> bool:
+        """Intercept tooltip events to show hover info over COBOL identifiers."""
+
+        if event.type() == QEvent.Type.ToolTip:
+            info = self.hover_info_at(
+                event.pos(),
+            )
+
+            if info is None:
+                QToolTip.hideText()
+            else:
+                QToolTip.showText(
+                    event.globalPos(),
+                    info.detail,
+                    self,
+                )
+
+            return True
+
+        return super().event(
+            event,
+        )
 
     def _paint_fold_indicators(
         self,
@@ -984,6 +1136,75 @@ class SourceEditorWidget(QPlainTextEdit):
             if block.isValid()
         ]
 
+    @property
+    def diagnostics(
+        self,
+    ) -> tuple[LexDiagnostic | ParseDiagnostic, ...]:
+        """Return this tab's live lex/parse/semantic diagnostics, if any."""
+
+        if self._highlighter is None:
+            return ()
+
+        return self._highlighter.diagnostics()
+
+    def go_to_definition(
+        self,
+    ) -> bool:
+        """Jump the cursor to the definition of whatever it's on.
+
+        Single-file only, same scope as `find_definition` itself. Returns
+        whether a definition was found and navigated to.
+        """
+
+        cursor = self.textCursor()
+        location = find_definition(
+            self.toPlainText(),
+            line=cursor.blockNumber() + 1,
+            column=cursor.columnNumber() + 1,
+        )
+
+        if location is None:
+            return False
+
+        self.go_to_line(
+            location.line,
+            location.column,
+        )
+
+        return True
+
+    def references_at_cursor(
+        self,
+    ) -> tuple[SourceLocation, ...]:
+        """Return every reference to (and definition of) whatever the cursor is on."""
+
+        cursor = self.textCursor()
+
+        return find_references(
+            self.toPlainText(),
+            line=cursor.blockNumber() + 1,
+            column=cursor.columnNumber() + 1,
+        )
+
+    def hover_info_at(
+        self,
+        pos: QPoint,
+    ) -> HoverInfo | None:
+        """Describe the data item, paragraph, or section under a viewport position."""
+
+        if not self.is_cobol_source:
+            return None
+
+        cursor = self.cursorForPosition(
+            pos,
+        )
+
+        return compute_hover(
+            self.toPlainText(),
+            line=cursor.blockNumber() + 1,
+            column=cursor.columnNumber() + 1,
+        )
+
     def _reveal_find_bar(
         self,
     ) -> None:
@@ -1029,7 +1250,7 @@ class SourceEditorWidget(QPlainTextEdit):
         self.setViewportMargins(
             self.line_number_area_width(),
             0,
-            0,
+            self.minimap_area_width(),
             0,
         )
 
@@ -1120,6 +1341,159 @@ class SourceEditorWidget(QPlainTextEdit):
                 ).height()
             )
             block_number += 1
+
+    def minimap_area_width(
+        self,
+    ) -> int:
+        """Return the minimap strip's width, or 0 when it's turned off."""
+
+        return (
+            _MINIMAP_WIDTH
+            if self._minimap_enabled
+            else 0
+        )
+
+    def paint_minimap(
+        self,
+        event: QPaintEvent,
+    ) -> None:
+        """Paint a density map of every line, plus the visible-viewport indicator."""
+
+        painter = QPainter(
+            self._minimap_area,
+        )
+        painter.fillRect(
+            event.rect(),
+            self.palette().color(
+                self.backgroundRole(),
+            ),
+        )
+
+        document = self.document()
+        total_lines = max(
+            document.blockCount(),
+            1,
+        )
+        area_width = self._minimap_area.width()
+        line_height = (
+            self._minimap_area.height()
+            / total_lines
+        )
+
+        painter.setPen(
+            self._minimap_foreground_color,
+        )
+        block = document.begin()
+        line_index = 0
+
+        while block.isValid():
+            text_length = len(
+                block.text().strip(),
+            )
+
+            if text_length:
+                y = line_index * line_height
+                tick_width = (
+                    min(
+                        text_length,
+                        _MINIMAP_MAX_LINE_CHARS,
+                    )
+                    / _MINIMAP_MAX_LINE_CHARS
+                    * (area_width - 4)
+                )
+                painter.drawLine(
+                    QPointF(
+                        2,
+                        y,
+                    ),
+                    QPointF(
+                        2 + tick_width,
+                        y,
+                    ),
+                )
+
+            block = block.next()
+            line_index += 1
+
+        first_visible_line = (
+            self.firstVisibleBlock().blockNumber()
+        )
+        indicator_top = (
+            first_visible_line * line_height
+        )
+        indicator_height = max(
+            self._visible_line_count()
+            * line_height,
+            2,
+        )
+        painter.fillRect(
+            QRectF(
+                0,
+                indicator_top,
+                area_width,
+                indicator_height,
+            ),
+            self._minimap_viewport_color,
+        )
+
+    def handle_minimap_click(
+        self,
+        position: QPoint,
+    ) -> None:
+        """Move the cursor to the line the minimap was clicked/dragged over."""
+
+        self.go_to_line(
+            self.minimap_line_for_position(
+                position.y(),
+            )
+            + 1,
+        )
+
+    def minimap_line_for_position(
+        self,
+        y: float,
+    ) -> int:
+        """Return the 0-based document line a minimap y-coordinate points at."""
+
+        total_lines = max(
+            self.document().blockCount(),
+            1,
+        )
+        line_height = (
+            self._minimap_area.height()
+            / total_lines
+        )
+
+        if line_height <= 0:
+            return 0
+
+        return max(
+            0,
+            min(
+                int(
+                    y / line_height,
+                ),
+                total_lines - 1,
+            ),
+        )
+
+    def _visible_line_count(
+        self,
+    ) -> int:
+        """Return how many lines currently fit in the viewport."""
+
+        line_height = self.fontMetrics().height()
+
+        if line_height <= 0:
+            return 1
+
+        return max(
+            1,
+            round(
+                self.viewport().height()
+                / line_height,
+            ),
+        )
 
     def toggle_fold(
         self,
@@ -1351,6 +1725,14 @@ class EditorTabsWidget(QTabWidget):
         )
         self._update_welcome_page_visibility()
 
+        self._autosave_timer = QTimer(
+            self,
+        )
+        self._autosave_timer.timeout.connect(
+            self._handle_autosave_timeout,
+        )
+        self._configure_autosave_timer()
+
     @property
     def document_service(
         self,
@@ -1430,6 +1812,59 @@ class EditorTabsWidget(QTabWidget):
                 index,
             ).apply_editor_settings(
                 editor_settings,
+            )
+
+        self._configure_autosave_timer()
+
+    def _configure_autosave_timer(
+        self,
+    ) -> None:
+        if self._editor_settings.autosave_enabled:
+            self._autosave_timer.setInterval(
+                self._editor_settings.autosave_interval_seconds
+                * 1000,
+            )
+            self._autosave_timer.start()
+        else:
+            self._autosave_timer.stop()
+
+    def _handle_autosave_timeout(
+        self,
+    ) -> None:
+        """Silently save every modified, already-named open document.
+
+        Runs on a background timer, so it must never interrupt the user:
+        untitled documents (no path yet) are skipped rather than prompted
+        for Save As, and a save failure is swallowed rather than shown in
+        a blocking dialog.
+        """
+
+        for index in range(self.count()):
+            editor = self._editor_at(
+                index,
+            )
+            workspace_document = (
+                self._document_service.workspace.get_document(
+                    editor.document_id,
+                )
+            )
+
+            if not (
+                workspace_document.document.is_modified
+                and workspace_document.document.path
+                is not None
+            ):
+                continue
+
+            try:
+                self._document_service.save_document(
+                    editor.document_id,
+                )
+            except OSError:
+                continue
+
+            self._refresh_tab_chrome(
+                editor.document_id,
             )
 
     def apply_guide_settings(
@@ -1715,6 +2150,117 @@ class EditorTabsWidget(QTabWidget):
             )
 
         return ()
+
+    def current_diagnostics(
+        self,
+    ) -> tuple[CompilerDiagnostic, ...]:
+        """Return the active tab's live diagnostics, converted for display.
+
+        Scoped to the active tab only, same as `current_outline()` --
+        background tabs' diagnostics aren't tracked.
+        """
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return ()
+
+        workspace_document = (
+            self._document_service.workspace.get_document(
+                editor.document_id,
+            )
+        )
+        source_path = workspace_document.document.path
+
+        return tuple(
+            CompilerDiagnostic(
+                severity=diagnostic.severity,
+                message=diagnostic.message,
+                source_path=source_path,
+                line=diagnostic.position.line,
+                column=diagnostic.position.column,
+            )
+            for diagnostic in editor.diagnostics
+        )
+
+    def go_to_definition_on_active_tab(
+        self,
+    ) -> bool:
+        """Jump the active tab's cursor to whatever definition it's on."""
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return False
+
+        return editor.go_to_definition()
+
+    def print_active_tab(
+        self,
+        printer: QPrinter,
+    ) -> bool:
+        """Print the active tab's document contents, if one is open."""
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return False
+
+        editor.print_(
+            printer,
+        )
+        return True
+
+    def find_references_for_active_tab(
+        self,
+    ) -> tuple[FindResult, ...]:
+        """Find every reference to whatever the active tab's cursor is on.
+
+        Only works for a document that's already been saved -- a
+        `FindResult` needs a real path to display and later navigate
+        back to, which an untitled document doesn't have.
+        """
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return ()
+
+        workspace_document = (
+            self._document_service.workspace.get_document(
+                editor.document_id,
+            )
+        )
+        source_path = workspace_document.document.path
+
+        if source_path is None:
+            return ()
+
+        document = editor.document()
+
+        return tuple(
+            FindResult(
+                path=source_path,
+                line=location.line,
+                column=location.column,
+                line_text=document.findBlockByNumber(
+                    location.line - 1,
+                ).text().strip(),
+            )
+            for location in editor.references_at_cursor()
+        )
 
     def go_to_active_line(
         self,

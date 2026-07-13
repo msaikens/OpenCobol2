@@ -69,6 +69,12 @@ def test_dialog_loads_current_settings(
         dialog._git_executable_path_edit.text()
         == ""
     )
+    assert dialog._show_minimap_check.isChecked()
+    assert not dialog._autosave_check.isChecked()
+    assert (
+        dialog._autosave_interval_spin.value()
+        == 60
+    )
 
 
 def test_dialog_lists_every_registered_theme(
@@ -122,6 +128,15 @@ def test_apply_and_accept_persists_all_sections(
     dialog._code_folding_check.setChecked(
         False,
     )
+    dialog._show_minimap_check.setChecked(
+        False,
+    )
+    dialog._autosave_check.setChecked(
+        True,
+    )
+    dialog._autosave_interval_spin.setValue(
+        30,
+    )
     format_index = (
         dialog._source_format_combo.findData(
             CobolSourceFormat.FREE,
@@ -173,6 +188,18 @@ def test_apply_and_accept_persists_all_sections(
     assert (
         reloaded.current.editor.code_folding
         is False
+    )
+    assert (
+        reloaded.current.editor.show_minimap
+        is False
+    )
+    assert (
+        reloaded.current.editor.autosave_enabled
+        is True
+    )
+    assert (
+        reloaded.current.editor.autosave_interval_seconds
+        == 30
     )
     assert (
         reloaded.current.cobol.default_source_format
