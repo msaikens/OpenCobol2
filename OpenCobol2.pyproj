@@ -5,15 +5,17 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{284baa24-87c7-4f44-8a87-5c69a348b814}</ProjectGuid>
     <ProjectHome />
-    <StartupFile>legacy\opencobolide\build-support\conftest.py</StartupFile>
+    <StartupFile>src/opencobol2/gui/application.py</StartupFile>
     <SearchPath>src</SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
     <ProjectTypeGuids>{888888a0-9f3d-457c-b088-3a5042f75d52}</ProjectTypeGuids>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <InterpreterId />
+    <InterpreterId>
+    </InterpreterId>
     <SuppressConfigureTestFrameworkPrompt>true</SuppressConfigureTestFrameworkPrompt>
     <SuppressEnvironmentCreationPrompt>True</SuppressEnvironmentCreationPrompt>
+    <IsWindowsApplication>False</IsWindowsApplication>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />
   <PropertyGroup Condition="'$(Configuration)' == 'Release'" />
@@ -660,7 +662,9 @@
     <Compile Include="src\opencobol2\language\navigation.py" />
     <Compile Include="src\opencobol2\language\outline.py" />
     <Compile Include="src\opencobol2\language\parser.py" />
+    <Compile Include="src\opencobol2\language\quick_fixes.py" />
     <Compile Include="src\opencobol2\language\semantic.py" />
+    <Compile Include="src\opencobol2\language\signature_help.py" />
     <Compile Include="src\opencobol2\language\source_diagnostics.py" />
     <Compile Include="src\opencobol2\language\task_list.py" />
     <Compile Include="src\opencobol2\language\tokens.py" />
@@ -799,6 +803,8 @@
     <Compile Include="tests\unit\test_language_hover.py" />
     <Compile Include="tests\unit\test_language_navigation.py" />
     <Compile Include="tests\unit\test_language_outline.py" />
+    <Compile Include="tests\unit\test_language_quick_fixes.py" />
+    <Compile Include="tests\unit\test_language_signature_help.py" />
     <Compile Include="tests\unit\test_language_source_diagnostics.py" />
     <Compile Include="tests\unit\test_language_task_list.py" />
     <Compile Include="tests\unit\test_local_compiler_process.py" />

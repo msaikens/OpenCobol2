@@ -2338,6 +2338,50 @@ def test_hover_info_at_describes_a_data_item_under_the_cursor(
     assert "WS-COUNT" in info.detail
 
 
+_SIGNATURE_HELP_SAMPLE = (
+    "       IDENTIFICATION DIVISION.\n"
+    "       PROGRAM-ID. DEMO.\n"
+    "       DATA DIVISION.\n"
+    "       WORKING-STORAGE SECTION.\n"
+    "       01 WS-NAME PIC X(20).\n"
+    "       01 WS-RESULT PIC X(20).\n"
+    "       PROCEDURE DIVISION.\n"
+    "       MAIN-PARA.\n"
+    "           MOVE FUNCTION UPPER-CASE(WS-NAME) TO WS-RESULT\n"
+    "           STOP RUN.\n"
+)
+
+
+def test_hover_info_at_describes_a_function_call_argument_list(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _SIGNATURE_HELP_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    point = _point_for_usage(
+        editor,
+        9,
+        "WS-NAME",
+    )
+
+    info = editor.hover_info_at(
+        point,
+    )
+
+    assert info is not None
+    assert info.kind == "function-signature"
+    assert info.name == "UPPER-CASE"
+    assert "UPPER-CASE" in info.detail
+
+
 def test_hover_info_at_returns_none_off_an_identifier(
     qapp,
 ) -> None:
@@ -3215,3 +3259,203 @@ def test_format_active_tab_is_false_with_no_tabs_open(
     tabs = _build_tabs()
 
     assert tabs.format_active_tab() is False
+
+
+_UNTERMINATED_LITERAL_SAMPLE = (
+    "       IDENTIFICATION DIVISION.\n"
+    "       PROGRAM-ID. DEMO.\n"
+    "       PROCEDURE DIVISION.\n"
+    "           DISPLAY 'unterminated literal here\n"
+    "           STOP RUN.\n"
+)
+
+
+def test_quick_fix_at_finds_a_fix_for_an_unterminated_literal(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _UNTERMINATED_LITERAL_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    editor.go_to_line(
+        4,
+        5,
+    )
+    point = editor.cursorRect().center()
+
+    fix = editor.quick_fix_at(
+        point,
+    )
+
+    assert fix is not None
+    assert fix.insert_text == "'"
+    assert fix.line == 4
+
+
+def test_quick_fix_at_returns_none_without_a_diagnostic_on_the_line(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _UNTERMINATED_LITERAL_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    editor.go_to_line(
+        1,
+        1,
+    )
+    point = editor.cursorRect().center()
+
+    assert (
+        editor.quick_fix_at(
+            point,
+        )
+        is None
+    )
+
+
+def test_apply_quick_fix_inserts_text_and_resolves_the_diagnostic(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _UNTERMINATED_LITERAL_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    editor.go_to_line(
+        4,
+        5,
+    )
+    fix = editor.quick_fix_at(
+        editor.cursorRect().center(),
+    )
+    assert fix is not None
+
+    editor.apply_quick_fix(
+        fix,
+    )
+
+    assert (
+        "unterminated literal here'"
+        in editor.toPlainText()
+    )
+    assert editor.diagnostics == ()
+
+
+def test_apply_quick_fix_is_undoable(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _UNTERMINATED_LITERAL_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    original_text = editor.toPlainText()
+    editor.go_to_line(
+        4,
+        5,
+    )
+    fix = editor.quick_fix_at(
+        editor.cursorRect().center(),
+    )
+    assert fix is not None
+
+    editor.apply_quick_fix(
+        fix,
+    )
+    editor.undo()
+
+    assert editor.toPlainText() == original_text
+
+
+def test_build_context_menu_includes_a_quick_fix_action_on_a_diagnostic_line(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _UNTERMINATED_LITERAL_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    editor.go_to_line(
+        4,
+        5,
+    )
+    point = editor.cursorRect().center()
+
+    menu = editor.build_context_menu(
+        point,
+    )
+
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+    ]
+    assert any(
+        "Insert missing closing" in text
+        for text in action_texts
+    )
+
+
+def test_build_context_menu_has_no_quick_fix_action_without_a_diagnostic(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _UNTERMINATED_LITERAL_SAMPLE,
+    )
+    editor.resize(
+        600,
+        400,
+    )
+    editor.show()
+    editor.go_to_line(
+        1,
+        1,
+    )
+    point = editor.cursorRect().center()
+
+    menu = editor.build_context_menu(
+        point,
+    )
+
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+    ]
+    assert not any(
+        "Insert missing closing" in text
+        for text in action_texts
+    )

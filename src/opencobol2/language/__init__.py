@@ -68,6 +68,14 @@ from opencobol2.language.task_list import (
     DEFAULT_TASK_TAGS,
     TaskListEntry,
 )
+from opencobol2.language.quick_fixes import (
+    compute_quick_fix,
+    QuickFix,
+)
+from opencobol2.language.signature_help import (
+    compute_signature_help,
+    SignatureHelp,
+)
 from opencobol2.language.source_diagnostics import (
     compute_source_diagnostics,
 )
@@ -130,7 +138,9 @@ __all__ = [
     "ProcedureSectionNode",
     "ProcedureSymbol",
     "ProcedureSymbolKind",
+    "QuickFix",
     "SemanticAnalysisResult",
+    "SignatureHelp",
     "SourceLocation",
     "SourcePosition",
     "SourceSpan",
@@ -143,6 +153,8 @@ __all__ = [
     "compute_fold_ranges",
     "compute_hover",
     "compute_outline",
+    "compute_quick_fix",
+    "compute_signature_help",
     "compute_source_diagnostics",
     "compute_task_list_entries",
     "find_definition",

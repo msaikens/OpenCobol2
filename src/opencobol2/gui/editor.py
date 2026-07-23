@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QContextMenuEvent,
     QFont,
     QFontDatabase,
     QMouseEvent,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -64,6 +66,8 @@ from opencobol2.language import (
     compute_fold_ranges,
     compute_hover,
     compute_outline,
+    compute_quick_fix,
+    compute_signature_help,
     find_definition,
     find_references,
     FoldRange,
@@ -71,6 +75,7 @@ from opencobol2.language import (
     LexDiagnostic,
     OutlineNode,
     ParseDiagnostic,
+    QuickFix,
     SourceLocation,
 )
 from opencobol2.settings import CobolGuideSettings, EditorSettings
@@ -884,6 +889,115 @@ class SourceEditorWidget(QPlainTextEdit):
             event,
         )
 
+    def contextMenuEvent(
+        self,
+        event: QContextMenuEvent,
+    ) -> None:
+        """Show the standard context menu, plus a quick fix if one applies."""
+
+        menu = self.build_context_menu(
+            event.pos(),
+        )
+        menu.exec(
+            event.globalPos(),
+        )
+
+    def build_context_menu(
+        self,
+        pos: QPoint,
+    ) -> QMenu:
+        """Build the context menu for a position, without showing it.
+
+        Kept separate from `contextMenuEvent` so the menu's *contents*
+        are directly testable: `QMenu.exec()` opens a real, blocking
+        native popup loop that doesn't return until dismissed, and
+        (unlike overriding a Qt virtual method by subclassing) it can't
+        be intercepted by monkeypatching `QMenu.exec` at the class level
+        -- PySide6 exposes it as a bound C++ method, not a plain
+        Python-overridable descriptor, so a test that patched it and
+        called `contextMenuEvent` directly would hang forever waiting
+        on a popup nothing will ever dismiss.
+        """
+
+        menu = self.createStandardContextMenu(
+            pos,
+        )
+        quick_fix = self.quick_fix_at(
+            pos,
+        )
+
+        if quick_fix is not None:
+            fix_action = menu.addAction(
+                quick_fix.title,
+            )
+            fix_action.triggered.connect(
+                lambda: self.apply_quick_fix(
+                    quick_fix,
+                )
+            )
+            existing_actions = menu.actions()
+            menu.insertAction(
+                existing_actions[0],
+                fix_action,
+            )
+            menu.insertSeparator(
+                existing_actions[0],
+            )
+
+        return menu
+
+    def quick_fix_at(
+        self,
+        pos: QPoint,
+    ) -> QuickFix | None:
+        """Return the quick fix for a diagnostic on the line at a position, if any."""
+
+        if not self.is_cobol_source:
+            return None
+
+        line = (
+            self.cursorForPosition(
+                pos,
+            ).blockNumber()
+            + 1
+        )
+        text = self.toPlainText()
+
+        for diagnostic in self.diagnostics:
+            if diagnostic.position.line != line:
+                continue
+
+            fix = compute_quick_fix(
+                text,
+                diagnostic,
+            )
+
+            if fix is not None:
+                return fix
+
+        return None
+
+    def apply_quick_fix(
+        self,
+        fix: QuickFix,
+    ) -> None:
+        """Apply a quick fix's single text insertion."""
+
+        block = self.document().findBlockByNumber(
+            fix.line - 1,
+        )
+        cursor = QTextCursor(
+            block,
+        )
+        cursor.movePosition(
+            QTextCursor.MoveOperation.Right,
+            QTextCursor.MoveMode.MoveAnchor,
+            fix.column - 1,
+        )
+        cursor.insertText(
+            fix.insert_text,
+        )
+
     def _paint_fold_indicators(
         self,
         painter: QPainter,
@@ -1430,7 +1544,14 @@ class SourceEditorWidget(QPlainTextEdit):
         self,
         pos: QPoint,
     ) -> HoverInfo | None:
-        """Describe the data item, paragraph, or section under a viewport position."""
+        """Describe the data item, paragraph, section, or call under a position.
+
+        Signature help takes priority over ordinary hover: being inside
+        the parentheses of a `FUNCTION name(...)` call is a narrower,
+        more specific condition than "hovering over some token", so it
+        wins when both could apply. Reuses the exact same `QToolTip`
+        wiring as symbol/keyword hover -- no separate popup mechanism.
+        """
 
         if not self.is_cobol_source:
             return None
@@ -1438,11 +1559,27 @@ class SourceEditorWidget(QPlainTextEdit):
         cursor = self.cursorForPosition(
             pos,
         )
+        text = self.toPlainText()
+        line = cursor.blockNumber() + 1
+        column = cursor.columnNumber() + 1
+
+        signature_help = compute_signature_help(
+            text,
+            line=line,
+            column=column,
+        )
+
+        if signature_help is not None:
+            return HoverInfo(
+                name=signature_help.name,
+                kind="function-signature",
+                detail=signature_help.signature,
+            )
 
         return compute_hover(
-            self.toPlainText(),
-            line=cursor.blockNumber() + 1,
-            column=cursor.columnNumber() + 1,
+            text,
+            line=line,
+            column=column,
         )
 
     def _reveal_find_bar(

@@ -990,6 +990,16 @@ def main() -> int:
             sys.argv,
         )
     )
+    # The native platform style (e.g. "windowsvista"/"windows11" on
+    # Windows) renders a lot of chrome -- the menu bar, dock-widget
+    # separators, splitter handles -- straight from the OS theme engine
+    # and largely ignores a custom QPalette for it. Fusion is Qt's own
+    # cross-platform style and fully respects QPalette everywhere, which
+    # is what actually makes a custom theme look consistent rather than
+    # a mix of the real theme and unstyled native chrome.
+    application.setStyle(
+        "Fusion",
+    )
 
     window = create_main_window()
     window.show()
