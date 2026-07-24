@@ -65,6 +65,15 @@ def test_compile_request_normalizes_values() -> None:
     )
 
 
+def test_compile_request_debug_symbols_defaults_to_false() -> None:
+    request = CompileRequest(
+        source_path="program.cob",
+        output_path="program",
+    )
+
+    assert request.debug_symbols is False
+
+
 def test_completed_zero_return_code_is_successful() -> None:
     request = CompileRequest(
         source_path=Path("hello.cob"),

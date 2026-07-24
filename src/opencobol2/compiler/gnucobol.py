@@ -155,9 +155,23 @@ def build_gnucobol_command(
     command: list[str] = [
         str(toolchain.compiler_path),
         _OUTPUT_KIND_ARGUMENTS[request.output_kind],
-        "-o",
-        str(request.output_path),
     ]
+
+    if request.debug_symbols:
+        # `-g` alone only emits line-number debug info; `-debug` is
+        # what additionally makes GnuCOBOL emit the runtime checks
+        # and the generated `<name>.c.l.h`/`.c.h` headers the debugger
+        # needs to map COBOL data names to their memory locations (see
+        # `opencobol2.debugger.gnucobol_symbols`) -- verified against a
+        # real `cobc -x -g -debug` build inspected under a real `gdb`.
+        command.extend(("-g", "-debug"))
+
+    command.extend(
+        (
+            "-o",
+            str(request.output_path),
+        )
+    )
 
     if request.standard is not None:
         command.append(f"-std={request.standard}")

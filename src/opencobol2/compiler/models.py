@@ -39,6 +39,7 @@ class CompileRequest:
     working_directory: Path | None = None
     standard: str | None = None
     source_format: CobolSourceFormat | None = None
+    debug_symbols: bool = False
     copy_directories: tuple[Path, ...] = ()
     library_directories: tuple[Path, ...] = ()
     libraries: tuple[str, ...] = ()

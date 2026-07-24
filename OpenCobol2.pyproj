@@ -712,6 +712,7 @@
     <Compile Include="tests\integration\test_configured_gnucobol_toolchain.py" />
     <Compile Include="tests\integration\test_debugger_service_session.py" />
     <Compile Include="tests\integration\test_gdb_adapter.py" />
+    <Compile Include="tests\integration\test_gnucobol_debug_build.py" />
     <Compile Include="tests\integration\test_gnucobol_installation.py" />
     <Compile Include="tests\integration\test_gnucobol_variable_decoding.py" />
     <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
