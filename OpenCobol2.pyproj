@@ -867,6 +867,8 @@
     <Content Include=".gitmodules" />
     <Content Include="AUTHORS AND CoC.MD" />
     <Content Include="CONTRIBUTING.MD" />
+    <Content Include="hidden.pdf" />
+    <Content Include="ISSSUE_TRACKER.MD" />
     <Content Include="legacy\opencobolide\build-support\.gitignore" />
     <Content Include="legacy\opencobolide\build-support\.gitmodules" />
     <Content Include="legacy\opencobolide\build-support\AUTHORS.rst" />
@@ -1042,6 +1044,7 @@
     <Content Include="share\OpenCobolIDE.png" />
     <Content Include="share\silex-icon.icns" />
     <Content Include="legacy\opencobolide\build-support\stdeb.cfg" />
+    <Content Include="small.pdf" />
     <Content Include="src\opencobol2\debugger\__pycache__\mi_protocol.cpython-314.pyc" />
     <Content Include="src\opencobol2\debugger\__pycache__\__init__.cpython-314.pyc" />
     <Content Include="src\opencobol2\gui\__pycache__\application.cpython-314.pyc" />
@@ -1063,6 +1066,7 @@
     <Content Include="src\opencobol2\theming\__pycache__\models.cpython-314.pyc" />
     <Content Include="src\opencobol2\theming\__pycache__\registry.cpython-314.pyc" />
     <Content Include="src\opencobol2\theming\__pycache__\__init__.cpython-314.pyc" />
+    <Content Include="visible.pdf" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="docs\" />
