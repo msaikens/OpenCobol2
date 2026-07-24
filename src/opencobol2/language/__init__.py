@@ -72,6 +72,9 @@ from opencobol2.language.quick_fixes import (
     compute_quick_fix,
     QuickFix,
 )
+from opencobol2.language.rendering import (
+    render_clause_tokens,
+)
 from opencobol2.language.signature_help import (
     compute_signature_help,
     SignatureHelp,
@@ -162,5 +165,6 @@ __all__ = [
     "identifier_at",
     "is_reserved_word",
     "parse_cobol_tokens",
+    "render_clause_tokens",
     "tokenize_cobol_source",
 ]

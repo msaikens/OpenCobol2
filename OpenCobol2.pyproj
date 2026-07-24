@@ -608,6 +608,13 @@
     <Compile Include="src\opencobol2\compiler\runtimes\registry.py" />
     <Compile Include="src\opencobol2\compiler\runtimes\__init__.py" />
     <Compile Include="src\opencobol2\compiler\__init__.py" />
+    <Compile Include="src\opencobol2\debugger\cobol_values.py" />
+    <Compile Include="src\opencobol2\debugger\gdb_adapter.py" />
+    <Compile Include="src\opencobol2\debugger\gnucobol_symbols.py" />
+    <Compile Include="src\opencobol2\debugger\mi_protocol.py" />
+    <Compile Include="src\opencobol2\debugger\models.py" />
+    <Compile Include="src\opencobol2\debugger\service.py" />
+    <Compile Include="src\opencobol2\debugger\__init__.py" />
     <Compile Include="src\opencobol2\documents\models.py" />
     <Compile Include="src\opencobol2\documents\service.py" />
     <Compile Include="src\opencobol2\documents\storage.py" />
@@ -663,6 +670,7 @@
     <Compile Include="src\opencobol2\language\outline.py" />
     <Compile Include="src\opencobol2\language\parser.py" />
     <Compile Include="src\opencobol2\language\quick_fixes.py" />
+    <Compile Include="src\opencobol2\language\rendering.py" />
     <Compile Include="src\opencobol2\language\semantic.py" />
     <Compile Include="src\opencobol2\language\signature_help.py" />
     <Compile Include="src\opencobol2\language\source_diagnostics.py" />
@@ -702,7 +710,10 @@
     <Compile Include="src\opencobol2\tool_windows\registry.py" />
     <Compile Include="src\opencobol2\tool_windows\__init__.py" />
     <Compile Include="tests\integration\test_configured_gnucobol_toolchain.py" />
+    <Compile Include="tests\integration\test_debugger_service_session.py" />
+    <Compile Include="tests\integration\test_gdb_adapter.py" />
     <Compile Include="tests\integration\test_gnucobol_installation.py" />
+    <Compile Include="tests\integration\test_gnucobol_variable_decoding.py" />
     <Compile Include="tests\integration\test_gnu_cobol_diagnostics.py" />
     <Compile Include="tests\unit\conftest.py" />
     <Compile Include="tests\unit\tests_gnucobol_runtime.py" />
@@ -735,6 +746,11 @@
     <Compile Include="tests\unit\test_custom_local_diagnostics.py" />
     <Compile Include="tests\unit\test_custom_local_runtime.py" />
     <Compile Include="tests\unit\test_custom_local_runtime_activation.py" />
+    <Compile Include="tests\unit\test_debugger_cobol_values.py" />
+    <Compile Include="tests\unit\test_debugger_gnucobol_symbols.py" />
+    <Compile Include="tests\unit\test_debugger_mi_protocol.py" />
+    <Compile Include="tests\unit\test_debugger_models.py" />
+    <Compile Include="tests\unit\test_debugger_service.py" />
     <Compile Include="tests\unit\test_document_models.py" />
     <Compile Include="tests\unit\test_document_service.py" />
     <Compile Include="tests\unit\test_document_storage.py" />
@@ -804,6 +820,7 @@
     <Compile Include="tests\unit\test_language_navigation.py" />
     <Compile Include="tests\unit\test_language_outline.py" />
     <Compile Include="tests\unit\test_language_quick_fixes.py" />
+    <Compile Include="tests\unit\test_language_rendering.py" />
     <Compile Include="tests\unit\test_language_signature_help.py" />
     <Compile Include="tests\unit\test_language_source_diagnostics.py" />
     <Compile Include="tests\unit\test_language_task_list.py" />
@@ -1007,6 +1024,8 @@
     <Content Include="share\OpenCobolIDE.png" />
     <Content Include="share\silex-icon.icns" />
     <Content Include="legacy\opencobolide\build-support\stdeb.cfg" />
+    <Content Include="src\opencobol2\debugger\__pycache__\mi_protocol.cpython-314.pyc" />
+    <Content Include="src\opencobol2\debugger\__pycache__\__init__.cpython-314.pyc" />
     <Content Include="src\opencobol2\gui\__pycache__\application.cpython-314.pyc" />
     <Content Include="src\opencobol2\gui\__pycache__\command_menus.cpython-314.pyc" />
     <Content Include="src\opencobol2\gui\__pycache__\main_window.cpython-314.pyc" />
@@ -1131,6 +1150,8 @@
     <Folder Include="src\opencobol2\compiler\" />
     <Folder Include="src\opencobol2\compiler\runtimes\" />
     <Folder Include="src\opencobol2\compiler\providers\" />
+    <Folder Include="src\opencobol2\debugger\" />
+    <Folder Include="src\opencobol2\debugger\__pycache__\" />
     <Folder Include="src\opencobol2\documents\" />
     <Folder Include="src\opencobol2\commands\" />
     <Folder Include="src\opencobol2\accessibility\" />

@@ -22,6 +22,7 @@ from opencobol2.compiler import CobolSourceFormat
 from opencobol2.language.lexer import tokenize_cobol_source
 from opencobol2.language.navigation import identifier_at
 from opencobol2.language.parser import parse_cobol_tokens
+from opencobol2.language.rendering import render_clause_tokens
 from opencobol2.language.semantic import (
     analyze_compilation_unit,
     DataSymbol,
@@ -273,7 +274,7 @@ def _describe_data_item(
         )
 
     parts.extend(
-        _render_tokens(
+        render_clause_tokens(
             clause.tokens,
         )
         for clause in symbol.item.clauses
@@ -282,35 +283,3 @@ def _describe_data_item(
     return " ".join(
         parts,
     )
-
-
-def _render_tokens(
-    tokens,
-) -> str:
-    """Join clause tokens back into readable text, e.g. `PIC 9(5)V99`.
-
-    Uses each token's real span to tell whether it was directly adjacent
-    to the previous one in the source (no space) or separated by
-    whitespace (one space) -- exactly reconstructing the original
-    spacing, rather than guessing from punctuation.
-    """
-
-    rendered = ""
-    previous_token = None
-
-    for token in tokens:
-        if previous_token is not None and (
-            token.span.start.line
-            == previous_token.span.end.line
-            and token.span.start.column
-            == previous_token.span.end.column
-        ):
-            rendered += token.text
-        elif rendered:
-            rendered += f" {token.text}"
-        else:
-            rendered = token.text
-
-        previous_token = token
-
-    return rendered
