@@ -25,6 +25,12 @@ class BuiltInToolWindowIds:
     BREAKPOINTS = "breakpoints"
     GIT_CHANGES = "git-changes"
     GIT_REPOSITORY = "git-repository"
+    CALL_STACK = "call-stack"
+    LOCALS = "locals"
+    WATCH = "watch"
+    THREADS = "threads"
+    REGISTERS = "registers"
+    MEMORY = "memory"
 
 
 def create_builtin_tool_window_registry(
@@ -229,6 +235,110 @@ def create_builtin_tool_window_registry(
             accessibility_description=(
                 "Browse Git branches, remotes, history, "
                 "and repository structure."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.CALL_STACK,
+            title="Call Stack",
+            default_area=ToolWindowArea.RIGHT,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "View the active debug session's call stack."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.LOCALS,
+            title="Locals",
+            default_area=ToolWindowArea.RIGHT,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "View local COBOL variable values at the current "
+                "debug stop."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.WATCH,
+            title="Watch",
+            default_area=ToolWindowArea.RIGHT,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "Track custom expressions across a debug session."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.THREADS,
+            title="Threads",
+            default_area=ToolWindowArea.BOTTOM,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "View every thread in the debugged process."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.REGISTERS,
+            title="Registers",
+            default_area=ToolWindowArea.BOTTOM,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "View CPU register values at the current debug stop."
+            ),
+        ),
+        ToolWindowDefinition(
+            tool_window_id=BuiltInToolWindowIds.MEMORY,
+            title="Memory",
+            default_area=ToolWindowArea.BOTTOM,
+            allowed_areas=(
+                ToolWindowArea.LEFT,
+                ToolWindowArea.RIGHT,
+                ToolWindowArea.TOP,
+                ToolWindowArea.BOTTOM,
+                ToolWindowArea.DOCUMENT,
+            ),
+            default_visible=False,
+            default_pinned=False,
+            accessibility_description=(
+                "Inspect raw memory at an address in the debugged "
+                "process."
             ),
         ),
     )

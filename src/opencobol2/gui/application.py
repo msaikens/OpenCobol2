@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
-from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from opencobol2.accessibility import AccessibilityProfileRegistry
 from opencobol2.commands import CommandContext
@@ -25,10 +25,12 @@ from opencobol2.compiler.runtimes import (
     CustomLocalCompilerRuntimeFactory,
     GnuCobolRuntimeFactory,
 )
+from opencobol2.debugger.models import StopReason, StoppedEvent
 from opencobol2.documents import DocumentService
 from opencobol2.gui.build_commands import (
     create_build_project_handler,
 )
+from opencobol2.gui.call_stack_panel import CallStackWidget
 from opencobol2.gui.command_palette import (
     create_show_command_palette_handler,
 )
@@ -37,6 +39,18 @@ from opencobol2.gui.compiler_profiles_dialog import (
 )
 from opencobol2.gui.bookmarks_panel import BookmarksWidget
 from opencobol2.gui.breakpoints_panel import BreakpointsWidget
+from opencobol2.gui.debug_commands import (
+    DEBUG_SESSION_ERRORS,
+    collect_local_variables,
+    create_debug_continue_handler,
+    create_debug_start_handler,
+    create_debug_step_into_handler,
+    create_debug_step_out_handler,
+    create_debug_step_over_handler,
+    create_debug_stop_handler,
+    evaluate_watch_expressions,
+)
+from opencobol2.gui.debug_session import DebugSessionController
 from opencobol2.gui.editor import (
     EditorTabsWidget,
     SourceEditorWidget,
@@ -44,7 +58,9 @@ from opencobol2.gui.editor import (
 from opencobol2.gui.find_results_panel import FindResultsWidget
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
+from opencobol2.gui.locals_panel import LocalsWidget
 from opencobol2.gui.main_window import MainWindow
+from opencobol2.gui.memory_panel import MemoryWidget
 from opencobol2.gui.outline_panel import OutlineWidget
 from opencobol2.gui.output_panel import OutputWidget
 from opencobol2.gui.problems_panel import ProblemsWidget
@@ -66,9 +82,12 @@ from opencobol2.gui.search_commands import (
 from opencobol2.gui.settings_dialog import (
     create_show_settings_handler,
 )
+from opencobol2.gui.registers_panel import RegistersWidget
 from opencobol2.gui.task_list_commands import scan_project_for_tasks
 from opencobol2.gui.task_list_panel import TaskListWidget
 from opencobol2.gui.terminal_panel import TerminalWidget
+from opencobol2.gui.threads_panel import ThreadsWidget
+from opencobol2.gui.watch_panel import WatchWidget
 from opencobol2.project import Project
 from opencobol2.services.accessibility import AccessibilityService
 from opencobol2.services.command_contributions import (
@@ -123,6 +142,10 @@ TOP_LEVEL_MENUS = (
     (
         BuiltInCommandSurfaceIds.BUILD,
         "&Build",
+    ),
+    (
+        BuiltInCommandSurfaceIds.DEBUG,
+        "&Debug",
     ),
     (
         BuiltInCommandSurfaceIds.GIT,
@@ -365,17 +388,36 @@ def create_main_window(
     task_list_widget = TaskListWidget()
     bookmarks_widget = BookmarksWidget()
     breakpoints_widget = BreakpointsWidget()
+    call_stack_widget = CallStackWidget()
+    locals_widget = LocalsWidget()
+    watch_widget = WatchWidget()
+    threads_widget = ThreadsWidget()
+    registers_widget = RegistersWidget()
+    memory_widget = MemoryWidget()
+    debug_controller = DebugSessionController()
+    # A single-element mutable cell (matching main_window_holder /
+    # command_service_holder below): the symbol table a debug session's
+    # Locals panel needs isn't known until Start Debugging actually
+    # compiles something, but the stopped-signal handler that reads it
+    # is wired up before that ever happens.
+    debug_symbol_table_holder: list = [None]
 
     compiler_provider_registry = (
         create_builtin_compiler_provider_registry()
     )
 
+    gnucobol_toolchain_service = GnuCobolToolchainService(
+        settings_service=resolved_settings_service,
+    )
+    compiler_profile_service = CompilerProfileService(
+        settings_service=resolved_settings_service,
+        provider_registry=compiler_provider_registry,
+    )
+
     compiler_runtime_registry = CompilerRuntimeFactoryRegistry()
     compiler_runtime_registry.register(
         GnuCobolRuntimeFactory(
-            toolchain_service=GnuCobolToolchainService(
-                settings_service=resolved_settings_service,
-            ),
+            toolchain_service=gnucobol_toolchain_service,
         ),
     )
     compiler_runtime_registry.register(
@@ -383,12 +425,7 @@ def create_main_window(
     )
     compiler_runtime_activation_service = (
         CompilerRuntimeActivationService(
-            profile_service=CompilerProfileService(
-                settings_service=resolved_settings_service,
-                provider_registry=(
-                    compiler_provider_registry
-                ),
-            ),
+            profile_service=compiler_profile_service,
             runtime_factory_registry=compiler_runtime_registry,
         )
     )
@@ -740,6 +777,64 @@ def create_main_window(
                             ),
                         )
                     ),
+                    BuiltInCommandIds.DEBUG_START: (
+                        create_debug_start_handler(
+                            editor_tabs_widget=editor_tabs_widget,
+                            project_explorer=project_explorer,
+                            debug_controller=debug_controller,
+                            compiler_profile_service=(
+                                compiler_profile_service
+                            ),
+                            toolchain_service=(
+                                gnucobol_toolchain_service
+                            ),
+                            symbol_table_holder=(
+                                debug_symbol_table_holder
+                            ),
+                            output_widget=output_widget,
+                            problems_widget=problems_widget,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.DEBUG_STOP: (
+                        create_debug_stop_handler(
+                            debug_controller=debug_controller,
+                        )
+                    ),
+                    BuiltInCommandIds.DEBUG_CONTINUE: (
+                        create_debug_continue_handler(
+                            debug_controller=debug_controller,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.DEBUG_STEP_OVER: (
+                        create_debug_step_over_handler(
+                            debug_controller=debug_controller,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.DEBUG_STEP_INTO: (
+                        create_debug_step_into_handler(
+                            debug_controller=debug_controller,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.DEBUG_STEP_OUT: (
+                        create_debug_step_out_handler(
+                            debug_controller=debug_controller,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
                 },
             ),
         ),
@@ -806,6 +901,24 @@ def create_main_window(
             ),
             BuiltInToolWindowIds.BREAKPOINTS: (
                 lambda: breakpoints_widget
+            ),
+            BuiltInToolWindowIds.CALL_STACK: (
+                lambda: call_stack_widget
+            ),
+            BuiltInToolWindowIds.LOCALS: (
+                lambda: locals_widget
+            ),
+            BuiltInToolWindowIds.WATCH: (
+                lambda: watch_widget
+            ),
+            BuiltInToolWindowIds.THREADS: (
+                lambda: threads_widget
+            ),
+            BuiltInToolWindowIds.REGISTERS: (
+                lambda: registers_widget
+            ),
+            BuiltInToolWindowIds.MEMORY: (
+                lambda: memory_widget
             ),
         },
         status_bar_service=status_bar_service,
@@ -976,6 +1089,149 @@ def create_main_window(
     )
     breakpoints_widget.entry_activated.connect(
         editor_tabs_widget.reveal_breakpoint,
+    )
+
+    def _sync_debug_breakpoints() -> None:
+        """Push the debugged tab's current breakpoints to GDB, if active."""
+
+        if (
+            not debug_controller.is_active
+            or debug_controller.document_id is None
+        ):
+            return
+
+        editor = editor_tabs_widget.editor_for_document(
+            debug_controller.document_id,
+        )
+
+        if editor is not None:
+            debug_controller.sync_breakpoints(
+                editor.breakpoint_lines,
+            )
+
+    editor_tabs_widget.breakpoints_changed.connect(
+        _sync_debug_breakpoints,
+    )
+
+    def _refresh_watch_now() -> None:
+        if not debug_controller.is_active:
+            watch_widget.clear_watches()
+            return
+
+        watch_widget.set_watches(
+            evaluate_watch_expressions(
+                debug_controller,
+                watch_widget.expressions(),
+            )
+        )
+
+    watch_widget.expressions_changed.connect(
+        _refresh_watch_now,
+    )
+
+    def _handle_memory_read_requested(
+        address: str,
+        length: int,
+    ) -> None:
+        if not debug_controller.is_active:
+            return
+
+        try:
+            memory_widget.set_memory(
+                debug_controller.read_memory(
+                    address,
+                    length,
+                ),
+            )
+        except DEBUG_SESSION_ERRORS as error:
+            QMessageBox.warning(
+                main_window_holder[0],
+                "Memory",
+                str(error),
+            )
+
+    memory_widget.read_requested.connect(
+        _handle_memory_read_requested,
+    )
+
+    def _handle_call_stack_frame_activated(
+        path: Path,
+        line: int,
+    ) -> None:
+        editor_tabs_widget.open_path_at_line(
+            path,
+            line,
+        )
+
+    call_stack_widget.frame_activated.connect(
+        _handle_call_stack_frame_activated,
+    )
+
+    def _clear_debug_panels() -> None:
+        call_stack_widget.clear_frames()
+        locals_widget.clear_variables()
+        threads_widget.clear_threads()
+        registers_widget.clear_registers()
+        watch_widget.clear_watches()
+
+    def _handle_debug_stopped(
+        event: StoppedEvent,
+    ) -> None:
+        if event.reason in (
+            StopReason.EXITED,
+            StopReason.EXITED_NORMALLY,
+        ):
+            exit_detail = (
+                f" (exit code {event.exit_code})"
+                if event.exit_code is not None
+                else ""
+            )
+            output_widget.append_line(
+                "Debug session ended: "
+                f"{event.reason.value}{exit_detail}.",
+            )
+            debug_controller.stop()
+            _clear_debug_panels()
+            return
+
+        call_stack_widget.set_frames(
+            debug_controller.stack_frames(),
+        )
+        threads_widget.set_threads(
+            debug_controller.threads(),
+        )
+        registers_widget.set_registers(
+            debug_controller.registers(),
+        )
+
+        symbol_table = debug_symbol_table_holder[0]
+
+        if symbol_table is not None:
+            locals_widget.set_variables(
+                collect_local_variables(
+                    debug_controller,
+                    symbol_table,
+                ),
+            )
+
+        watch_widget.set_watches(
+            evaluate_watch_expressions(
+                debug_controller,
+                watch_widget.expressions(),
+            )
+        )
+
+        if (
+            event.frame is not None
+            and event.frame.source_path is not None
+        ):
+            editor_tabs_widget.open_path_at_line(
+                event.frame.source_path,
+                event.frame.line or 1,
+            )
+
+    debug_controller.stopped.connect(
+        _handle_debug_stopped,
     )
 
     return window

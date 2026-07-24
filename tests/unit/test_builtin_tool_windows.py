@@ -27,6 +27,12 @@ def test_builtin_registry_contains_standard_tool_windows() -> None:
         BuiltInToolWindowIds.BREAKPOINTS,
         BuiltInToolWindowIds.GIT_CHANGES,
         BuiltInToolWindowIds.GIT_REPOSITORY,
+        BuiltInToolWindowIds.CALL_STACK,
+        BuiltInToolWindowIds.LOCALS,
+        BuiltInToolWindowIds.WATCH,
+        BuiltInToolWindowIds.THREADS,
+        BuiltInToolWindowIds.REGISTERS,
+        BuiltInToolWindowIds.MEMORY,
     )
 
 

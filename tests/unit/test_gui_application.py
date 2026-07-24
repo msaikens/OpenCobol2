@@ -279,7 +279,7 @@ def test_create_main_window_wires_builtin_registries(
         len(
             window.dock_manager.dock_widgets,
         )
-        == 11
+        == 17
     )
     assert (
         window.windowTitle()

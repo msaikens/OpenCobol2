@@ -1309,12 +1309,13 @@ class SourceEditorWidget(QPlainTextEdit):
     ) -> None:
         """Toggle a breakpoint on the cursor's current line.
 
-        Editor-side state only, purely visual -- there is no debugger
-        backend yet (Phase 6 is still untouched) to actually break
-        execution. Stored as `QTextBlock` handles for the same reason
-        bookmarks are: keeping a breakpoint tracking its physical line
-        of text across edits elsewhere, not whatever line now has the
-        same number.
+        Purely local, visual state -- syncing it to a real GDB
+        breakpoint when a debug session is active is the caller's job
+        (see `opencobol2.gui.debug_session.DebugSessionController`).
+        Stored as `QTextBlock` handles for the same reason bookmarks
+        are: keeping a breakpoint tracking its physical line of text
+        across edits elsewhere, not whatever line now has the same
+        number.
         """
 
         self._prune_invalid_breakpoints()
@@ -2825,6 +2826,14 @@ class EditorTabsWidget(QTabWidget):
             line_number,
             column,
         )
+
+    def editor_for_document(
+        self,
+        document_id: UUID,
+    ) -> SourceEditorWidget | None:
+        """Return the open editor for a document, if its tab is still open."""
+
+        return self._editor_for(document_id)
 
     def _reveal_document_location(
         self,

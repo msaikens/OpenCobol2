@@ -142,26 +142,24 @@ def test_debugger_service_drives_a_full_real_session(
         # -- step over the ADD, confirm the decoded sum updates --
         #
         # A single -exec-next can land inside GnuCOBOL's own runtime
-        # frame-management code (not yet filtered out -- "smart
-        # stepping" is deferred to task #115), so step repeatedly
-        # until execution actually reaches the next COBOL source line.
-        for _ in range(10):
-            stopped_signal.clear()
-            service.step_over()
-            assert stopped_signal.wait(15), "Step-over never completed."
-            frame = stopped_events[-1].frame
-            if (
-                frame is not None
-                and frame.source_path is not None
-                and frame.source_path.name == "demo.cbl"
-                and frame.line == 11
-            ):
-                break
-        else:
-            pytest.fail(
-                "Never reached demo.cbl:11 after stepping. Last "
-                f"frame: {stopped_events[-1].frame!r}",
-            )
+        # frame-management code rather than the next COBOL source line
+        # (verified against this exact real session), so
+        # step_over_cobol_line() repeats internally until it does --
+        # and fires exactly one on_stopped callback for the result, not
+        # one per internal step.
+        stopped_events.clear()
+        stopped_signal.clear()
+        smart_step_event = service.step_over_cobol_line()
+
+        assert len(stopped_events) == 1, (
+            "step_over_cobol_line() must suppress intermediate "
+            "internal-step callbacks and fire exactly one."
+        )
+        assert stopped_events[0] is smart_step_event
+        assert smart_step_event.frame is not None
+        assert smart_step_event.frame.source_path is not None
+        assert smart_step_event.frame.source_path.name == "demo.cbl"
+        assert smart_step_event.frame.line == 11
 
         ws_sum_after = service.read_variable("WS-SUM")
         assert ws_sum_after.value == "0030"

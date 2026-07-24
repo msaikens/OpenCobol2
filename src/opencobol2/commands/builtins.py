@@ -89,12 +89,25 @@ class BuiltInCommandIds:
     VIEW_BREAKPOINTS = "view.breakpoints"
     VIEW_GIT_CHANGES = "view.git-changes"
     VIEW_GIT_REPOSITORY = "view.git-repository"
+    VIEW_CALL_STACK = "view.call-stack"
+    VIEW_LOCALS = "view.locals"
+    VIEW_WATCH = "view.watch"
+    VIEW_THREADS = "view.threads"
+    VIEW_REGISTERS = "view.registers"
+    VIEW_MEMORY = "view.memory"
 
     BUILD_PROJECT = "build.project"
     BUILD_REBUILD_PROJECT = "build.rebuild-project"
     BUILD_CLEAN_PROJECT = "build.clean-project"
     BUILD_RUN = "build.run"
     BUILD_STOP = "build.stop"
+
+    DEBUG_START = "debug.start"
+    DEBUG_STOP = "debug.stop"
+    DEBUG_CONTINUE = "debug.continue"
+    DEBUG_STEP_OVER = "debug.step-over"
+    DEBUG_STEP_INTO = "debug.step-into"
+    DEBUG_STEP_OUT = "debug.step-out"
 
     GIT_CREATE_REPOSITORY = "git.create-repository"
     GIT_CLONE_REPOSITORY = "git.clone-repository"
@@ -131,6 +144,7 @@ class BuiltInCommandSurfaceIds:
     EDIT = "edit"
     VIEW = "view"
     BUILD = "build"
+    DEBUG = "debug"
     GIT = "git"
     TOOLS = "tools"
     ACCESSIBILITY = "accessibility"
@@ -574,6 +588,49 @@ _EXTERNAL_COMMANDS = (
         default_shortcuts=("Shift+F5",),
     ),
     _CommandMetadata(
+        command_id=BuiltInCommandIds.DEBUG_START,
+        title="Start Debugging",
+        description=(
+            "Compile the active COBOL file with debug symbols and "
+            "start a debug session against it."
+        ),
+        category="Debug",
+        default_shortcuts=("F5",),
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.DEBUG_STOP,
+        title="Stop Debugging",
+        description="Terminate the active debug session.",
+        category="Debug",
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.DEBUG_CONTINUE,
+        title="Continue",
+        description="Resume a paused debug session.",
+        category="Debug",
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.DEBUG_STEP_OVER,
+        title="Step Over",
+        description="Step over one COBOL source line.",
+        category="Debug",
+        default_shortcuts=("F10",),
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.DEBUG_STEP_INTO,
+        title="Step Into",
+        description="Step into one COBOL source line.",
+        category="Debug",
+        default_shortcuts=("F11",),
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.DEBUG_STEP_OUT,
+        title="Step Out",
+        description="Run until the current function returns.",
+        category="Debug",
+        default_shortcuts=("Shift+F11",),
+    ),
+    _CommandMetadata(
         command_id=BuiltInCommandIds.GIT_CREATE_REPOSITORY,
         title="Create Git Repository",
         description="Initialize a Git repository.",
@@ -733,6 +790,42 @@ _TOOL_WINDOW_COMMANDS = (
         "Git Repository",
         "Show and focus the Git Repository tool window.",
         BuiltInToolWindowIds.GIT_REPOSITORY,
+    ),
+    (
+        BuiltInCommandIds.VIEW_CALL_STACK,
+        "Call Stack",
+        "Show and focus the Call Stack tool window.",
+        BuiltInToolWindowIds.CALL_STACK,
+    ),
+    (
+        BuiltInCommandIds.VIEW_LOCALS,
+        "Locals",
+        "Show and focus the Locals tool window.",
+        BuiltInToolWindowIds.LOCALS,
+    ),
+    (
+        BuiltInCommandIds.VIEW_WATCH,
+        "Watch",
+        "Show and focus the Watch tool window.",
+        BuiltInToolWindowIds.WATCH,
+    ),
+    (
+        BuiltInCommandIds.VIEW_THREADS,
+        "Threads",
+        "Show and focus the Threads tool window.",
+        BuiltInToolWindowIds.THREADS,
+    ),
+    (
+        BuiltInCommandIds.VIEW_REGISTERS,
+        "Registers",
+        "Show and focus the Registers tool window.",
+        BuiltInToolWindowIds.REGISTERS,
+    ),
+    (
+        BuiltInCommandIds.VIEW_MEMORY,
+        "Memory",
+        "Show and focus the Memory tool window.",
+        BuiltInToolWindowIds.MEMORY,
     ),
 )
 
@@ -900,6 +993,9 @@ def create_builtin_command_contribution_registry(
         registry,
     )
     _register_build_surface(
+        registry,
+    )
+    _register_debug_surface(
         registry,
     )
     _register_git_surface(
@@ -1296,6 +1392,30 @@ def _register_view_surface(
                 "core.menu.view.git-repository",
                 BuiltInCommandIds.VIEW_GIT_REPOSITORY,
             ),
+            (
+                "core.menu.view.call-stack",
+                BuiltInCommandIds.VIEW_CALL_STACK,
+            ),
+            (
+                "core.menu.view.locals",
+                BuiltInCommandIds.VIEW_LOCALS,
+            ),
+            (
+                "core.menu.view.watch",
+                BuiltInCommandIds.VIEW_WATCH,
+            ),
+            (
+                "core.menu.view.threads",
+                BuiltInCommandIds.VIEW_THREADS,
+            ),
+            (
+                "core.menu.view.registers",
+                BuiltInCommandIds.VIEW_REGISTERS,
+            ),
+            (
+                "core.menu.view.memory",
+                BuiltInCommandIds.VIEW_MEMORY,
+            ),
         ),
         start=1,
     ):
@@ -1365,6 +1485,71 @@ def _register_build_surface(
         20,
         20,
     )
+
+
+def _register_debug_surface(
+    registry: CommandContributionRegistry,
+) -> None:
+    """Register the standard Debug menu surface."""
+
+    _register_command_contribution(
+        registry,
+        "core.menu.debug.start",
+        BuiltInCommandIds.DEBUG_START,
+        BuiltInCommandSurfaceIds.DEBUG,
+        "session",
+        10,
+        10,
+    )
+    _register_command_contribution(
+        registry,
+        "core.menu.debug.stop",
+        BuiltInCommandIds.DEBUG_STOP,
+        BuiltInCommandSurfaceIds.DEBUG,
+        "session",
+        10,
+        20,
+    )
+    _register_command_contribution(
+        registry,
+        "core.menu.debug.continue",
+        BuiltInCommandIds.DEBUG_CONTINUE,
+        BuiltInCommandSurfaceIds.DEBUG,
+        "session",
+        10,
+        30,
+    )
+
+    for order, (
+        contribution_id,
+        command_id,
+    ) in enumerate(
+        (
+            (
+                "core.menu.debug.step-over",
+                BuiltInCommandIds.DEBUG_STEP_OVER,
+            ),
+            (
+                "core.menu.debug.step-into",
+                BuiltInCommandIds.DEBUG_STEP_INTO,
+            ),
+            (
+                "core.menu.debug.step-out",
+                BuiltInCommandIds.DEBUG_STEP_OUT,
+            ),
+        ),
+        start=1,
+    ):
+        _register_command_contribution(
+            registry,
+            contribution_id,
+            command_id,
+            BuiltInCommandSurfaceIds.DEBUG,
+            "stepping",
+            20,
+            order * 10,
+            separator_before=(order == 1),
+        )
 
 
 def _register_git_surface(

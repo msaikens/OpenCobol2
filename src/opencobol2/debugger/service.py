@@ -15,6 +15,7 @@ This service exposes plain single-step primitives and leaves any
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -163,6 +164,9 @@ def _escape_mi_expression(expression: str) -> str:
     return expression.replace("\\", "\\\\").replace('"', '\\"')
 
 
+_COBOL_SOURCE_EXTENSIONS = frozenset({".cbl", ".cob"})
+
+
 class DebuggerService:
     """Owns one GDB-backed debug session for a compiled COBOL program."""
 
@@ -181,6 +185,9 @@ class DebuggerService:
         self._field_symbols: dict[str, GeneratedFieldSymbol] = {}
         self._breakpoints: dict[int, Breakpoint] = {}
         self._stopped_callbacks: list[Callable[[StoppedEvent], None]] = []
+        self._stop_event = threading.Event()
+        self._last_stopped_event: StoppedEvent | None = None
+        self._suspend_stopped_callbacks = False
 
         self._adapter.on_stopped(self._handle_stopped)
 
@@ -284,6 +291,98 @@ class DebuggerService:
 
         self._adapter.send_command("-exec-finish")
         self._state = DebuggerState.RUNNING
+
+    def step_over_cobol_line(
+        self,
+        *,
+        timeout_seconds: float = 10.0,
+        max_internal_steps: int = 50,
+    ) -> StoppedEvent:
+        """Step over, transparently skipping GnuCOBOL's own runtime frames.
+
+        A single `-exec-next` can land inside GnuCOBOL's generated
+        frame-management code rather than the next COBOL source line
+        (verified against a real session) -- this repeats `step_over()`
+        internally until execution reaches a `.cbl`/`.cob` frame (or the
+        program exits), firing exactly one `on_stopped` callback for the
+        result rather than one per intermediate internal step.
+        """
+
+        return self._smart_step(
+            self.step_over,
+            timeout_seconds=timeout_seconds,
+            max_internal_steps=max_internal_steps,
+        )
+
+    def step_into_cobol_line(
+        self,
+        *,
+        timeout_seconds: float = 10.0,
+        max_internal_steps: int = 50,
+    ) -> StoppedEvent:
+        """Step into, transparently skipping GnuCOBOL's own runtime frames.
+
+        See `step_over_cobol_line` for why this internal repeat-and-check
+        loop is necessary.
+        """
+
+        return self._smart_step(
+            self.step_into,
+            timeout_seconds=timeout_seconds,
+            max_internal_steps=max_internal_steps,
+        )
+
+    def _smart_step(
+        self,
+        step_fn: Callable[[], None],
+        *,
+        timeout_seconds: float,
+        max_internal_steps: int,
+    ) -> StoppedEvent:
+        self._suspend_stopped_callbacks = True
+
+        try:
+            event: StoppedEvent | None = None
+
+            for _ in range(max_internal_steps):
+                self._stop_event.clear()
+                step_fn()
+
+                if not self._stop_event.wait(timeout_seconds):
+                    raise DebuggerServiceError(
+                        "Timed out waiting for a step to complete.",
+                    )
+
+                event = self._last_stopped_event
+                assert event is not None
+
+                if event.reason in (
+                    StopReason.EXITED,
+                    StopReason.EXITED_NORMALLY,
+                ):
+                    break
+
+                frame = event.frame
+
+                if (
+                    frame is not None
+                    and frame.source_path is not None
+                    and frame.source_path.suffix.lower()
+                    in _COBOL_SOURCE_EXTENSIONS
+                ):
+                    break
+            else:
+                raise DebuggerServiceError(
+                    "Never reached a COBOL source line after "
+                    f"{max_internal_steps} internal steps.",
+                )
+        finally:
+            self._suspend_stopped_callbacks = False
+
+        for callback in self._stopped_callbacks:
+            callback(event)
+
+        return event
 
     def stop(self) -> None:
         """Terminate the debug session."""
@@ -431,6 +530,11 @@ class DebuggerService:
             in (StopReason.EXITED, StopReason.EXITED_NORMALLY)
             else DebuggerState.PAUSED
         )
+        self._last_stopped_event = event
+        self._stop_event.set()
+
+        if self._suspend_stopped_callbacks:
+            return
 
         for callback in self._stopped_callbacks:
             callback(event)

@@ -20,9 +20,9 @@ class BreakpointEntry:
     """One breakpointed line in one open document.
 
     Keyed by `document_id` rather than a filesystem path, since untitled
-    (never-saved) documents can carry breakpoints too. Editor-side state
-    only -- there is no debugger backend yet (Phase 6 is still
-    untouched) to actually break execution at one of these.
+    (never-saved) documents can carry breakpoints too. This is
+    editor-side state; a `DebugSessionController` syncs it to a real
+    GDB breakpoint while a debug session is active.
     """
 
     document_id: UUID
