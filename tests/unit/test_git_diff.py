@@ -222,6 +222,7 @@ def test_get_commit_diff_verifies_exact_git_command(
         "--format=",
         "--patch",
         "abc123",
+        "--",
     )
 
 

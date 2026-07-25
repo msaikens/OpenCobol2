@@ -11,6 +11,7 @@ from opencobol2.documents.service import (
     DocumentService,
 )
 from opencobol2.documents.storage import (
+    DocumentDecodeError,
     DocumentStorage,
 )
 from opencobol2.documents.workspace import (
@@ -24,6 +25,7 @@ from opencobol2.documents.workspace import (
 __all__ = [
     "ByteOrderMark",
     "DocumentAlreadyOpenError",
+    "DocumentDecodeError",
     "DocumentHasUnsavedChangesError",
     "DocumentNotOpenError",
     "DocumentSavePathRequiredError",

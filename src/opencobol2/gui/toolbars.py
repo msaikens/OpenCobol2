@@ -31,6 +31,11 @@ def build_toolbar(
     for resolved in contribution_service.resolve_surface(
         CommandSurfaceKind.TOOLBAR,
         surface_id,
+        # A hidden contribution's own action must not render, but its
+        # separator_before/after still marks a real boundary between
+        # its visible neighbors -- see the matching comment in
+        # gui/command_menus.py for the full rationale.
+        include_hidden=True,
     ):
         if not isinstance(
             resolved,
@@ -45,13 +50,14 @@ def build_toolbar(
         if resolved.contribution.separator_before:
             toolbar.addSeparator()
 
-        toolbar.addAction(
-            _create_toolbar_action(
-                toolbar,
-                resolved,
-                contribution_service,
+        if resolved.state.visible:
+            toolbar.addAction(
+                _create_toolbar_action(
+                    toolbar,
+                    resolved,
+                    contribution_service,
+                )
             )
-        )
 
         if resolved.contribution.separator_after:
             toolbar.addSeparator()

@@ -24,6 +24,7 @@ class SettingsService:
     __slots__ = (
         "_storage",
         "_current",
+        "_load_error",
     )
 
     def __init__(
@@ -35,7 +36,24 @@ class SettingsService:
             if storage is not None
             else SettingsStorage()
         )
-        self._current = self._storage.load()
+
+        try:
+            self._current = self._storage.load()
+            self._load_error = None
+        except Exception as error:
+            # A corrupt or unreadable settings file must not prevent
+            # the application from launching at all -- fall back to
+            # defaults and let the caller decide whether/how to
+            # surface the failure (e.g. a startup warning dialog).
+            self._current = ApplicationSettings()
+            self._load_error = error
+
+    @property
+    def load_error(
+        self,
+    ) -> Exception | None:
+        """Return the error from the initial settings load, if any."""
+        return self._load_error
 
     @property
     def storage(

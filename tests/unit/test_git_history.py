@@ -394,6 +394,7 @@ def test_get_history_with_ref_verifies_exact_git_command(
         "log",
         f"--format={git_service_module.LOG_FORMAT}",
         "release",
+        "--",
     )
 
 

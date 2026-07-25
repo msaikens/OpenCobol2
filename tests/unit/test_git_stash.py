@@ -71,6 +71,16 @@ def _clean_status_output() -> str:
     )
 
 
+def _untracked_only_status_output() -> str:
+    """Build porcelain-v2 output for a repository with only untracked files."""
+
+    return (
+        "# branch.oid abc123\0"
+        "# branch.head main\0"
+        "? new_file.cob\0"
+    )
+
+
 # --- parse_git_stash_list_output -------------------------------------------
 
 
@@ -140,10 +150,13 @@ def test_stash_changes_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands: list[tuple[str, ...]] = []
+    list_reads = 0
 
     def invoke_git_process(
         **kwargs: object,
     ) -> GitCommandResult:
+        nonlocal list_reads
+
         command = kwargs["command"]
         assert isinstance(command, tuple)
         commands.append(command)
@@ -158,6 +171,12 @@ def test_stash_changes_success(
             return _completed_result(command)
 
         if command[1] == "stash" and command[2] == "list":
+            list_reads += 1
+
+            if list_reads == 1:
+                # Stash list read before the push: no prior stash yet.
+                return _completed_result(command, stdout="")
+
             return _completed_result(
                 command,
                 stdout=_stash_output(
@@ -177,18 +196,19 @@ def test_stash_changes_success(
     result = service.stash_changes("/source/project")
 
     assert result.entry.index == 0
-    assert commands[2] == ("git", "stash", "push")
+    assert ("git", "stash", "push") in commands
 
 
 def test_stash_changes_with_include_untracked_verifies_exact_git_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured_push_command: tuple[str, ...] | None = None
+    list_reads = 0
 
     def invoke_git_process(
         **kwargs: object,
     ) -> GitCommandResult:
-        nonlocal captured_push_command
+        nonlocal captured_push_command, list_reads
 
         command = kwargs["command"]
         assert isinstance(command, tuple)
@@ -202,6 +222,12 @@ def test_stash_changes_with_include_untracked_verifies_exact_git_command(
         if command[1] == "stash" and command[2] == "push":
             captured_push_command = command
             return _completed_result(command)
+
+        list_reads += 1
+
+        if list_reads == 1:
+            # Stash list read before the push: no prior stash yet.
+            return _completed_result(command, stdout="")
 
         return _completed_result(
             command,
@@ -256,6 +282,58 @@ def test_stash_changes_rejects_when_nothing_to_stash(
     with pytest.raises(
         GitNothingToStashError,
         match="no changes to stash",
+    ):
+        service.stash_changes("/source/project")
+
+
+def test_stash_changes_detects_noop_when_only_untracked_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`git stash push` (no --include-untracked) is a silent no-op when the
+    only dirty state is untracked files. If a prior stash already exists,
+    the post-push stash list is indistinguishable from the pre-push list
+    by exit code alone -- this must be detected and reported as a failure
+    rather than returning the pre-existing stash as if it were new."""
+
+    def invoke_git_process(
+        **kwargs: object,
+    ) -> GitCommandResult:
+        command = kwargs["command"]
+        assert isinstance(command, tuple)
+
+        if "rev-parse" in command:
+            return _completed_result(command, stdout="/source/project\n")
+
+        if "status" in command:
+            return _completed_result(
+                command,
+                stdout=_untracked_only_status_output(),
+            )
+
+        if command[1] == "stash" and command[2] == "push":
+            return _completed_result(command, stdout="No local changes to save\n")
+
+        if command[1] == "stash" and command[2] == "list":
+            return _completed_result(
+                command,
+                stdout=_stash_output(
+                    [(0, "abc123", "WIP on main: prior stash")],
+                ),
+            )
+
+        raise AssertionError(f"Unexpected Git command: {command!r}")
+
+    monkeypatch.setattr(
+        git_service_module,
+        "invoke_git_process",
+        invoke_git_process,
+    )
+
+    service = GitService()
+
+    with pytest.raises(
+        GitCommandFailedError,
+        match="did not create a new stash entry",
     ):
         service.stash_changes("/source/project")
 

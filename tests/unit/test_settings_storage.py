@@ -571,6 +571,50 @@ def test_invalid_default_profile_reference_is_settings_format_error(
         storage.load()
 
 
+def test_custom_profiles_without_default_profile_id_loads_with_none(
+    tmp_path: Path,
+) -> None:
+    """Custom profiles with no explicit default_profile_id must not
+    fall back to the bundled default profile's UUID -- that UUID
+    doesn't name any of these custom profiles, so CompilerSettings
+    would reject it and the whole file would fail to load."""
+
+    settings_path = tmp_path / "settings.json"
+    profile_id = str(
+        uuid4(),
+    )
+
+    settings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "compilers": {
+                    "profiles": [
+                        {
+                            "profile_id": profile_id,
+                            "provider_id": "example.compiler",
+                            "display_name": "Example",
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    loaded = storage.load()
+
+    assert loaded.compilers.default_profile_id is None
+    assert len(loaded.compilers.profiles) == 1
+    assert (
+        str(loaded.compilers.profiles[0].profile_id)
+        == profile_id
+    )
+
+
 def test_obsolete_toolchain_layout_is_rejected(
     tmp_path: Path,
 ) -> None:

@@ -657,8 +657,15 @@ class GitService:
         destination: Path | str,
         *,
         branch: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> GitRepositoryCloneResult:
-        """Clone a Git repository into a new destination directory."""
+        """Clone a Git repository into a new destination directory.
+
+        `timeout_seconds` overrides the service's default timeout for
+        this call -- a clone can transfer far more data over the
+        network than any local operation, so the same timeout budget
+        that's reasonable for local commands is often too short here.
+        """
 
         normalized_source = _require_clone_source(
             source,
@@ -666,6 +673,10 @@ class GitService:
         normalized_branch = _normalize_optional_ref_name(
             branch,
             "Git clone branch name",
+        )
+        normalized_timeout_seconds = _require_positive_optional_timeout(
+            timeout_seconds,
+            "Git clone timeout",
         )
         validated_destination = _validate_new_repository_destination(
             destination,
@@ -693,6 +704,7 @@ class GitService:
         result = self._invoke(
             arguments=arguments,
             working_directory=Path.cwd(),
+            timeout_seconds=normalized_timeout_seconds,
         )
 
         _require_successful_clone_result(
@@ -911,12 +923,18 @@ class GitService:
         self,
         path: Path | str,
         remote: str | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> GitFetchResult:
         """Fetch from a Git remote and return refreshed status."""
 
         normalized_remote = _normalize_optional_ref_name(
             remote,
             "Git fetch remote name",
+        )
+        normalized_timeout_seconds = _require_positive_optional_timeout(
+            timeout_seconds,
+            "Git fetch timeout",
         )
         repository_root = self.discover_repository(
             path,
@@ -935,6 +953,7 @@ class GitService:
         result = self._invoke(
             arguments=arguments,
             working_directory=repository_root,
+            timeout_seconds=normalized_timeout_seconds,
         )
 
         _require_successful_result(
@@ -955,6 +974,8 @@ class GitService:
         path: Path | str,
         remote: str | None = None,
         branch: str | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> GitPullResult:
         """Pull from a Git remote branch and return refreshed status."""
 
@@ -965,6 +986,10 @@ class GitService:
         normalized_branch = _normalize_optional_ref_name(
             branch,
             "Git pull branch name",
+        )
+        normalized_timeout_seconds = _require_positive_optional_timeout(
+            timeout_seconds,
+            "Git pull timeout",
         )
 
         if (
@@ -997,6 +1022,7 @@ class GitService:
         result = self._invoke(
             arguments=arguments,
             working_directory=repository_root,
+            timeout_seconds=normalized_timeout_seconds,
         )
 
         _require_successful_conflict_aware_result(
@@ -1020,6 +1046,8 @@ class GitService:
         path: Path | str,
         remote: str | None = None,
         branch: str | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> GitPushResult:
         """Push to a Git remote branch and return refreshed status."""
 
@@ -1030,6 +1058,10 @@ class GitService:
         normalized_branch = _normalize_optional_ref_name(
             branch,
             "Git push branch name",
+        )
+        normalized_timeout_seconds = _require_positive_optional_timeout(
+            timeout_seconds,
+            "Git push timeout",
         )
 
         if (
@@ -1062,6 +1094,7 @@ class GitService:
         result = self._invoke(
             arguments=arguments,
             working_directory=repository_root,
+            timeout_seconds=normalized_timeout_seconds,
         )
 
         _require_successful_result(
@@ -1341,6 +1374,7 @@ class GitService:
         normalized_message = _normalize_optional_ref_name(
             message,
             "Git tag message",
+            is_free_text=True,
         )
         repository_root = self.discover_repository(
             path,
@@ -1492,6 +1526,13 @@ class GitService:
         if normalized_ref is not None:
             arguments += (
                 normalized_ref,
+                # Trailing "--" tells git everything before it is a
+                # revision, closing off the "ambiguous argument" case
+                # where normalized_ref also happens to match a path in
+                # the working tree, and guarding against normalized_ref
+                # being parsed as a flag if it somehow reached here
+                # unchecked.
+                "--",
             )
 
         result = self._invoke(
@@ -1533,6 +1574,7 @@ class GitService:
         normalized_message = _normalize_optional_ref_name(
             message,
             "Git stash message",
+            is_free_text=True,
         )
         repository_root = self.discover_repository(
             path,
@@ -1545,6 +1587,13 @@ class GitService:
             raise GitNothingToStashError(
                 "Git repository has no changes to stash."
             )
+
+        stashes_before = self._get_stashes(
+            repository_root,
+        )
+        top_oid_before = (
+            stashes_before[0].commit_oid if stashes_before else None
+        )
 
         arguments: tuple[str, ...] = (
             "stash",
@@ -1575,7 +1624,15 @@ class GitService:
             repository_root,
         )
 
-        if not refreshed_stashes:
+        if (
+            not refreshed_stashes
+            or refreshed_stashes[0].commit_oid == top_oid_before
+        ):
+            # `git stash push` exits 0 and prints "No local changes to
+            # save" when the only dirty state is untracked files and
+            # `--include-untracked` wasn't requested. Exit code alone
+            # can't tell that apart from a real stash, so compare the
+            # stash list's top entry before/after to detect the no-op.
             raise GitCommandFailedError(
                 result=GitCommandResult(
                     command=result.command,
@@ -1585,8 +1642,10 @@ class GitService:
                     stderr=result.stderr,
                     elapsed_seconds=result.elapsed_seconds,
                     error_message=(
-                        "Git did not report the expected new stash "
-                        "entry."
+                        "Git did not create a new stash entry. This "
+                        "usually means only untracked files were "
+                        "changed; pass include_untracked=True to "
+                        "stash them too."
                     ),
                 ),
             )
@@ -1731,6 +1790,11 @@ class GitService:
                 "reset",
                 f"--{mode}",
                 normalized_target,
+                # Trailing "--" (not leading -- "git reset --hard --
+                # <ref>" switches to path-reset mode and silently does
+                # nothing to the branch pointer) closes off ambiguity
+                # between normalized_target and a same-named path.
+                "--",
             ),
             working_directory=repository_root,
         )
@@ -1749,12 +1813,22 @@ class GitService:
         commit: str,
         *,
         no_commit: bool = False,
+        mainline: int | None = None,
     ) -> GitRevertResult:
-        """Revert a commit and return refreshed status."""
+        """Revert a commit and return refreshed status.
+
+        `mainline` selects which parent (1-based) is "mainline" when
+        `commit` is a merge commit -- required by git in that case,
+        since a merge has no single well-defined reverse diff.
+        """
 
         normalized_commit = _require_ref_name(
             commit,
             "Git revert commit",
+        )
+        normalized_mainline = _require_positive_optional_int(
+            mainline,
+            "Git revert mainline parent",
         )
         repository_root = self.discover_repository(
             path,
@@ -1769,8 +1843,15 @@ class GitService:
                 "--no-commit",
             )
 
+        if normalized_mainline is not None:
+            arguments += (
+                "-m",
+                str(normalized_mainline),
+            )
+
         arguments += (
             normalized_commit,
+            "--",
         )
 
         result = self._invoke(
@@ -1796,12 +1877,22 @@ class GitService:
         commit: str,
         *,
         no_commit: bool = False,
+        mainline: int | None = None,
     ) -> GitCherryPickResult:
-        """Cherry-pick a commit and return refreshed status."""
+        """Cherry-pick a commit and return refreshed status.
+
+        `mainline` selects which parent (1-based) is "mainline" when
+        `commit` is a merge commit -- required by git in that case,
+        since a merge has no single well-defined diff to replay.
+        """
 
         normalized_commit = _require_ref_name(
             commit,
             "Git cherry-pick commit",
+        )
+        normalized_mainline = _require_positive_optional_int(
+            mainline,
+            "Git cherry-pick mainline parent",
         )
         repository_root = self.discover_repository(
             path,
@@ -1816,8 +1907,15 @@ class GitService:
                 "--no-commit",
             )
 
+        if normalized_mainline is not None:
+            arguments += (
+                "-m",
+                str(normalized_mainline),
+            )
+
         arguments += (
             normalized_commit,
+            "--",
         )
 
         result = self._invoke(
@@ -1900,6 +1998,7 @@ class GitService:
                 "--format=",
                 "--patch",
                 normalized_commit,
+                "--",
             ),
             working_directory=repository_root,
         )
@@ -2070,6 +2169,7 @@ class GitService:
         *,
         arguments: tuple[str, ...],
         working_directory: Path,
+        timeout_seconds: float | None = None,
     ) -> GitCommandResult:
         """Invoke the configured local Git executable."""
 
@@ -2085,7 +2185,11 @@ class GitService:
                 self._executable_path,
                 *arguments,
             ),
-            timeout_seconds=self._timeout_seconds,
+            timeout_seconds=(
+                self._timeout_seconds
+                if timeout_seconds is None
+                else timeout_seconds
+            ),
             working_directory=working_directory,
             environment=environment,
         )
@@ -2221,8 +2325,16 @@ def _normalize_commit_message(
 def _normalize_optional_ref_name(
     value: str | None,
     name: str,
+    *,
+    is_free_text: bool = False,
 ) -> str | None:
-    """Normalize an optional Git branch or ref name."""
+    """Normalize an optional Git branch/ref name, or free-text message.
+
+    Set `is_free_text=True` for values that are commit/tag/stash
+    messages rather than actual ref-like names -- those are allowed to
+    start with a dash, since they're never interpolated positionally
+    in a place git could mistake them for a flag.
+    """
 
     if value is None:
         return None
@@ -2245,6 +2357,11 @@ def _normalize_optional_ref_name(
     if not normalized_value:
         raise ValueError(
             f"{name} must not be empty."
+        )
+
+    if not is_free_text and normalized_value.startswith("-"):
+        raise ValueError(
+            f"{name} must not start with '-': {normalized_value!r}"
         )
 
     return normalized_value
@@ -2483,6 +2600,42 @@ def _require_positive_optional_int(
     return value
 
 
+def _require_positive_optional_timeout(
+    value: float | None,
+    name: str,
+) -> float | None:
+    """Validate an optional positive timeout in seconds."""
+
+    if value is None:
+        return None
+
+    if (
+        not isinstance(
+            value,
+            (
+                int,
+                float,
+            ),
+        )
+        or isinstance(
+            value,
+            bool,
+        )
+    ):
+        raise TypeError(
+            f"{name} must be numeric or None."
+        )
+
+    if value <= 0:
+        raise ValueError(
+            f"{name} must be greater than zero."
+        )
+
+    return float(
+        value,
+    )
+
+
 def _require_ref_name(
     value: str,
     name: str,
@@ -2507,6 +2660,15 @@ def _require_ref_name(
     if not normalized_value:
         raise ValueError(
             f"{name} must not be empty."
+        )
+
+    if normalized_value.startswith("-"):
+        # A ref/branch/tag/commit-ish can never legitimately start with
+        # a dash (git's own check-ref-format rejects it). Reject it here
+        # too, rather than handing it to the git subprocess where it
+        # could be parsed as a command-line flag instead of a name.
+        raise ValueError(
+            f"{name} must not start with '-': {normalized_value!r}"
         )
 
     return normalized_value

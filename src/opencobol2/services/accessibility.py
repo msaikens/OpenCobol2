@@ -17,6 +17,7 @@ from opencobol2.services.tool_windows import (
 )
 from opencobol2.tool_windows import (
     ToolWindowArea,
+    ToolWindowNotFoundError,
 )
 
 
@@ -152,14 +153,32 @@ class AccessibilityService:
             profile_id,
         )
 
-        self._validate_profile_activation(
-            profile,
-        )
-
-        for override in profile.tool_window_overrides:
-            self._apply_tool_window_override(
-                override,
+        try:
+            self._validate_profile_activation(
+                profile,
             )
+
+            for override in profile.tool_window_overrides:
+                self._apply_tool_window_override(
+                    override,
+                )
+        except AccessibilityProfileActivationError:
+            # Already the right type -- raised directly by
+            # _validate_profile_activation's own explicit checks.
+            raise
+        except (
+            ToolWindowNotFoundError,
+            ValueError,
+        ) as error:
+            # Every other failure mode below this call is either a
+            # stale tool_window_id in the profile or a tool-window-
+            # service rule the profile's overrides violate -- callers
+            # should only ever need to catch one activation-failure
+            # type, not reach into ToolWindowService's exception
+            # hierarchy.
+            raise AccessibilityProfileActivationError(
+                f"Accessibility profile could not be activated: {error}"
+            ) from error
 
         self._current_settings = profile.settings
         self._active_profile_id = profile.profile_id

@@ -75,6 +75,35 @@ class CommandContributionService:
 
         return self._contribution_registry
 
+    def validate_contributions(
+        self,
+    ) -> tuple[str, ...]:
+        """Return IDs of contributions whose command_id isn't registered.
+
+        A typo in a statically-declared contribution's command_id was
+        previously invisible until someone triggered that exact menu
+        item -- and resolve_surface() now isolates per-contribution
+        resolution failures (so the rest of a menu keeps working when
+        one entry is broken), which would otherwise make such a typo
+        invisible forever. Call this once at startup to catch it early.
+        """
+
+        command_registry = self._command_service.registry
+
+        return tuple(
+            contribution.contribution_id
+            for contribution in self._contribution_registry.contributions
+            if (
+                isinstance(
+                    contribution,
+                    CommandContribution,
+                )
+                and not command_registry.contains(
+                    contribution.command_id,
+                )
+            )
+        )
+
     def resolve_surface(
         self,
         surface_kind: CommandSurfaceKind,
@@ -111,10 +140,17 @@ class CommandContributionService:
                 contribution,
                 CommandContribution,
             ):
-                resolved = self._resolve_command_contribution(
-                    contribution,
-                    normalized_context,
-                )
+                try:
+                    resolved = self._resolve_command_contribution(
+                        contribution,
+                        normalized_context,
+                    )
+                except Exception:
+                    # One contribution referencing a stale command ID,
+                    # or whose command's state callback raises, must
+                    # not blank out the rest of this menu/toolbar --
+                    # skip just this entry and keep resolving others.
+                    continue
 
                 if (
                     not include_hidden
@@ -142,12 +178,22 @@ class CommandContributionService:
                 contribution,
                 DynamicMenuContribution,
             ):
-                resolved_contributions.append(
-                    self._resolve_dynamic_menu_contribution(
-                        contribution,
-                        normalized_context,
-                        include_hidden=include_hidden,
+                try:
+                    resolved_dynamic = (
+                        self._resolve_dynamic_menu_contribution(
+                            contribution,
+                            normalized_context,
+                            include_hidden=include_hidden,
+                        )
                     )
+                except Exception:
+                    # A single misbehaving provider (e.g. one that
+                    # raises on an unexpected path) must not blank out
+                    # every other contribution on this surface.
+                    continue
+
+                resolved_contributions.append(
+                    resolved_dynamic,
                 )
                 continue
 
@@ -190,7 +236,16 @@ class CommandContributionService:
         self,
         item: ResolvedDynamicMenuItem,
     ) -> Any:
-        """Execute one previously resolved dynamic menu item."""
+        """Execute one previously resolved dynamic menu item.
+
+        `item.state` is a snapshot from whenever the menu was last
+        populated, which can be arbitrarily stale by the time the user
+        actually clicks it. Re-derive the command's state fresh here,
+        recombined with this item's own `enabled` override, instead of
+        trusting the snapshot -- `CommandService.execute` re-checks the
+        general command state on its own, but it has no notion of a
+        per-item override, so it can't enforce that half by itself.
+        """
 
         if not isinstance(
             item,
@@ -201,14 +256,23 @@ class CommandContributionService:
                 "ResolvedDynamicMenuItem."
             )
 
-        if not item.state.enabled:
+        command = self._command_service.get_command(
+            item.command.command_id,
+        )
+        fresh_state = _apply_dynamic_item_enabled_state(
+            command.state(
+                item.item.context,
+            ),
+            item.item.enabled,
+        )
+
+        if not fresh_state.enabled:
             raise CommandDisabledError(
                 "Dynamic menu item command is disabled: "
                 f"{item.command.command_id!r}."
             )
 
-        return self._command_service.execute(
-            item.command.command_id,
+        return command.handler(
             item.item.context,
         )
 
@@ -269,12 +333,19 @@ class CommandContributionService:
                     "DynamicMenuItem instances."
                 )
 
-            command = self._command_service.get_command(
-                item.command_id,
-            )
-            command_state = command.state(
-                item.context,
-            )
+            try:
+                command = self._command_service.get_command(
+                    item.command_id,
+                )
+                command_state = command.state(
+                    item.context,
+                )
+            except Exception:
+                # One item referencing a stale command ID (or whose
+                # state callback raises) must not blank out every
+                # other item this provider produced.
+                continue
+
             state = _apply_dynamic_item_enabled_state(
                 command_state,
                 item.enabled,

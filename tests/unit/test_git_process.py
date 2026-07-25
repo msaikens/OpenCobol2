@@ -65,9 +65,11 @@ def test_invoke_git_process_captures_completed_process(
     )
     assert captured["env"] == {
         "TEST": "1",
+        "GIT_TERMINAL_PROMPT": "0",
     }
     assert captured["capture_output"] is True
     assert captured["text"] is True
+    assert captured["encoding"] == "utf-8"
     assert captured["errors"] == "replace"
     assert captured["timeout"] == 30
     assert captured["check"] is False
@@ -159,3 +161,82 @@ def test_invoke_git_process_rejects_boolean_timeout() -> None:
             ),
             timeout_seconds=True,
         )
+
+
+def test_invoke_git_process_disables_terminal_prompt_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A network op needing credentials must fail fast, not hang waiting
+    on an interactive terminal prompt that can never be answered here."""
+
+    captured: dict[str, object] = {}
+
+    def run(
+        command: tuple[str, ...],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        run,
+    )
+
+    invoke_git_process(
+        command=(
+            "git",
+            "fetch",
+        ),
+        timeout_seconds=30,
+        environment={
+            "TEST": "1",
+        },
+    )
+
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_invoke_git_process_respects_explicit_terminal_prompt_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def run(
+        command: tuple[str, ...],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        run,
+    )
+
+    invoke_git_process(
+        command=(
+            "git",
+            "fetch",
+        ),
+        timeout_seconds=30,
+        environment={
+            "GIT_TERMINAL_PROMPT": "1",
+        },
+    )
+
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "1"

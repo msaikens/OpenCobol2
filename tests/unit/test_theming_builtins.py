@@ -49,6 +49,40 @@ def test_default_theme_id_is_registered() -> None:
     assert DEFAULT_THEME_ID == DARK_THEME_ID
 
 
+def test_high_contrast_light_syntax_colors_differ_from_light() -> None:
+    """High Contrast Light must not just reuse the regular Light theme's
+    syntax palette verbatim -- its whole purpose is a distinct, more
+    accessible color set, not a copy-paste of the non-HC theme."""
+
+    registry = create_builtin_theme_registry()
+    light_colors = registry.get(
+        LIGHT_THEME_ID,
+    ).colors
+    high_contrast_colors = registry.get(
+        HIGH_CONTRAST_LIGHT_THEME_ID,
+    ).colors
+
+    light_syntax = (
+        light_colors.syntax_keyword,
+        light_colors.syntax_string,
+        light_colors.syntax_number,
+        light_colors.syntax_comment,
+    )
+    high_contrast_syntax = (
+        high_contrast_colors.syntax_keyword,
+        high_contrast_colors.syntax_string,
+        high_contrast_colors.syntax_number,
+        high_contrast_colors.syntax_comment,
+    )
+
+    assert light_syntax != high_contrast_syntax
+    # Every token's color must also be distinct from every other
+    # token's color within the high-contrast palette itself.
+    assert len(set(high_contrast_syntax)) == len(
+        high_contrast_syntax,
+    )
+
+
 def test_builtin_registry_is_freshly_built_each_call() -> None:
     first_registry = create_builtin_theme_registry()
     second_registry = create_builtin_theme_registry()

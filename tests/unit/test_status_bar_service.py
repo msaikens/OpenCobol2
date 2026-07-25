@@ -90,6 +90,59 @@ def test_resolve_alignment_resolves_every_matching_item_in_order() -> None:
     ]
 
 
+def test_resolve_alignment_isolates_a_raising_provider() -> None:
+    """One misbehaving provider must not blank out the whole alignment
+    group -- the other items in it must still resolve."""
+
+    registry = StatusBarItemRegistry()
+    registry.register(
+        StatusBarItemDefinition(
+            item_id="a",
+            alignment=StatusBarItemAlignment.LEFT,
+            provider=lambda: StatusBarItemContent(
+                text="A",
+            ),
+            order=10,
+        )
+    )
+
+    def broken_provider() -> StatusBarItemContent:
+        raise ValueError("boom")
+
+    registry.register(
+        StatusBarItemDefinition(
+            item_id="broken",
+            alignment=StatusBarItemAlignment.LEFT,
+            provider=broken_provider,
+            order=20,
+        )
+    )
+    registry.register(
+        StatusBarItemDefinition(
+            item_id="c",
+            alignment=StatusBarItemAlignment.LEFT,
+            provider=lambda: StatusBarItemContent(
+                text="C",
+            ),
+            order=30,
+        )
+    )
+    service = StatusBarService(
+        registry=registry,
+    )
+
+    resolved = service.resolve_alignment(
+        StatusBarItemAlignment.LEFT,
+    )
+
+    assert [
+        item.content.text for item in resolved
+    ] == [
+        "A",
+        "C",
+    ]
+
+
 def test_service_requires_status_bar_item_registry() -> None:
     with pytest.raises(
         TypeError,

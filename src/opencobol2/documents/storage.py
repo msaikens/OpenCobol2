@@ -16,6 +16,10 @@ from opencobol2.documents.models import (
 )
 
 
+class DocumentDecodeError(ValueError):
+    """Raised when a file's bytes can't be decoded as its detected/assumed encoding."""
+
+
 _BOM_ENCODINGS = (
     (
         ByteOrderMark.UTF32_LE,
@@ -83,10 +87,23 @@ class DocumentStorage:
         else:
             encoding = detected_encoding
 
-        text = content_bytes.decode(
-            encoding,
-            errors="strict",
-        )
+        try:
+            text = content_bytes.decode(
+                encoding,
+                errors="strict",
+            )
+        except UnicodeDecodeError as error:
+            raise DocumentDecodeError(
+                f"{document_path} could not be decoded as "
+                f"{encoding!r}"
+                + (
+                    " (no byte-order mark was present, so this was "
+                    "a guess)"
+                    if byte_order_mark is None
+                    else ""
+                )
+                + f": {error}"
+            ) from error
 
         line_ending = _detect_line_ending(
             text,
@@ -268,6 +285,18 @@ def _write_replacement_file(
             os.chmod(
                 temporary_path,
                 existing_mode,
+            )
+            # On Windows, os.replace() (MoveFileExW) refuses to
+            # overwrite a destination that has the read-only
+            # attribute, regardless of the replacement file's own
+            # mode -- there is no such check on POSIX, where this is
+            # a no-op. Grant owner-write so the swap can proceed; the
+            # temp file's chmod() above already carries the original
+            # mode (read-only included) onto the file that lands at
+            # `destination`, so the net effect preserves it.
+            os.chmod(
+                destination,
+                existing_mode | stat.S_IWRITE,
             )
 
         os.replace(

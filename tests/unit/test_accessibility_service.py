@@ -339,6 +339,70 @@ def test_profile_rejects_accent_override_for_unsupported_window() -> None:
         )
 
 
+def test_activate_profile_wraps_stale_tool_window_id() -> None:
+    """A profile referencing an unregistered tool_window_id must raise
+    AccessibilityProfileActivationError, not let ToolWindowNotFoundError
+    leak out of the tool-window service's exception hierarchy."""
+
+    profile = AccessibilityProfile(
+        name="Stale Reference",
+        tool_window_overrides=(
+            ToolWindowAccessibilityOverride(
+                tool_window_id="does-not-exist",
+            ),
+        ),
+    )
+
+    service = _create_service(
+        profile,
+    )
+
+    with pytest.raises(
+        AccessibilityProfileActivationError,
+    ):
+        service.activate_profile(
+            profile.profile_id,
+        )
+
+    assert service.active_profile_id is None
+
+
+def test_activate_profile_wraps_floating_document_area_conflict() -> None:
+    """A profile that would move a currently-floating tool window into
+    the document area hits ToolWindowService's own floating/DOCUMENT
+    conflict guard -- that ValueError must surface as
+    AccessibilityProfileActivationError, the one error type callers of
+    activate_profile need to handle."""
+
+    profile = AccessibilityProfile(
+        name="Conflicting Layout",
+        tool_window_overrides=(
+            ToolWindowAccessibilityOverride(
+                tool_window_id="git-changes",
+                area=ToolWindowArea.DOCUMENT,
+            ),
+        ),
+    )
+
+    service = _create_service(
+        profile,
+    )
+
+    service.tool_window_service.set_floating(
+        "git-changes",
+        True,
+    )
+
+    with pytest.raises(
+        AccessibilityProfileActivationError,
+    ):
+        service.activate_profile(
+            profile.profile_id,
+        )
+
+    assert service.active_profile_id is None
+
+
 def test_profile_rejects_auto_hide_for_currently_floating_window() -> None:
     profile = AccessibilityProfile(
         name="Invalid Auto Hide",

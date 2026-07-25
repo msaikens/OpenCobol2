@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import stat
 
 import pytest
 
 import opencobol2.documents.storage as document_storage
 from opencobol2.documents import (
     ByteOrderMark,
+    DocumentDecodeError,
     DocumentStorage,
     LineEnding,
     TextDocument,
@@ -120,6 +122,31 @@ def test_load_uses_explicit_fallback_encoding(
     assert document.byte_order_mark is None
 
 
+def test_load_raises_document_decode_error_on_bad_encoding(
+    tmp_path: Path,
+) -> None:
+    """A file that isn't valid UTF-8 (the default assumed encoding, with
+    no BOM to override it) must fail with a clear domain error instead
+    of a raw UnicodeDecodeError escaping the storage layer."""
+
+    source_path = tmp_path / "legacy.cob"
+    source_path.write_bytes(
+        "café\r\n".encode(
+            "cp1252",
+        )
+    )
+
+    storage = DocumentStorage()
+
+    with pytest.raises(
+        DocumentDecodeError,
+        match="could not be decoded",
+    ):
+        storage.load(
+            source_path,
+        )
+
+
 def test_load_detects_dominant_line_ending(
     tmp_path: Path,
 ) -> None:
@@ -177,6 +204,43 @@ def test_save_preserves_encoding_bom_and_line_ending(
         )
     )
     assert document.is_modified is False
+
+
+def test_save_overwrites_read_only_file(
+    tmp_path: Path,
+) -> None:
+    """os.replace() refuses to overwrite a read-only destination on
+    Windows regardless of the replacement file's own mode -- Save must
+    still succeed when the user explicitly asked to save."""
+
+    source_path = tmp_path / "program.cob"
+    source_path.write_bytes(
+        b"FIRST\r\n"
+    )
+    source_path.chmod(
+        stat.S_IREAD,
+    )
+
+    storage = DocumentStorage()
+
+    try:
+        document = storage.load(
+            source_path,
+        )
+        document.replace_text(
+            "CHANGED\n"
+        )
+
+        saved_path = storage.save(
+            document,
+        )
+
+        assert saved_path == source_path
+        assert source_path.read_bytes() == b"CHANGED\r\n"
+    finally:
+        source_path.chmod(
+            stat.S_IWRITE | stat.S_IREAD,
+        )
 
 
 def test_save_as_assigns_path_to_untitled_document(

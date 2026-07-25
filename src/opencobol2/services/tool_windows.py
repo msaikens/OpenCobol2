@@ -215,6 +215,19 @@ class ToolWindowService:
             tool_window_id,
         )
 
+        if (
+            floating
+            and state.area is ToolWindowArea.DOCUMENT
+        ):
+            # DOCUMENT area means "pinned like an editor tab";
+            # floating means "detached into its own top-level window".
+            # Allowing both at once produces a shell state no renderer
+            # branch is written to handle.
+            raise ValueError(
+                "A document-area tool window cannot be made "
+                f"floating: {tool_window_id!r}."
+            )
+
         return self._store(
             replace(
                 state,
@@ -256,6 +269,18 @@ class ToolWindowService:
         state = self.get_state(
             tool_window_id,
         )
+
+        if (
+            area is ToolWindowArea.DOCUMENT
+            and state.floating
+        ):
+            # See the matching check in set_floating(): a floating,
+            # document-area tool window is a combination no renderer
+            # branch is written to handle.
+            raise ValueError(
+                "A floating tool window cannot be moved to the "
+                f"document area: {tool_window_id!r}."
+            )
 
         return self._store(
             replace(

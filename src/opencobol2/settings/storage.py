@@ -422,6 +422,14 @@ def _decode_compiler_settings(
 
     if raw_profiles is None:
         profiles = defaults.profiles
+        # The bundled default profile set and its default_profile_id
+        # are a matched pair -- fall back to the global default only
+        # when profiles weren't customized either.
+        default_profile_id_fallback = (
+            str(defaults.default_profile_id)
+            if defaults.default_profile_id is not None
+            else None
+        )
     else:
         profile_values = _require_list(
             raw_profiles,
@@ -433,14 +441,20 @@ def _decode_compiler_settings(
             )
             for raw_profile in profile_values
         )
+        # Custom profiles were given without an explicit
+        # default_profile_id. The global default's UUID almost
+        # certainly doesn't name any of these custom profiles, and
+        # CompilerSettings rejects a default_profile_id that isn't
+        # one of its own profiles -- so falling back to it here would
+        # make settings with valid custom profiles fail to load
+        # entirely. None is a settings value CompilerSettings already
+        # accepts; picking a default profile just isn't this loader's
+        # call to make.
+        default_profile_id_fallback = None
 
     raw_default_profile_id = settings.get(
         "default_profile_id",
-        (
-            str(defaults.default_profile_id)
-            if defaults.default_profile_id is not None
-            else None
-        ),
+        default_profile_id_fallback,
     )
 
     default_profile_id = _optional_uuid(

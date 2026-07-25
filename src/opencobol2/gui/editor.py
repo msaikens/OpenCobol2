@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 from opencobol2.compiler import CompilerDiagnostic
 from opencobol2.documents import (
     DocumentAlreadyOpenError,
+    DocumentDecodeError,
     DocumentService,
     TextDocument,
     WorkspaceDocument,
@@ -2269,11 +2270,23 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Open a file, activating its tab if it's already open."""
 
-        workspace_document = (
-            self._document_service.open_document(
-                path,
+        try:
+            workspace_document = (
+                self._document_service.open_document(
+                    path,
+                )
             )
-        )
+        except (
+            OSError,
+            DocumentDecodeError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Open File",
+                f"Unable to open file: {error}",
+            )
+            return
+
         self._show_document(
             workspace_document,
         )

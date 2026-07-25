@@ -374,6 +374,31 @@ def test_recent_projects_settings_normalize_to_path() -> None:
     )
 
 
+def test_recent_projects_settings_deduplicates_at_construction() -> None:
+    settings = RecentProjectsSettings(
+        paths=(
+            Path(
+                "/a.json",
+            ),
+            Path(
+                "/b.json",
+            ),
+            Path(
+                "/a.json",
+            ),
+        ),
+    )
+
+    assert settings.paths == (
+        Path(
+            "/a.json",
+        ),
+        Path(
+            "/b.json",
+        ),
+    )
+
+
 def test_recent_projects_settings_cap_length() -> None:
     settings = RecentProjectsSettings(
         paths=tuple(

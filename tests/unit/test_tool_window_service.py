@@ -185,6 +185,50 @@ def test_move_to_document_area_forces_pinned_state() -> None:
     assert state.pinned is True
 
 
+def test_document_area_window_cannot_be_made_floating() -> None:
+    """DOCUMENT area means pinned like an editor tab; floating means
+    detached into its own top-level window -- a tool window must not
+    end up in both states at once."""
+
+    service = _create_service(
+        _create_definition(),
+    )
+
+    service.move_to_area(
+        "output",
+        ToolWindowArea.DOCUMENT,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot be made floating",
+    ):
+        service.set_floating(
+            "output",
+            True,
+        )
+
+
+def test_floating_window_cannot_be_moved_to_document_area() -> None:
+    service = _create_service(
+        _create_definition(),
+    )
+
+    service.set_floating(
+        "output",
+        True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot be moved to the document area",
+    ):
+        service.move_to_area(
+            "output",
+            ToolWindowArea.DOCUMENT,
+        )
+
+
 def test_move_rejects_disallowed_area() -> None:
     definition = ToolWindowDefinition(
         tool_window_id="output",

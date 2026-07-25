@@ -209,6 +209,52 @@ def test_fetch_specific_remote_verifies_exact_git_command(
     )
 
 
+def test_fetch_timeout_override_passed_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A network fetch can need a longer budget than local ops -- the
+    per-service default shouldn't be the only knob available."""
+
+    captured_timeout: float | None = None
+
+    def invoke_git_process(
+        **kwargs: object,
+    ) -> GitCommandResult:
+        nonlocal captured_timeout
+
+        command = kwargs["command"]
+        assert isinstance(command, tuple)
+
+        if "rev-parse" in command:
+            return _completed_result(
+                command,
+                stdout="/source/project\n",
+            )
+
+        if command[1] == "fetch":
+            captured_timeout = kwargs["timeout_seconds"]
+            return _completed_result(command)
+
+        return _completed_result(
+            command,
+            stdout=_status_output(),
+        )
+
+    monkeypatch.setattr(
+        git_service_module,
+        "invoke_git_process",
+        invoke_git_process,
+    )
+
+    service = GitService(timeout_seconds=30.0)
+    service.fetch(
+        "/source/project",
+        timeout_seconds=300.0,
+    )
+
+    assert captured_timeout == 300.0
+
+
 def test_fetch_rejects_blank_remote_name() -> None:
     service = GitService()
 

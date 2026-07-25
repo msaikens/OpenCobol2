@@ -855,6 +855,15 @@ def create_main_window(
             )
         ),
     )
+    _invalid_contribution_ids = (
+        contribution_service.validate_contributions()
+    )
+
+    if _invalid_contribution_ids:
+        raise RuntimeError(
+            "Command contributions reference unregistered command "
+            f"IDs: {', '.join(_invalid_contribution_ids)}."
+        )
 
     status_bar_service = StatusBarService(
         registry=_create_status_bar_registry(

@@ -649,7 +649,11 @@ def test_hidden_dynamic_items_can_be_included() -> None:
     )
 
 
-def test_dynamic_menu_provider_must_produce_dynamic_menu_items() -> None:
+def test_dynamic_menu_provider_producing_invalid_items_is_isolated() -> None:
+    """A misbehaving provider (wrong return type) must not blank out the
+    rest of the menu -- resolve_surface() isolates it and skips just
+    this contribution instead of propagating the TypeError."""
+
     registry, service = _create_service()
 
     def invalid_provider(
@@ -670,14 +674,12 @@ def test_dynamic_menu_provider_must_produce_dynamic_menu_items() -> None:
         )
     )
 
-    with pytest.raises(
-        TypeError,
-        match="DynamicMenuItem instances",
-    ):
-        service.resolve_surface(
-            CommandSurfaceKind.MENU,
-            "file",
-        )
+    resolved = service.resolve_surface(
+        CommandSurfaceKind.MENU,
+        "file",
+    )
+
+    assert resolved == ()
 
 
 def test_execute_dynamic_item_uses_provider_supplied_context() -> None:

@@ -49,6 +49,8 @@ def connect_menu(
     menu: QMenu,
     surface_id: str,
     contribution_service: CommandContributionService,
+    *,
+    _ancestor_surface_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Wire a menu to rebuild its contents from live state on every open."""
 
@@ -57,12 +59,14 @@ def connect_menu(
             menu,
             surface_id,
             contribution_service,
+            _ancestor_surface_ids=_ancestor_surface_ids,
         )
     )
     populate_menu(
         menu,
         surface_id,
         contribution_service,
+        _ancestor_surface_ids=_ancestor_surface_ids,
     )
 
 
@@ -70,14 +74,33 @@ def populate_menu(
     menu: QMenu,
     surface_id: str,
     contribution_service: CommandContributionService,
+    *,
+    _ancestor_surface_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Clear and repopulate one menu from current command contribution state."""
 
     menu.clear()
+    # A submenu contribution whose submenu_id points back to one of its
+    # own ancestors would otherwise recurse into connect_menu forever
+    # (stack overflow) the moment this menu is shown. Checked against
+    # the ancestors *above* this level (not including surface_id
+    # itself) so a direct self-reference still renders once -- as an
+    # entry whose own submenu comes up empty -- rather than vanishing
+    # outright, matching how a longer A -> B -> A cycle is broken one
+    # level in rather than by hiding the outer entry.
+    child_ancestor_surface_ids = (
+        _ancestor_surface_ids | {surface_id}
+    )
 
     for resolved in contribution_service.resolve_surface(
         CommandSurfaceKind.MENU,
         surface_id,
+        # A hidden contribution's own action must not render, but its
+        # separator_before/after still marks a real boundary between
+        # its visible neighbors -- resolving with include_hidden=True
+        # and gating just the addAction() call keeps that boundary
+        # intact instead of silently dropping it along with the item.
+        include_hidden=True,
     ):
         if isinstance(
             resolved,
@@ -87,13 +110,16 @@ def populate_menu(
                 menu,
                 resolved.contribution.separator_before,
             )
-            menu.addAction(
-                _create_command_action(
-                    menu,
-                    resolved,
-                    contribution_service,
+
+            if resolved.state.visible:
+                menu.addAction(
+                    _create_command_action(
+                        menu,
+                        resolved,
+                        contribution_service,
+                    )
                 )
-            )
+
             _add_separator_if_requested(
                 menu,
                 resolved.contribution.separator_after,
@@ -104,6 +130,12 @@ def populate_menu(
             resolved,
             ResolvedSubmenuContribution,
         ):
+            if (
+                resolved.contribution.submenu_id
+                in _ancestor_surface_ids
+            ):
+                continue
+
             _add_separator_if_requested(
                 menu,
                 resolved.contribution.separator_before,
@@ -115,6 +147,7 @@ def populate_menu(
                 submenu,
                 resolved.contribution.submenu_id,
                 contribution_service,
+                _ancestor_surface_ids=child_ancestor_surface_ids,
             )
             _add_separator_if_requested(
                 menu,
@@ -131,6 +164,9 @@ def populate_menu(
                 resolved.contribution.separator_before,
             )
             for resolved_item in resolved.items:
+                if not resolved_item.state.visible:
+                    continue
+
                 menu.addAction(
                     _create_dynamic_action(
                         menu,

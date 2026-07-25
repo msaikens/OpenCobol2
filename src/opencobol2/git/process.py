@@ -70,6 +70,15 @@ def invoke_git_process(
         if environment is None
         else environment
     )
+    process_environment.setdefault(
+        # Without this, a git operation that needs credentials (clone,
+        # fetch, pull, push) blocks waiting on an interactive terminal
+        # prompt instead of failing fast -- there's no terminal to
+        # prompt in this application, so let git fail immediately and
+        # report the auth error instead of hanging until the timeout.
+        "GIT_TERMINAL_PROMPT",
+        "0",
+    )
 
     started_at = time.perf_counter()
 
@@ -80,6 +89,7 @@ def invoke_git_process(
             env=process_environment,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             errors="replace",
             timeout=timeout_seconds,
             check=False,
@@ -150,6 +160,7 @@ def _normalize_process_output(
         bytes,
     ):
         return output.decode(
+            "utf-8",
             errors="replace",
         )
 

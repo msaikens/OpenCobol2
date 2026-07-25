@@ -82,6 +82,7 @@ def test_reset_mixed_default_verifies_exact_git_command(
         "reset",
         "--mixed",
         "HEAD",
+        "--",
     )
 
 
@@ -125,6 +126,7 @@ def test_reset_hard_verifies_exact_git_command(
         "reset",
         "--hard",
         "origin/main",
+        "--",
     )
 
 
@@ -138,6 +140,19 @@ def test_reset_rejects_invalid_mode() -> None:
         service.reset(
             "/source/project",
             mode="bogus",
+        )
+
+
+def test_reset_rejects_dash_prefixed_target() -> None:
+    service = GitService()
+
+    with pytest.raises(
+        ValueError,
+        match="must not start with '-'",
+    ):
+        service.reset(
+            "/source/project",
+            "--upload-pack=evil",
         )
 
 
@@ -246,6 +261,52 @@ def test_revert_commit_with_no_commit_verifies_exact_git_command(
         "revert",
         "--no-commit",
         "abc123",
+        "--",
+    )
+
+
+def test_revert_commit_with_mainline_verifies_exact_git_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_command: tuple[str, ...] | None = None
+
+    def invoke_git_process(
+        **kwargs: object,
+    ) -> GitCommandResult:
+        nonlocal captured_command
+
+        command = kwargs["command"]
+        assert isinstance(command, tuple)
+
+        if "rev-parse" in command:
+            return _completed_result(command, stdout="/source/project\n")
+
+        if command[1] == "revert":
+            captured_command = command
+            return _completed_result(command)
+
+        return _completed_result(command, stdout=_status_output())
+
+    monkeypatch.setattr(
+        git_service_module,
+        "invoke_git_process",
+        invoke_git_process,
+    )
+
+    service = GitService()
+    service.revert_commit(
+        "/source/project",
+        "abc123",
+        mainline=1,
+    )
+
+    assert captured_command == (
+        "git",
+        "revert",
+        "-m",
+        "1",
+        "abc123",
+        "--",
     )
 
 
@@ -387,6 +448,52 @@ def test_cherry_pick_commit_verifies_exact_git_command(
         "cherry-pick",
         "--no-commit",
         "abc123",
+        "--",
+    )
+
+
+def test_cherry_pick_commit_with_mainline_verifies_exact_git_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_command: tuple[str, ...] | None = None
+
+    def invoke_git_process(
+        **kwargs: object,
+    ) -> GitCommandResult:
+        nonlocal captured_command
+
+        command = kwargs["command"]
+        assert isinstance(command, tuple)
+
+        if "rev-parse" in command:
+            return _completed_result(command, stdout="/source/project\n")
+
+        if command[1] == "cherry-pick":
+            captured_command = command
+            return _completed_result(command)
+
+        return _completed_result(command, stdout=_status_output())
+
+    monkeypatch.setattr(
+        git_service_module,
+        "invoke_git_process",
+        invoke_git_process,
+    )
+
+    service = GitService()
+    service.cherry_pick_commit(
+        "/source/project",
+        "abc123",
+        mainline=1,
+    )
+
+    assert captured_command == (
+        "git",
+        "cherry-pick",
+        "-m",
+        "1",
+        "abc123",
+        "--",
     )
 
 

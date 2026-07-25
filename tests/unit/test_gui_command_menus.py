@@ -287,3 +287,137 @@ def test_build_menu_bar_creates_top_level_menus(
         menus.keys(),
     ) == {"file"}
     assert menus["file"].title() == "&File"
+
+
+def test_populate_menu_breaks_self_referencing_submenu_cycle(
+    qapp,
+) -> None:
+    """A submenu whose submenu_id points back to its own surface must
+    not recurse forever the moment the menu is shown."""
+
+    command_registry = CommandRegistry()
+    contribution_registry = CommandContributionRegistry()
+    contribution_registry.register(
+        SubmenuContribution(
+            contribution_id="menu.cyclic.self",
+            title="Cyclic",
+            surface_kind=CommandSurfaceKind.MENU,
+            surface_id="cyclic",
+            submenu_id="cyclic",
+        )
+    )
+    service = CommandContributionService(
+        command_service=CommandService(
+            registry=command_registry,
+        ),
+        contribution_registry=contribution_registry,
+    )
+    menu = QMenu()
+
+    populate_menu(
+        menu,
+        "cyclic",
+        service,
+    )
+
+    cyclic_action = next(
+        action
+        for action in menu.actions()
+        if action.text() == "Cyclic"
+    )
+    submenu = cyclic_action.menu()
+
+    assert submenu is not None
+    # Showing the nested submenu must not recurse back into itself.
+    submenu.aboutToShow.emit()
+    assert submenu.actions() == []
+
+
+def test_populate_menu_keeps_separator_around_hidden_contribution(
+    qapp,
+) -> None:
+    """A hidden contribution's own action must not render, but a
+    separator attached to it still marks a real boundary between its
+    visible neighbors and must not disappear along with the item."""
+
+    command_registry = CommandRegistry()
+    command_registry.register(
+        Command(
+            command_id="test.before",
+            title="Before",
+            handler=lambda context: None,
+        )
+    )
+    command_registry.register(
+        Command(
+            command_id="test.hidden",
+            title="Hidden",
+            handler=lambda context: None,
+            state_provider=lambda context: CommandState(
+                visible=False,
+            ),
+        )
+    )
+    command_registry.register(
+        Command(
+            command_id="test.after",
+            title="After",
+            handler=lambda context: None,
+        )
+    )
+
+    contribution_registry = CommandContributionRegistry()
+    contribution_registry.register(
+        CommandContribution(
+            contribution_id="menu.file.before",
+            command_id="test.before",
+            surface_kind=CommandSurfaceKind.MENU,
+            surface_id="file",
+            order=10,
+        )
+    )
+    contribution_registry.register(
+        CommandContribution(
+            contribution_id="menu.file.hidden",
+            command_id="test.hidden",
+            surface_kind=CommandSurfaceKind.MENU,
+            surface_id="file",
+            order=20,
+            separator_before=True,
+        )
+    )
+    contribution_registry.register(
+        CommandContribution(
+            contribution_id="menu.file.after",
+            command_id="test.after",
+            surface_kind=CommandSurfaceKind.MENU,
+            surface_id="file",
+            order=30,
+        )
+    )
+
+    service = CommandContributionService(
+        command_service=CommandService(
+            registry=command_registry,
+        ),
+        contribution_registry=contribution_registry,
+    )
+    menu = QMenu()
+
+    populate_menu(
+        menu,
+        "file",
+        service,
+    )
+
+    titles = [
+        action.text()
+        for action in menu.actions()
+    ]
+    assert "Before" in titles
+    assert "Hidden" not in titles
+    assert "After" in titles
+    assert any(
+        action.isSeparator()
+        for action in menu.actions()
+    )

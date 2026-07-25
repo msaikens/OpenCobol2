@@ -95,6 +95,34 @@ def test_open_path_twice_reuses_the_existing_tab(
     assert tabs.currentIndex() == 0
 
 
+def test_open_path_shows_error_dialog_on_undecodable_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    """A file that can't be decoded as UTF-8 must show a clear error
+    dialog and leave the tab bar untouched, not crash the double-click
+    handler it's wired to."""
+
+    file_path = tmp_path / "legacy.cbl"
+    file_path.write_bytes(
+        "café\r\n".encode(
+            "cp1252",
+        )
+    )
+    tabs = _build_tabs()
+
+    with patch.object(
+        QMessageBox,
+        "critical",
+    ) as mock_critical:
+        tabs.open_path(
+            file_path,
+        )
+
+    mock_critical.assert_called_once()
+    assert tabs.count() == 0
+
+
 def test_editing_text_marks_the_tab_dirty_and_syncs_the_document(
     qapp,
     tmp_path: Path,

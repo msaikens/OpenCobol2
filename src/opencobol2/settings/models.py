@@ -316,15 +316,23 @@ class RecentProjectsSettings:
     paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
-        """Normalize and cap the recent project path list."""
-        normalized_paths = tuple(
-            Path(path) for path in self.paths
-        )[:MAX_RECENT_PROJECTS]
+        """Normalize, deduplicate, and cap the recent project path list."""
+        seen_paths: set[Path] = set()
+        deduplicated_paths: list[Path] = []
+
+        for path in self.paths:
+            normalized_path = Path(path)
+
+            if normalized_path in seen_paths:
+                continue
+
+            seen_paths.add(normalized_path)
+            deduplicated_paths.append(normalized_path)
 
         object.__setattr__(
             self,
             "paths",
-            normalized_paths,
+            tuple(deduplicated_paths)[:MAX_RECENT_PROJECTS],
         )
 
     def with_recorded_path(

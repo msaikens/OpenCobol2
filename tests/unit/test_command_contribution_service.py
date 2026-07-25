@@ -9,7 +9,6 @@ from opencobol2.commands import (
     CommandContext,
     CommandContribution,
     CommandContributionRegistry,
-    CommandNotFoundError,
     CommandRegistry,
     CommandState,
     CommandSurfaceKind,
@@ -225,7 +224,10 @@ def test_service_preserves_contribution_order() -> None:
     )
 
 
-def test_service_rejects_contribution_for_missing_command() -> None:
+def test_service_skips_contribution_for_missing_command() -> None:
+    """A contribution referencing a stale/typo'd command ID must not
+    blank out an entire menu -- it's isolated and skipped instead."""
+
     service = _create_service(
         commands=(),
         contributions=(
@@ -236,14 +238,77 @@ def test_service_rejects_contribution_for_missing_command() -> None:
         ),
     )
 
-    with pytest.raises(
-        CommandNotFoundError,
-        match="Command is not registered",
-    ):
-        service.resolve_surface(
-            CommandSurfaceKind.MENU,
-            "file",
-        )
+    resolved = service.resolve_surface(
+        CommandSurfaceKind.MENU,
+        "file",
+    )
+
+    assert resolved == ()
+
+
+def test_service_skips_only_broken_contribution_among_others() -> None:
+    working_command = Command(
+        command_id="file.save",
+        title="Save",
+        handler=lambda context: None,
+    )
+    service = _create_service(
+        commands=(working_command,),
+        contributions=(
+            _create_contribution(
+                contribution_id="plugin.menu.file.missing",
+                command_id="plugin.missing",
+            ),
+            _create_contribution(
+                contribution_id="file.menu.save",
+                command_id="file.save",
+                order=1,
+            ),
+        ),
+    )
+
+    resolved = service.resolve_surface(
+        CommandSurfaceKind.MENU,
+        "file",
+    )
+
+    assert len(resolved) == 1
+    assert resolved[0].command.command_id == "file.save"
+
+
+def test_validate_contributions_reports_missing_command() -> None:
+    service = _create_service(
+        commands=(),
+        contributions=(
+            _create_contribution(
+                contribution_id="plugin.menu.file.missing",
+                command_id="plugin.missing",
+            ),
+        ),
+    )
+
+    assert service.validate_contributions() == (
+        "plugin.menu.file.missing",
+    )
+
+
+def test_validate_contributions_returns_empty_when_all_resolve() -> None:
+    working_command = Command(
+        command_id="file.save",
+        title="Save",
+        handler=lambda context: None,
+    )
+    service = _create_service(
+        commands=(working_command,),
+        contributions=(
+            _create_contribution(
+                contribution_id="file.menu.save",
+                command_id="file.save",
+            ),
+        ),
+    )
+
+    assert service.validate_contributions() == ()
 
 
 def test_execute_contribution_invokes_referenced_command() -> None:

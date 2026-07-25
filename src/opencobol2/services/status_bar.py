@@ -91,12 +91,27 @@ class StatusBarService:
     ) -> tuple[ResolvedStatusBarItem, ...]:
         """Resolve every item in one alignment group, in display order."""
 
+        resolved_items: list[ResolvedStatusBarItem] = []
+
+        for definition in self._registry.for_alignment(
+            alignment,
+        ):
+            try:
+                resolved_item = ResolvedStatusBarItem(
+                    definition=definition,
+                    content=definition.provider(),
+                )
+            except Exception:
+                # One misbehaving provider (raises, or returns the
+                # wrong content type) must not blank out every other
+                # item in this alignment group -- hide just this item
+                # for this refresh and keep resolving the rest.
+                continue
+
+            resolved_items.append(
+                resolved_item,
+            )
+
         return tuple(
-            ResolvedStatusBarItem(
-                definition=definition,
-                content=definition.provider(),
-            )
-            for definition in self._registry.for_alignment(
-                alignment,
-            )
+            resolved_items,
         )

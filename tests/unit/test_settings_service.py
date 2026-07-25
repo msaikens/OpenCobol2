@@ -46,6 +46,41 @@ def test_service_loads_current_settings_from_storage(
     assert service.current == expected_settings
 
 
+def test_service_falls_back_to_defaults_on_corrupt_settings_file(
+    tmp_path: Path,
+) -> None:
+    """A corrupt settings.json must not prevent the app from launching
+    at all -- it falls back to defaults and records the failure."""
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        "{not valid json",
+        encoding="utf-8",
+    )
+    storage = SettingsStorage(
+        settings_path,
+    )
+
+    service = SettingsService(
+        storage,
+    )
+
+    assert service.current == ApplicationSettings()
+    assert service.load_error is not None
+
+
+def test_service_has_no_load_error_on_clean_start(
+    tmp_path: Path,
+) -> None:
+    service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    assert service.load_error is None
+
+
 def test_apply_persists_and_updates_current_settings(
     tmp_path: Path,
 ) -> None:

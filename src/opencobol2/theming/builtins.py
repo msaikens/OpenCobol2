@@ -94,10 +94,16 @@ def _create_high_contrast_light_theme() -> Theme:
             diagnostic_error="#FF0000",
             diagnostic_warning="#B35900",
             diagnostic_information="#0000FF",
+            # Distinct from the Light theme's syntax palette and each
+            # individually verified at WCAG AAA contrast (>= 7:1)
+            # against this theme's #FFFFFF background -- the regular
+            # Light theme's syntax_number (#098658) is only 4.6:1,
+            # which fails AAA and has no business in a theme whose
+            # whole purpose is maximum contrast.
             syntax_keyword="#0000FF",
-            syntax_string="#A31515",
-            syntax_number="#098658",
-            syntax_comment="#006400",
+            syntax_string="#8B0000",
+            syntax_number="#006400",
+            syntax_comment="#444444",
         ),
     )
 
