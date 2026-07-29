@@ -5,6 +5,9 @@ from pathlib import Path
 import pytest
 
 from opencobol2.compiler import CobolSourceFormat
+from opencobol2.compiler.diagnostics import (
+    DiagnosticSeverity,
+)
 from opencobol2.language import (
     ProcedureSymbolKind,
     analyze_compilation_unit,
@@ -166,6 +169,59 @@ def test_renames_entry_is_registered() -> None:
     assert symbols["WS-COMBINED"].is_renames is True
 
 
+def test_renames_parent_name_is_the_enclosing_record_not_the_last_sibling() -> None:
+    # Editor §Semantic-9: `parent_name` used to be taken from whatever
+    # was on top of the level-nesting stack (the most recently
+    # processed *sibling*), not the enclosing 01-level record.
+    result = _analyze(
+        _data_source(
+            "       01  WS-RECORD.\n"
+            "           05  WS-A  PIC X.\n"
+            "           05  WS-B  PIC X.\n"
+            "       66  WS-COMBINED RENAMES WS-A.\n",
+        ),
+    )
+    symbols = {
+        symbol.name: symbol
+        for symbol in result.symbol_table.data_symbols
+    }
+
+    assert symbols["WS-COMBINED"].parent_name == "WS-RECORD"
+
+
+def test_duplicate_sibling_data_item_names_report_error() -> None:
+    # Editor §Semantic-3: no duplicate-name detection existed at all
+    # for DATA DIVISION items.
+    result = _analyze(
+        _data_source(
+            "       01  WS-GROUP.\n"
+            "           05  WS-FIELD  PIC X.\n"
+            "           05  WS-FIELD  PIC X(9).\n",
+        ),
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Duplicate data item name" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_same_name_under_different_parents_is_not_a_duplicate() -> None:
+    # The same elementary-item name legitimately recurs under two
+    # different groups -- only a true sibling collision is a duplicate.
+    result = _analyze(
+        _data_source(
+            "       01  WS-GROUP-A.\n"
+            "           05  WS-FIELD  PIC X.\n"
+            "       01  WS-GROUP-B.\n"
+            "           05  WS-FIELD  PIC X.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+
+
 def test_filler_is_not_registered_as_a_symbol() -> None:
     result = _analyze(
         _data_source(
@@ -238,6 +294,288 @@ def test_duplicate_paragraph_name_reports_error() -> None:
         "Duplicate procedure division name" in diagnostic.message
         for diagnostic in result.diagnostics
     )
+
+
+def test_same_paragraph_name_reused_across_sections_is_not_a_duplicate() -> None:
+    # Editor §Semantic-1: COBOL legally allows the same paragraph name
+    # in different sections, disambiguated by `PERFORM x IN
+    # section-name` -- this used to raise a false "duplicate procedure
+    # division name" ERROR.
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       SECTION-ONE SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'ONE'.\n"
+        "       SECTION-TWO SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'TWO'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.diagnostics == ()
+    names = [
+        symbol.name
+        for symbol in result.symbol_table.procedure_symbols
+        if symbol.name == "COMMON-EXIT"
+    ]
+    assert names == [
+        "COMMON-EXIT",
+        "COMMON-EXIT",
+    ]
+
+
+def test_duplicate_paragraph_name_within_one_section_still_reports_error() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       SECTION-ONE SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'ONE'.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'TWO'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Duplicate procedure division name" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_duplicate_section_name_still_reports_error() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       SECTION-ONE SECTION.\n"
+        "           DISPLAY 'ONE'.\n"
+        "       SECTION-ONE SECTION.\n"
+        "           DISPLAY 'TWO'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Duplicate procedure division name" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_unqualified_reference_to_a_cross_section_duplicate_is_ambiguous() -> None:
+    # Editor §Semantic-5: now that Semantic-1 legitimately allows the
+    # same paragraph name in two sections, an unqualified reference to
+    # it is a real, reachable ambiguity -- previously unreachable since
+    # every such duplicate was rejected outright at declaration.
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           PERFORM COMMON-EXIT.\n"
+        "       SECTION-ONE SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'ONE'.\n"
+        "       SECTION-TWO SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'TWO'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.has_errors is False
+    assert any(
+        diagnostic.severity is DiagnosticSeverity.WARNING
+        and "Ambiguous reference to paragraph or section" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_perform_in_section_resolves_the_qualifier_as_a_procedure_name() -> None:
+    # Editor §Semantic-6: `PERFORM name IN section` used to route the
+    # qualifier into a data-name lookup, producing a nonsensical
+    # "possibly undefined data name" warning for a real section name.
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           PERFORM COMMON-EXIT IN SECTION-ONE.\n"
+        "       SECTION-ONE SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'ONE'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_perform_in_undefined_section_reports_undefined_procedure_error() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           PERFORM COMMON-EXIT IN NO-SUCH-SECTION.\n"
+        "       SECTION-ONE SECTION.\n"
+        "       COMMON-EXIT.\n"
+        "           DISPLAY 'ONE'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Undefined paragraph or section: NO-SUCH-SECTION"
+        in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_go_to_a_defined_paragraph_is_clean() -> None:
+    # Editor §Semantic-11: `GO TO` used to be checked against the DATA
+    # symbol table instead of the procedure symbol table.
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           GO TO SUB-PARA.\n"
+        "       SUB-PARA.\n"
+        "           DISPLAY 'HI'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_go_to_an_undefined_paragraph_reports_undefined_procedure_error() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           GO TO TYPO-PARA.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Undefined paragraph or section: TYPO-PARA"
+        in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+    assert not any(
+        "data name" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_alter_defined_paragraphs_is_clean() -> None:
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           ALTER PARA-A TO PROCEED TO PARA-B.\n"
+        "       PARA-A.\n"
+        "           DISPLAY 'A'.\n"
+        "       PARA-B.\n"
+        "           DISPLAY 'B'.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_condition_name_used_as_move_target_reports_error() -> None:
+    # Editor §Semantic-10: an 88-level condition-name is illegal as a
+    # MOVE receiving field, but used to analyze cleanly with zero
+    # diagnostics.
+    source = (
+        _data_source(
+            "       01  WS-FLAG  PIC X.\n"
+            "           88  WS-DONE  VALUE 'Y'.\n",
+        ).replace(
+            "           STOP RUN.\n",
+            "           MOVE 'D' TO WS-DONE.\n",
+        )
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Condition-name cannot be used as a MOVE target"
+        in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_redefines_target_is_a_resolved_reference() -> None:
+    # Editor §Semantic-4: a name used only inside a data-description
+    # clause (REDEFINES, RENAMES, OCCURS DEPENDING ON) used to be
+    # entirely invisible to `find_data_references`.
+    result = _analyze(
+        _data_source(
+            "       01  WS-ORIGINAL  PIC 9(10).\n"
+            "       01  WS-ALIAS REDEFINES WS-ORIGINAL PIC X(10).\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+    assert len(
+        result.find_data_references(
+            "WS-ORIGINAL",
+        ),
+    ) == 1
+
+
+def test_occurs_depending_on_target_is_a_resolved_reference() -> None:
+    result = _analyze(
+        _data_source(
+            "       01  WS-COUNT  PIC 9(3).\n"
+            "       01  WS-TABLE.\n"
+            "           05  WS-ITEM PIC X OCCURS 1 TO 10 "
+            "TIMES DEPENDING ON WS-COUNT.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+    assert len(
+        result.find_data_references(
+            "WS-COUNT",
+        ),
+    ) == 1
+
+
+def test_renames_thru_target_is_a_resolved_reference() -> None:
+    result = _analyze(
+        _data_source(
+            "       01  WS-RECORD.\n"
+            "           05  WS-A  PIC X.\n"
+            "           05  WS-B  PIC X.\n"
+            "       66  WS-COMBINED RENAMES WS-A THRU WS-B.\n",
+        ),
+    )
+
+    assert result.diagnostics == ()
+    assert len(
+        result.find_data_references(
+            "WS-B",
+        ),
+    ) == 1
 
 
 def test_unnamed_leading_paragraph_is_not_a_symbol() -> None:
@@ -504,6 +842,25 @@ def test_generic_statement_token_warns_when_undefined() -> None:
         "Possibly undefined data name: WS-BOGUS" in d.message
         for d in result.diagnostics
     )
+
+
+def test_exit_paragraph_does_not_warn_as_an_undefined_data_name() -> None:
+    # Editor §Semantic-12: `PARAGRAPH` was missing from the reserved-word
+    # table, so `EXIT PARAGRAPH.` produced a false "possibly undefined
+    # data name" warning via the generic-statement token scan.
+    source = (
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           PERFORM UNTIL 1 > 2\n"
+        "               EXIT PARAGRAPH\n"
+        "           END-PERFORM.\n"
+    )
+    result = _analyze(
+        source,
+    )
+
+    assert result.diagnostics == ()
 
 
 def test_display_operand_token_resolved() -> None:

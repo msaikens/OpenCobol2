@@ -197,10 +197,20 @@ def _collect_from_statements(
             statement,
             IfStatement,
         ):
-            _add(
-                statement,
-                collected,
-            )
+            # Editor §Editor-Facing-5: made consistent with
+            # `PerformStatement`'s own "nothing to fold" guard below --
+            # an empty IF (both branches empty) hid zero lines of
+            # content while an equally-empty out-of-line PERFORM
+            # correctly got no fold range at all.
+            if (
+                statement.then_statements
+                or statement.else_statements
+            ):
+                _add(
+                    statement,
+                    collected,
+                )
+
             _collect_from_statements(
                 statement.then_statements,
                 collected,
@@ -226,16 +236,22 @@ def _collect_from_statements(
             statement,
             EvaluateStatement,
         ):
-            _add(
-                statement,
-                collected,
-            )
-
-            for branch in statement.branches:
+            if any(
+                branch.statements
+                for branch in statement.branches
+            ):
                 _add(
-                    branch,
+                    statement,
                     collected,
                 )
+
+            for branch in statement.branches:
+                if branch.statements:
+                    _add(
+                        branch,
+                        collected,
+                    )
+
                 _collect_from_statements(
                     branch.statements,
                     collected,

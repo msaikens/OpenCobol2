@@ -70,6 +70,18 @@ def compute_signature_help(
         return None
 
     tokens = lex_result.tokens
+    # Editor §Editor-Facing-3: scanning in source order and returning on
+    # the *first* match always picks the outermost FUNCTION call, since
+    # an outer call's parens fully enclose any nested call's. Instead,
+    # every candidate whose range contains the cursor is considered,
+    # and the last (necessarily most deeply nested, since a later match
+    # can only exist if it's inside an earlier containing one) match
+    # wins. Editor §Editor-Facing-6's fix (below) can also mean a
+    # signature-bearing candidate has no signature -- `continue`,
+    # rather than returning `None` outright, so a more specific known
+    # inner call is still found even when an outer/unrecognized
+    # wrapper isn't.
+    best: SignatureHelp | None = None
 
     for index, token in enumerate(tokens):
         if (
@@ -96,9 +108,18 @@ def compute_signature_help(
         )
 
         if close_paren is None:
-            continue
-
-        if not _position_between(
+            # Editor §Editor-Facing-6: an unclosed call (the user is
+            # still typing its argument list -- exactly when signature
+            # help is most useful) must not be treated as no match at
+            # all; only the lower bound can be checked; there's no
+            # upper bound to test against.
+            if not _position_at_or_after(
+                open_paren.span.end,
+                line,
+                column,
+            ):
+                continue
+        elif not _position_between(
             open_paren.span.end,
             close_paren.span.start,
             line,
@@ -111,14 +132,14 @@ def compute_signature_help(
         )
 
         if signature is None:
-            return None
+            continue
 
-        return SignatureHelp(
+        best = SignatureHelp(
             name=name_token.text,
             signature=signature,
         )
 
-    return None
+    return best
 
 
 def _find_matching_close_paren(
@@ -170,4 +191,18 @@ def _position_between(
             end.line,
             end.column,
         )
+    )
+
+
+def _position_at_or_after(
+    start,
+    line: int,
+    column: int,
+) -> bool:
+    return (
+        line,
+        column,
+    ) >= (
+        start.line,
+        start.column,
     )

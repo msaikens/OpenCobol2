@@ -71,6 +71,39 @@ def test_does_not_match_a_tag_as_a_substring_of_another_word() -> None:
     assert entries == ()
 
 
+def test_does_not_match_a_tag_embedded_in_a_hyphenated_identifier() -> None:
+    # Editor §Editor-Facing-4: `\b` alone treats `-` as a word boundary,
+    # so a tag word hyphen-flanked inside a longer COBOL identifier
+    # reference (hyphen-delimited, unlike ordinary English words) used
+    # to be false-flagged as a real standalone tag.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "      * See WS-HACK-FLAG for details on this switch.\n"
+    )
+
+    entries = compute_task_list_entries(
+        source,
+    )
+
+    assert entries == ()
+
+
+def test_still_matches_a_real_tag_next_to_punctuation() -> None:
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "      * TODO: fix this, it's a real tag.\n"
+    )
+
+    entries = compute_task_list_entries(
+        source,
+    )
+
+    assert len(entries) == 1
+    assert entries[0].tag == "TODO"
+
+
 def test_comment_without_a_recognized_tag_produces_no_entry() -> None:
     source = (
         "       IDENTIFICATION DIVISION.\n"

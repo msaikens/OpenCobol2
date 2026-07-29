@@ -37,6 +37,7 @@ RESERVED_WORDS: frozenset[str] = frozenset(
         "LOCAL-STORAGE",
         "LINKAGE",
         "SECTION",
+        "PARAGRAPH",
         "SOURCE-COMPUTER",
         "OBJECT-COMPUTER",
         "SPECIAL-NAMES",
@@ -410,6 +411,14 @@ RESERVED_WORDS: frozenset[str] = frozenset(
         "SKIP1",
         "SKIP2",
         "SKIP3",
+        # GnuCOBOL special registers (ACCEPT/DISPLAY-oriented, no
+        # dedicated grammar rule so these must be reserved to avoid
+        # false "possibly undefined data name" warnings)
+        "ARGUMENT-NUMBER",
+        "ARGUMENT-VALUE",
+        "ENVIRONMENT-NAME",
+        "ENVIRONMENT-VALUE",
+        "COMMAND-LINE",
         # JSON / XML
         "JSON",
         "JSON-CODE",

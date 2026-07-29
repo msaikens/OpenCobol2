@@ -56,15 +56,21 @@ def compute_task_list_entries(
     except Exception:
         return ()
 
+    # `\b` alone treats `-` as a word boundary, but COBOL identifiers
+    # are hyphen-delimited (`WS-HACK-FLAG`) -- a plain `\b...\b` tag
+    # pattern would false-positive on a tag word embedded between
+    # hyphens in a longer identifier reference, not just a real
+    # standalone tag. Excluding `-` from both sides alongside the
+    # ordinary word characters `\b` already excludes closes that gap.
     pattern = re.compile(
-        r"\b("
+        r"(?<![A-Za-z0-9-])("
         + "|".join(
             re.escape(
                 tag,
             )
             for tag in tags
         )
-        + r")\b",
+        + r")(?![A-Za-z0-9-])",
         re.IGNORECASE,
     )
 

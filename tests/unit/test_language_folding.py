@@ -171,6 +171,33 @@ def test_out_of_line_perform_produces_no_fold_range() -> None:
     )
 
 
+def test_empty_if_produces_no_fold_range() -> None:
+    # Editor §Editor-Facing-5: an empty IF (both branches empty) used
+    # to still get a fold range hiding zero lines of content,
+    # inconsistent with the deliberate empty-out-of-line-PERFORM
+    # exclusion just above.
+    source = """\
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. DEMO.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           IF 1 > 0
+           END-IF
+           STOP RUN.
+"""
+
+    ranges = _as_tuples(
+        compute_fold_ranges(
+            source,
+        )
+    )
+
+    assert not any(
+        start == 5
+        for start, _ in ranges
+    )
+
+
 def test_evaluate_statement_and_branches_are_foldable() -> None:
     source = """\
        IDENTIFICATION DIVISION.

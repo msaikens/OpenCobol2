@@ -419,16 +419,33 @@ class DisplayStatement:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StopRunStatement:
-    """A STOP RUN statement."""
+    """A STOP RUN statement.
 
+    `operand_tokens` retains any trailing operand -- most notably the
+    literal in the obsolete `STOP literal` form, which used to be
+    silently discarded and made indistinguishable from a real `STOP
+    RUN` (Editor Phase 4 tracker finding Parser-7).
+    """
+
+    operand_tokens: tuple[Token, ...] = ()
     span: SourceSpan
 
     def __post_init__(self) -> None:
-        """Validate stop-run statement state."""
+        """Normalize and validate stop-run statement state."""
 
+        operand_tokens = _require_token_tuple(
+            self.operand_tokens,
+            "Stop run statement operand tokens",
+        )
         _require_span(
             self.span,
             "Stop run statement span",
+        )
+
+        object.__setattr__(
+            self,
+            "operand_tokens",
+            operand_tokens,
         )
 
 

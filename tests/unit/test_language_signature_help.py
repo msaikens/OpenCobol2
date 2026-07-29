@@ -141,6 +141,67 @@ def test_signature_help_on_malformed_source_returns_none_without_raising() -> No
     )
 
 
+def test_signature_help_prefers_the_innermost_nested_function_call() -> None:
+    # Editor §Editor-Facing-3: a cursor inside a nested FUNCTION call's
+    # own arguments used to always resolve to the *outermost* call
+    # (its parens always fully enclose the inner one's), never the
+    # function the cursor is actually sitting inside of.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01 WS-NAME PIC X(20).\n"
+        "       01 WS-RESULT PIC X(20).\n"
+        "       PROCEDURE DIVISION.\n"
+        "           MOVE FUNCTION UPPER-CASE(FUNCTION TRIM(WS-NAME)) "
+        "TO WS-RESULT.\n"
+    )
+    column = _column_of(
+        source,
+        8,
+        "WS-NAME",
+    )
+
+    info = compute_signature_help(
+        source,
+        line=8,
+        column=column,
+    )
+
+    assert info is not None
+    assert info.name == "TRIM"
+
+
+def test_signature_help_fires_while_the_call_is_still_unclosed() -> None:
+    # Editor §Editor-Facing-6: signature help used to return nothing
+    # while the user is still mid-way through typing the argument list
+    # (no closing paren yet) -- exactly the moment it's most useful.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01 WS-NAME PIC X(20).\n"
+        "       PROCEDURE DIVISION.\n"
+        "           MOVE FUNCTION UPPER-CASE(WS-NAME"
+    )
+    column = _column_of(
+        source,
+        7,
+        "WS-NAME",
+    )
+
+    info = compute_signature_help(
+        source,
+        line=7,
+        column=column,
+    )
+
+    assert info is not None
+    assert info.name == "UPPER-CASE"
+
+
 def test_signature_help_handles_nested_parentheses() -> None:
     source = (
         "       IDENTIFICATION DIVISION.\n"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from opencobol2.compiler.models import (
     CobolSourceFormat,
@@ -105,6 +106,7 @@ class _PendingLiteral:
     parts: list[str]
     raw_parts: list[str]
     start_position: SourcePosition
+    last_position: SourcePosition
 
 
 class CobolLexer:
@@ -146,10 +148,12 @@ class CobolLexer:
         diagnostics: list[LexDiagnostic] = []
         pending_literal: _PendingLiteral | None = None
 
-        for prepared_line in _prepare_lines(
+        prepared_lines = _prepare_lines(
             self._source,
             self._source_format,
-        ):
+        )
+
+        for prepared_line in prepared_lines:
             if (
                 self._source_format
                 is CobolSourceFormat.FIXED
@@ -171,19 +175,10 @@ class CobolLexer:
                 )
 
             if prepared_line.is_comment:
-                if pending_literal is not None:
-                    diagnostics.append(
-                        _unterminated_literal_diagnostic(
-                            pending_literal,
-                        ),
-                    )
-                    tokens.append(
-                        _finalize_pending_literal(
-                            pending_literal,
-                        ),
-                    )
-                    pending_literal = None
-
+                # A comment line interrupting a pending continued literal is
+                # transparently skipped rather than treated as terminating
+                # it -- the literal is still awaiting its `-` continuation
+                # line, which may legitimately follow a comment line.
                 comment_token = _build_comment_token(
                     prepared_line,
                 )
@@ -253,12 +248,16 @@ class CobolLexer:
                 ),
             )
 
-        last_line = (
-            self._source.count(
-                "\n",
-            )
-            + 1
-        )
+        # Always one line past the last physically-prepared line, computed
+        # from the same `splitlines()`-driven line count every real token's
+        # own line number is derived from -- not from counting raw "\n"
+        # characters, which disagrees with `splitlines()` both when the
+        # source has no trailing newline and when it uses a line separator
+        # `splitlines()` recognizes but bare "\n"-counting does not (e.g. a
+        # lone "\r", or a Unicode line/paragraph separator).
+        last_line = len(
+            prepared_lines,
+        ) + 1
 
         tokens.append(
             Token(
@@ -345,7 +344,7 @@ def _prepare_lines(
         else:
             is_comment = (
                 expanded_line.lstrip().startswith(
-                    "*",
+                    "*>",
                 )
             )
 
@@ -424,7 +423,7 @@ def _finalize_pending_literal(
         ),
         span=SourceSpan(
             start=pending_literal.start_position,
-            end=pending_literal.start_position,
+            end=pending_literal.last_position,
         ),
     )
 
@@ -616,6 +615,25 @@ def _scan_line(
             )
             continue
 
+        if (
+            character == "."
+            and index + 1 < length
+            and content[index + 1].isdigit()
+        ):
+            (
+                word_token,
+                index,
+            ) = _scan_leading_dot_numeral(
+                content,
+                index,
+                line_number,
+                prepared_line.content_start_column,
+            )
+            tokens.append(
+                word_token,
+            )
+            continue
+
         two_character = content[
             index:
             index + 2
@@ -694,6 +712,15 @@ def _scan_line(
             ),
         )
         index += 1
+
+    if pending_literal is not None:
+        pending_literal.last_position = SourcePosition(
+            line=line_number,
+            column=(
+                prepared_line.content_start_column
+                + length
+            ),
+        )
 
     return pending_literal
 
@@ -788,9 +815,157 @@ def _scan_alphanumeric_literal(
         parts=parts,
         raw_parts=raw_parts,
         start_position=start_position,
+        last_position=SourcePosition(
+            line=line_number,
+            column=content_start_column + length,
+        ),
     )
 
     return None, pending_literal, length
+
+
+def _scan_optional_exponent(
+    content: str,
+    cursor: int,
+    length: int,
+) -> int:
+    """Consume a numeric exponent suffix (`E`/`e`, optional sign, digits).
+
+    Returns the index just past the exponent, or `cursor` unchanged if no
+    valid exponent (an `E`/`e` with at least one digit following an
+    optional sign) starts there.
+    """
+
+    if cursor >= length or content[cursor] not in (
+        "E",
+        "e",
+    ):
+        return cursor
+
+    scan = cursor + 1
+
+    if scan < length and content[scan] in (
+        "+",
+        "-",
+    ):
+        scan += 1
+
+    digits_start = scan
+
+    while scan < length and content[scan].isdigit():
+        scan += 1
+
+    if scan == digits_start:
+        return cursor
+
+    return scan
+
+
+def _scan_numeral_fraction_and_exponent(
+    content: str,
+    cursor: int,
+    length: int,
+) -> int:
+    """Extend a numeral scan past an optional fraction and/or exponent.
+
+    `cursor` must point just past the integer part already scanned.
+    Returns the new end index, unchanged from `cursor` if neither a
+    fraction nor an exponent is present.
+    """
+
+    if (
+        cursor + 1 < length
+        and content[cursor] == "."
+        and content[cursor + 1].isdigit()
+    ):
+        cursor += 1
+
+        while cursor < length and content[cursor].isdigit():
+            cursor += 1
+
+    return _scan_optional_exponent(
+        content,
+        cursor,
+        length,
+    )
+
+
+def _looks_like_integer_with_exponent(
+    word: str,
+) -> bool:
+    """Return whether `word` is `digits E [sign] digits` with no fraction."""
+
+    upper = word.upper()
+    e_index = upper.find(
+        "E",
+    )
+
+    if e_index <= 0:
+        return False
+
+    mantissa = word[:e_index]
+
+    if not mantissa.isdigit():
+        return False
+
+    exponent = word[e_index + 1:]
+
+    if exponent[:1] in (
+        "+",
+        "-",
+    ):
+        exponent = exponent[1:]
+
+    return bool(exponent) and exponent.isdigit()
+
+
+def _scan_leading_dot_numeral(
+    content: str,
+    index: int,
+    line_number: int,
+    content_start_column: int,
+) -> tuple[Token, int]:
+    """Scan a numeral with no integer part (`.5`, `.25E-3`)."""
+
+    length = len(
+        content,
+    )
+    start_column = content_start_column + index
+    cursor = index + 1
+
+    while cursor < length and content[cursor].isdigit():
+        cursor += 1
+
+    cursor = _scan_optional_exponent(
+        content,
+        cursor,
+        length,
+    )
+    text = content[
+        index:
+        cursor
+    ]
+
+    return (
+        Token(
+            kind=TokenKind.NUMERIC_LITERAL,
+            text=text,
+            value=Decimal(
+                text,
+            ),
+            span=SourceSpan(
+                start=SourcePosition(
+                    line=line_number,
+                    column=start_column,
+                ),
+                end=SourcePosition(
+                    line=line_number,
+                    column=content_start_column + cursor,
+                ),
+            ),
+        ),
+        cursor,
+    )
 
 
 def _scan_word(
@@ -841,23 +1016,16 @@ def _scan_word(
     )
 
     if word.isdigit():
-        if (
-            cursor + 1 < length
-            and content[cursor] == "."
-            and content[cursor + 1].isdigit()
-        ):
-            fraction_start = cursor + 1
-            fraction_end = fraction_start
+        numeral_end = _scan_numeral_fraction_and_exponent(
+            content,
+            cursor,
+            length,
+        )
 
-            while (
-                fraction_end < length
-                and content[fraction_end].isdigit()
-            ):
-                fraction_end += 1
-
+        if numeral_end != cursor:
             full_text = content[
                 index:
-                fraction_end
+                numeral_end
             ]
             span = SourceSpan(
                 start=span.start,
@@ -865,7 +1033,7 @@ def _scan_word(
                     line=line_number,
                     column=(
                         content_start_column
-                        + fraction_end
+                        + numeral_end
                     ),
                 ),
             )
@@ -874,12 +1042,12 @@ def _scan_word(
                 Token(
                     kind=TokenKind.NUMERIC_LITERAL,
                     text=full_text,
-                    value=float(
+                    value=Decimal(
                         full_text,
                     ),
                     span=span,
                 ),
-                fraction_end,
+                numeral_end,
             )
 
         return (
@@ -887,6 +1055,26 @@ def _scan_word(
                 kind=TokenKind.NUMERIC_LITERAL,
                 text=word,
                 value=int(
+                    word,
+                ),
+                span=span,
+            ),
+            cursor,
+        )
+
+    # A fraction-less numeral with an exponent (`5E3`, `5E-3`) is already
+    # fully consumed by the alnum/hyphen scan above -- its digits, the `E`,
+    # and (thanks to the hyphen-continuation rule meant for identifiers
+    # like `WS-COUNT`) a signed exponent all read as alnum, so `word`
+    # itself is the full numeral and never reaches the `isdigit()` branch.
+    if _looks_like_integer_with_exponent(
+        word,
+    ):
+        return (
+            Token(
+                kind=TokenKind.NUMERIC_LITERAL,
+                text=word,
+                value=Decimal(
                     word,
                 ),
                 span=span,

@@ -65,9 +65,21 @@ def test_project_rejects_non_uuid_project_id() -> None:
 def test_project_rejects_invalid_schema_version() -> None:
     with pytest.raises(
         ValueError,
-        match="must be positive",
+        match="schema version must be",
     ):
         _project(schema_version=0)
+
+
+def test_project_rejects_non_current_schema_version() -> None:
+    """A Project must always be the current, fully-migrated schema --
+    otherwise it could be saved with a version its own loader
+    immediately rejects on the next load."""
+
+    with pytest.raises(
+        ValueError,
+        match="schema version must be",
+    ):
+        _project(schema_version=2)
 
 
 def test_project_defaults_are_empty() -> None:
@@ -197,6 +209,25 @@ def test_project_rejects_duplicate_task_ids() -> None:
         _project(tasks=(task_one, task_two))
 
 
+def test_project_rejects_duplicate_task_names() -> None:
+    task_one = ProjectTask(
+        task_id=uuid4(),
+        name="Build",
+        executable="cobc",
+    )
+    task_two = ProjectTask(
+        task_id=uuid4(),
+        name="Build",
+        executable="rm",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Project task names must be unique",
+    ):
+        _project(tasks=(task_one, task_two))
+
+
 def test_project_rejects_duplicate_launch_configuration_ids() -> None:
     launch_configuration_id = uuid4()
     launch_one = LaunchConfiguration(
@@ -213,6 +244,27 @@ def test_project_rejects_duplicate_launch_configuration_ids() -> None:
     with pytest.raises(
         ValueError,
         match="Launch configuration IDs must be unique",
+    ):
+        _project(
+            launch_configurations=(launch_one, launch_two),
+        )
+
+
+def test_project_rejects_duplicate_launch_configuration_names() -> None:
+    launch_one = LaunchConfiguration(
+        launch_configuration_id=uuid4(),
+        name="Run",
+        executable_path="bin/main",
+    )
+    launch_two = LaunchConfiguration(
+        launch_configuration_id=uuid4(),
+        name="Run",
+        executable_path="bin/other",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Launch configuration names must be unique",
     ):
         _project(
             launch_configurations=(launch_one, launch_two),
@@ -257,6 +309,23 @@ def test_virtual_folder_rejects_absolute_member_path() -> None:
             folder_id=uuid4(),
             name="Sources",
             member_paths=("/etc/passwd",),
+        )
+
+
+def test_virtual_folder_rejects_drive_relative_member_path() -> None:
+    """A Windows drive-relative path (a drive letter with no root,
+    e.g. "E:payload/nc.exe") passes PureWindowsPath.is_absolute() as
+    False -- joining it onto the project root discards the root
+    entirely, escaping project confinement. Must be rejected too."""
+
+    with pytest.raises(
+        ValueError,
+        match="must be relative",
+    ):
+        VirtualFolder(
+            folder_id=uuid4(),
+            name="Sources",
+            member_paths=("E:payload/nc.exe",),
         )
 
 
@@ -318,6 +387,39 @@ def test_launch_configuration_rejects_absolute_executable_path() -> None:
             launch_configuration_id=uuid4(),
             name="Run",
             executable_path="/bin/main",
+        )
+
+
+def test_project_task_rejects_case_insensitively_colliding_env_keys() -> None:
+    """"PATH" and "Path" in the same environment_overrides map is an
+    unresolvable ambiguity on platforms where env vars are
+    case-insensitive (Windows) -- reject it rather than letting
+    subprocess execution silently pick one via incidental dict order."""
+
+    with pytest.raises(
+        ValueError,
+        match="collide case-insensitively",
+    ):
+        ProjectTask(
+            task_id=uuid4(),
+            name="Build",
+            executable="cobc",
+            environment_overrides={
+                "PATH": "a",
+                "Path": "b",
+            },
+        )
+
+
+def test_launch_configuration_rejects_drive_relative_executable_path() -> None:
+    with pytest.raises(
+        ValueError,
+        match="must be relative",
+    ):
+        LaunchConfiguration(
+            launch_configuration_id=uuid4(),
+            name="Run",
+            executable_path="E:payload/nc.exe",
         )
 
 

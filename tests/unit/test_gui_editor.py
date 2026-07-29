@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint
-from PySide6.QtGui import QHelpEvent, QTextCursor, QTextDocument
+from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QHelpEvent, QKeyEvent, QTextCursor, QTextDocument
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QMessageBox
 
@@ -344,6 +344,39 @@ def test_close_active_document_without_changes_removes_the_tab(
     tabs.close_active_document()
 
     assert tabs.count() == 0
+
+
+def test_closing_a_tab_emits_bookmarks_and_breakpoints_changed(
+    qapp,
+) -> None:
+    """The Bookmarks/Breakpoints panels only refresh on these two
+    signals -- without emitting them on close, a closed tab's markers
+    would keep showing in those panels until some unrelated toggle
+    elsewhere happened to trigger a refresh."""
+
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).toggle_bookmark_at_cursor()
+    tabs.widget(0).toggle_breakpoint_at_cursor()
+
+    bookmarks_received = []
+    breakpoints_received = []
+    tabs.bookmarks_changed.connect(
+        lambda: bookmarks_received.append(
+            True,
+        )
+    )
+    tabs.breakpoints_changed.connect(
+        lambda: breakpoints_received.append(
+            True,
+        )
+    )
+
+    tabs.close_active_document()
+
+    assert tabs.count() == 0
+    assert bookmarks_received == [True]
+    assert breakpoints_received == [True]
 
 
 def test_closing_a_modified_document_prompts_and_respects_cancel(
@@ -1137,6 +1170,24 @@ def test_new_tab_uses_a_monospace_font_by_default(
     assert editor.font().pointSize() == 11
 
 
+def test_new_tab_never_word_wraps(
+    qapp,
+) -> None:
+    """Coding-area column guides (and printing) are painted assuming
+    one visual row == one logical line starting at column 1 -- true
+    only without word-wrap. A wrapped fixed-format line desyncs every
+    guide line past its first visual row."""
+
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    assert (
+        editor.lineWrapMode()
+        == editor.LineWrapMode.NoWrap
+    )
+
+
 def test_new_tab_applies_configured_font_and_tab_width(
     qapp,
 ) -> None:
@@ -1162,6 +1213,92 @@ def test_new_tab_applies_configured_font_and_tab_width(
     assert editor.tabStopDistance() == (
         char_width * 8
     )
+
+
+def _press_tab(editor: SourceEditorWidget) -> None:
+    """Simulate a Tab keypress directly against one editor widget."""
+
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Tab,
+        Qt.KeyboardModifier.NoModifier,
+        "\t",
+    )
+    editor.keyPressEvent(event)
+
+
+def test_tab_key_inserts_spaces_when_insert_spaces_enabled(
+    qapp,
+) -> None:
+    """A literal tab character shifts the lexer's tab-expanded column
+    positions out from under the raw document text it's applied
+    against (see syntax_highlighter.py's highlightBlock) -- expanding
+    Tab to spaces at the point of insertion sidesteps that mismatch
+    instead of requiring every column-consuming feature to translate
+    back through tab expansion."""
+
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            tab_width=4,
+            insert_spaces=True,
+        ),
+    )
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    _press_tab(editor)
+
+    assert editor.toPlainText() == "    "
+    assert "\t" not in editor.toPlainText()
+
+
+def test_tab_key_inserts_literal_tab_when_insert_spaces_disabled(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            insert_spaces=False,
+        ),
+    )
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    _press_tab(editor)
+
+    assert editor.toPlainText() == "\t"
+
+
+def test_tab_key_rounds_up_to_next_tab_stop(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        editor_settings=EditorSettings(
+            tab_width=4,
+            insert_spaces=True,
+        ),
+    )
+    tabs.new_file()
+    editor = tabs.widget(0)
+
+    editor.setPlainText("ab")
+    cursor = editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    editor.setTextCursor(cursor)
+
+    _press_tab(editor)
+
+    # Already 2 columns in; a 4-wide tab stop needs 2 more spaces to
+    # reach column 4, not a fixed 4-space insertion.
+    assert editor.toPlainText() == "ab  "
 
 
 def test_new_tab_uses_configured_guide_settings(
@@ -1426,6 +1563,74 @@ def test_is_cobol_source_false_for_a_non_cobol_file(
     )
 
     assert tabs.widget(0).is_cobol_source is False
+
+
+def test_save_as_activates_cobol_support_for_a_newly_cobol_named_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    """is_cobol_source/the highlighter/folding are otherwise only set
+    up once at tab-creation time from the initial path -- Save-As-ing
+    a plain-text tab to a .cbl name must still activate COBOL support
+    on that same tab, not require closing and reopening it."""
+
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text(
+        "x",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    editor = tabs.widget(0)
+    assert editor.is_cobol_source is False
+    assert editor._highlighter is None
+
+    new_path = tmp_path / "main.cbl"
+
+    with patch(
+        "opencobol2.gui.editor.QFileDialog.getSaveFileName",
+        return_value=(
+            str(new_path),
+            "",
+        ),
+    ):
+        tabs.save_active_document_as()
+
+    assert editor.is_cobol_source is True
+    assert editor._highlighter is not None
+
+
+def test_save_as_deactivates_cobol_support_for_a_newly_non_cobol_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "x",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    editor = tabs.widget(0)
+    assert editor.is_cobol_source is True
+    assert editor._highlighter is not None
+
+    new_path = tmp_path / "notes.txt"
+
+    with patch(
+        "opencobol2.gui.editor.QFileDialog.getSaveFileName",
+        return_value=(
+            str(new_path),
+            "",
+        ),
+    ):
+        tabs.save_active_document_as()
+
+    assert editor.is_cobol_source is False
+    assert editor._highlighter is None
+    assert editor._folding_enabled is False
 
 
 def test_current_outline_returns_outline_for_the_active_cobol_tab(
@@ -2089,9 +2294,21 @@ def test_current_diagnostics_converts_to_compiler_diagnostic(
 
     diagnostics = tabs.current_diagnostics()
 
+    # This source is missing IDENTIFICATION DIVISION entirely, so a
+    # parse-level diagnostic at column 8 now correctly sorts before
+    # the lex-level "not terminated" diagnostic at a later column on
+    # the same line (Editor Phase 4 tracker finding Editor-Facing-8) --
+    # assert every diagnostic carries the source path, and that the
+    # lex diagnostic is present somewhere, rather than assuming index 0.
     assert len(diagnostics) >= 1
-    assert diagnostics[0].source_path == file_path
-    assert "not terminated" in diagnostics[0].message
+    assert all(
+        diagnostic.source_path == file_path
+        for diagnostic in diagnostics
+    )
+    assert any(
+        "not terminated" in diagnostic.message
+        for diagnostic in diagnostics
+    )
 
 
 def test_current_diagnostics_uses_no_path_for_untitled_documents(
@@ -2704,6 +2921,59 @@ def test_minimap_paints_without_raising_on_an_empty_document(
     qapp.processEvents()
 
 
+def test_last_visible_block_number_accounts_for_hidden_folded_blocks(
+    qapp,
+) -> None:
+    """The old calculation multiplied the on-screen *rendered row*
+    count by the minimap's per-block-index pixel height -- correct
+    only when one row equals one block. Once a fold hides a large
+    span, a handful of rendered rows can cover a much wider range of
+    block indices, and the indicator must reflect that wider span."""
+
+    from uuid import uuid4
+
+    folded_body = "".join(
+        f'               DISPLAY "X"\n'
+        for _ in range(500)
+    )
+    filler_after = "".join(
+        f'       DISPLAY "FILLER {index}".\n'
+        for index in range(500)
+    )
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=(
+            "       IDENTIFICATION DIVISION.\n"
+            "       PROCEDURE DIVISION.\n"
+            "       MAIN-PARA.\n"
+            "           IF 1 > 0\n"
+            + folded_body
+            + "           END-IF\n"
+            "           STOP RUN.\n"
+            + filler_after
+        ),
+        theme=_build_theme(),
+    )
+    editor.resize(
+        600,
+        100,
+    )
+    editor.show()
+
+    editor.toggle_fold(
+        4,
+    )
+    assert editor._collapsed_start_lines
+
+    last_visible = editor._last_visible_block_number()
+
+    # The 500-line IF body occupies block indices ~4-503, all hidden.
+    # Visible content resumes at END-IF (~504); the viewport's row
+    # budget consumed from there must land well past that point, not
+    # underneath the folded body as the old formula would.
+    assert last_visible > 503
+
+
 def test_minimap_setting_round_trips_through_apply_editor_settings(
     qapp,
 ) -> None:
@@ -2893,6 +3163,89 @@ def test_print_active_tab_prints_the_active_document(
     )
 
     assert tabs.print_active_tab(QPrinter()) is True
+
+
+def _build_foldable_tab_with_a_collapsed_fold(tabs) -> None:
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           IF 1 > 0\n"
+        '               DISPLAY "POSITIVE"\n'
+        "           END-IF\n"
+        "           STOP RUN.\n"
+    )
+    editor.toggle_fold(
+        5,
+    )
+    assert editor._collapsed_start_lines
+
+
+def test_print_active_tab_warns_before_printing_folded_content(
+    qapp,
+) -> None:
+    """QPlainTextEdit.print_() prints folded-away content in full
+    regardless of what's visible on screen -- with an active fold,
+    printing must ask before doing that rather than silently
+    surprising the user."""
+
+    tabs = _build_tabs()
+    _build_foldable_tab_with_a_collapsed_fold(
+        tabs,
+    )
+
+    with patch(
+        "opencobol2.gui.editor.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    ) as mock_question:
+        result = tabs.print_active_tab(
+            QPrinter(),
+        )
+
+    mock_question.assert_called_once()
+    assert result is False
+
+
+def test_print_active_tab_proceeds_when_fold_warning_is_confirmed(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    _build_foldable_tab_with_a_collapsed_fold(
+        tabs,
+    )
+
+    with patch(
+        "opencobol2.gui.editor.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        result = tabs.print_active_tab(
+            QPrinter(),
+        )
+
+    assert result is True
+
+
+def test_print_active_tab_does_not_warn_without_any_folds(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.widget(0).setPlainText(
+        "       IDENTIFICATION DIVISION.\n"
+    )
+
+    with patch(
+        "opencobol2.gui.editor.QMessageBox.question",
+    ) as mock_question:
+        result = tabs.print_active_tab(
+            QPrinter(),
+        )
+
+    mock_question.assert_not_called()
+    assert result is True
 
 
 def test_toggle_breakpoint_adds_a_breakpoint_at_the_cursor_line(

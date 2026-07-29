@@ -255,3 +255,89 @@ def test_find_references_on_malformed_source_returns_nothing_without_raising() -
         )
         == ()
     )
+
+
+# --- Editor §Editor-Facing-7: data-name/procedure-name namespace collision --
+
+_COLLISION_PROGRAM = (
+    "       IDENTIFICATION DIVISION.\n"
+    "       PROGRAM-ID. DEMO.\n"
+    "       DATA DIVISION.\n"
+    "       WORKING-STORAGE SECTION.\n"
+    "       01 WS-COUNT PIC 9(3).\n"
+    "       PROCEDURE DIVISION.\n"
+    "       MAIN-PARA.\n"
+    "           MOVE 5 TO WS-COUNT\n"
+    "           PERFORM WS-COUNT\n"
+    "           STOP RUN.\n"
+    "       WS-COUNT.\n"
+    "           DISPLAY 'IN PARAGRAPH'.\n"
+)
+
+
+def test_find_definition_on_a_move_target_resolves_the_data_item_not_the_paragraph() -> (
+    None
+):
+    # A data item and a paragraph legally share a name -- a MOVE target
+    # is structurally guaranteed to be a data name by the grammar, so
+    # go-to-definition must not always check the procedure symbol table
+    # first regardless of context.
+    usage_line = 8
+    usage_column = _column_of(
+        _COLLISION_PROGRAM,
+        usage_line,
+        "WS-COUNT",
+    )
+
+    location = find_definition(
+        _COLLISION_PROGRAM,
+        line=usage_line,
+        column=usage_column,
+    )
+
+    assert location is not None
+    assert location.line == 5
+
+
+def test_find_definition_on_a_perform_target_resolves_the_paragraph_not_the_data_item() -> (
+    None
+):
+    usage_line = 9
+    usage_column = _column_of(
+        _COLLISION_PROGRAM,
+        usage_line,
+        "WS-COUNT",
+    )
+
+    location = find_definition(
+        _COLLISION_PROGRAM,
+        line=usage_line,
+        column=usage_column,
+    )
+
+    assert location is not None
+    assert location.line == 11
+
+
+def test_find_references_on_a_move_target_excludes_the_paragraph_usages() -> None:
+    usage_line = 8
+    usage_column = _column_of(
+        _COLLISION_PROGRAM,
+        usage_line,
+        "WS-COUNT",
+    )
+
+    locations = find_references(
+        _COLLISION_PROGRAM,
+        line=usage_line,
+        column=usage_column,
+    )
+
+    lines_found = {
+        location.line
+        for location in locations
+    }
+    assert lines_found == {
+        5,
+        8,
+    }

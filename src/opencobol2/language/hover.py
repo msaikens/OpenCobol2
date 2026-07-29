@@ -20,7 +20,10 @@ from dataclasses import dataclass
 
 from opencobol2.compiler import CobolSourceFormat
 from opencobol2.language.lexer import tokenize_cobol_source
-from opencobol2.language.navigation import identifier_at
+from opencobol2.language.navigation import (
+    _identifier_token_index_at,
+    _reference_kind_at,
+)
 from opencobol2.language.parser import parse_cobol_tokens
 from opencobol2.language.rendering import render_clause_tokens
 from opencobol2.language.semantic import (
@@ -161,18 +164,20 @@ def compute_hover(
     if parse_result.unit is None:
         return None
 
-    name = identifier_at(
-        lex_result,
+    index = _identifier_token_index_at(
+        lex_result.tokens,
         line=line,
         column=column,
     )
 
-    if name is None:
+    if index is None:
         return _hover_for_reserved_word(
             lex_result,
             line=line,
             column=column,
         )
+
+    name = lex_result.tokens[index].text
 
     try:
         semantic_result = analyze_compilation_unit(
@@ -181,27 +186,44 @@ def compute_hover(
     except Exception:
         return None
 
-    procedure_symbol = (
-        semantic_result.symbol_table.find_procedure_symbol(
-            name,
-        )
+    # Editor §Editor-Facing-7: disambiguate by the identifier's actual
+    # usage context (a paragraph/section and a data item are legally
+    # allowed to share a name) instead of always checking the procedure
+    # symbol table first regardless of context -- see
+    # `navigation._reference_kind_at` for the shared logic
+    # `find_definition`/`find_references` also use.
+    kind = _reference_kind_at(
+        lex_result.tokens,
+        index,
+        name,
+        semantic_result.symbol_table,
     )
 
-    if procedure_symbol is not None:
-        kind_label = (
-            "section"
-            if procedure_symbol.kind
-            is ProcedureSymbolKind.SECTION
-            else "paragraph"
+    if kind != "data":
+        procedure_symbol = (
+            semantic_result.symbol_table.find_procedure_symbol(
+                name,
+            )
         )
-        return HoverInfo(
-            name=procedure_symbol.name,
-            kind=kind_label,
-            detail=(
-                f"{kind_label.capitalize()}: "
-                f"{procedure_symbol.name}"
-            ),
-        )
+
+        if procedure_symbol is not None:
+            kind_label = (
+                "section"
+                if procedure_symbol.kind
+                is ProcedureSymbolKind.SECTION
+                else "paragraph"
+            )
+            return HoverInfo(
+                name=procedure_symbol.name,
+                kind=kind_label,
+                detail=(
+                    f"{kind_label.capitalize()}: "
+                    f"{procedure_symbol.name}"
+                ),
+            )
+
+        if kind == "procedure":
+            return None
 
     data_symbols = (
         semantic_result.symbol_table.find_data_symbols(

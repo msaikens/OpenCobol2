@@ -1,5 +1,6 @@
 """Unit tests for OpenCobol2 project file persistence."""
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -98,6 +99,63 @@ def test_load_rejects_invalid_json(tmp_path: Path) -> None:
         ProjectFormatError,
         match="invalid JSON",
     ):
+        ProjectStorage(path).load()
+
+
+def test_load_rejects_invalid_utf8(tmp_path: Path) -> None:
+    """A truncated/wrong-encoding project file must raise the
+    documented ProjectFormatError, not a raw UnicodeDecodeError --
+    read_text(encoding="utf-8") can fail before json.loads() ever
+    runs, and that failure sat outside the JSONDecodeError catch."""
+
+    path = tmp_path / "demo.ocproj.json"
+    path.write_bytes(
+        b'{"schema_version": 1, "name": "caf\xe9"}',
+    )
+
+    with pytest.raises(
+        ProjectFormatError,
+        match="not valid UTF-8",
+    ):
+        ProjectStorage(path).load()
+
+
+def test_load_rejects_pathologically_deep_virtual_folders(
+    tmp_path: Path,
+) -> None:
+    """A very deeply nested virtual_folders structure must raise the
+    documented ProjectFormatError, not a bare interpreter
+    RecursionError -- RecursionError is a RuntimeError, which the
+    decoder's except (TypeError, ValueError) clause didn't cover."""
+
+    innermost = {
+        "folder_id": str(uuid4()),
+        "name": "leaf",
+    }
+    nested = innermost
+
+    for _ in range(3000):
+        nested = {
+            "folder_id": str(uuid4()),
+            "name": "wrapper",
+            "virtual_folders": [nested],
+        }
+
+    path = tmp_path / "demo.ocproj.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": str(uuid4()),
+                "name": "Deep",
+                "root_path": str(tmp_path),
+                "virtual_folders": [nested],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProjectFormatError):
         ProjectStorage(path).load()
 
 

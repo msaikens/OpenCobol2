@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from opencobol2.project import (
     Project,
@@ -71,7 +71,11 @@ class ProjectTaskRunnerService:
                 task.executable,
                 *task.arguments,
             ),
-            run_id=task.task_id,
+            # A fresh ID per invocation, not the task's own permanent
+            # ID -- reusing task_id made two concurrent runs of the
+            # same task indistinguishable to any caller correlating
+            # output or attempting to cancel one of them.
+            run_id=uuid4(),
             timeout_seconds=self.timeout_seconds,
             working_directory=_resolve_working_directory(
                 project,
@@ -110,9 +114,9 @@ class ProjectTaskRunnerService:
                 executable,
                 *launch_configuration.arguments,
             ),
-            run_id=(
-                launch_configuration.launch_configuration_id
-            ),
+            # See the matching comment in run_task(): a fresh ID per
+            # invocation, not the launch configuration's permanent ID.
+            run_id=uuid4(),
             timeout_seconds=self.timeout_seconds,
             working_directory=_resolve_working_directory(
                 project,
@@ -146,11 +150,46 @@ def _merge_environment(
     environment = dict(
         os.environ,
     )
-    environment.update(
+
+    for overrides in (
         project_overrides,
-    )
-    environment.update(
         local_overrides,
-    )
+    ):
+        for key, value in overrides.items():
+            if os.name == "nt":
+                # os.environ is case-insensitive on Windows, but the
+                # plain dict this builds is not -- a plain
+                # dict.update() would leave a stale differently-cased
+                # entry (e.g. ambient "Path" plus an override "PATH")
+                # both present, and which one CreateProcess actually
+                # honors would depend on incidental dict ordering
+                # rather than the override deterministically winning.
+                existing_key = _find_case_insensitive_key(
+                    environment,
+                    key,
+                )
+
+                if (
+                    existing_key is not None
+                    and existing_key != key
+                ):
+                    del environment[existing_key]
+
+            environment[key] = value
 
     return environment
+
+
+def _find_case_insensitive_key(
+    environment: dict[str, str],
+    key: str,
+) -> str | None:
+    """Return an existing key matching `key` case-insensitively, if any."""
+
+    folded_key = key.casefold()
+
+    for existing_key in environment:
+        if existing_key.casefold() == folded_key:
+            return existing_key
+
+    return None

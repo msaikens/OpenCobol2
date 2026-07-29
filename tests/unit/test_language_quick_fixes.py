@@ -117,6 +117,57 @@ def test_compute_quick_fix_returns_none_for_an_undocumented_diagnostic() -> None
     )
 
 
+def test_quick_fix_clamps_to_the_fixed_format_content_area() -> None:
+    # Editor §Editor-Facing-1: inserting at the raw line's physical end
+    # used to land past column 72 (the classic sequence-number/
+    # reference area) whenever real reference-area text follows the
+    # content area -- outside the window the FIXED-format lexer ever
+    # reads, so applying the "fix" left the diagnostic unchanged. The
+    # fix now inserts right after the content area's own real (trimmed)
+    # content instead of the raw line's physical end.
+    content = "DISPLAY 'X" + " " * (65 - len("DISPLAY 'X"))
+    line = "      " + " " + content + "REFAREA"
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       PROCEDURE DIVISION.\n"
+        f"{line}\n"
+        "           STOP RUN.\n"
+    )
+    result = tokenize_cobol_source(
+        source,
+        source_format=CobolSourceFormat.FIXED,
+    )
+    assert len(result.diagnostics) == 1
+
+    fix = compute_quick_fix(
+        source,
+        result.diagnostics[0],
+    )
+
+    assert fix is not None
+    assert fix.column == 18
+
+    lines = source.splitlines(
+        keepends=True,
+    )
+    target_line = lines[fix.line - 1]
+    fixed_line = (
+        target_line[: fix.column - 1]
+        + fix.insert_text
+        + target_line[fix.column - 1 :]
+    )
+    lines[fix.line - 1] = fixed_line
+    fixed_result = tokenize_cobol_source(
+        "".join(
+            lines,
+        ),
+        source_format=CobolSourceFormat.FIXED,
+    )
+
+    assert fixed_result.diagnostics == ()
+
+
 def test_compute_quick_fix_returns_none_when_position_is_out_of_range() -> None:
     diagnostic = LexDiagnostic(
         severity=(

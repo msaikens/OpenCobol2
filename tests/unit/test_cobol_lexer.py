@@ -1,5 +1,7 @@
 """Unit tests for the COBOL lexer."""
 
+from decimal import Decimal
+
 import pytest
 
 from opencobol2.compiler import CobolSourceFormat
@@ -211,7 +213,111 @@ def test_decimal_numeric_literal() -> None:
     )
 
     assert numeric.text == "123.45"
-    assert numeric.value == 123.45
+    assert numeric.value == Decimal("123.45")
+
+
+def test_decimal_numeric_literal_does_not_lose_precision() -> None:
+    # Editor §Lexer-6: `float()` cannot exactly represent this value --
+    # confirm the lexer now uses `Decimal` instead, which can.
+    tokens = _code_tokens(
+        _fixed("MOVE 123456789012345678.99 TO X."),
+    )
+    numeric = next(
+        token
+        for token in tokens
+        if token.kind is TokenKind.NUMERIC_LITERAL
+    )
+
+    assert numeric.value == Decimal("123456789012345678.99")
+
+
+def test_leading_decimal_point_numeric_literal() -> None:
+    # Editor §Lexer-10: `.5` must tokenize as one numeral, not a bogus
+    # statement-terminating PERIOD followed by a separate `5`.
+    tokens = _code_tokens(
+        _fixed("COMPUTE X = .5 + Y."),
+    )
+    kinds_and_text = [
+        (token.kind, token.text)
+        for token in tokens
+    ]
+
+    assert (
+        TokenKind.NUMERIC_LITERAL,
+        ".5",
+    ) in kinds_and_text
+    assert kinds_and_text.count(
+        (TokenKind.PERIOD, "."),
+    ) == 1
+    numeric = next(
+        token
+        for token in tokens
+        if token.kind is TokenKind.NUMERIC_LITERAL
+    )
+    assert numeric.value == Decimal("0.5")
+
+
+def test_signed_leading_decimal_point_numeric_literal() -> None:
+    tokens = _code_tokens(
+        _fixed("COMPUTE X = -.25 + Y."),
+    )
+    kinds_and_text = [
+        (token.kind, token.text)
+        for token in tokens
+    ]
+
+    assert (TokenKind.MINUS, "-") in kinds_and_text
+    assert (
+        TokenKind.NUMERIC_LITERAL,
+        ".25",
+    ) in kinds_and_text
+
+
+def test_scientific_notation_numeric_literal() -> None:
+    tokens = _code_tokens(
+        _fixed("COMPUTE X = 1.5E10."),
+    )
+    numeric = next(
+        token
+        for token in tokens
+        if token.kind is TokenKind.NUMERIC_LITERAL
+    )
+
+    assert numeric.text == "1.5E10"
+    assert numeric.value == Decimal("1.5E10")
+
+
+def test_scientific_notation_with_signed_exponent() -> None:
+    tokens = _code_tokens(
+        _fixed("COMPUTE X = 3.14E-2."),
+    )
+    numeric = next(
+        token
+        for token in tokens
+        if token.kind is TokenKind.NUMERIC_LITERAL
+    )
+
+    assert numeric.text == "3.14E-2"
+    assert numeric.value == Decimal("3.14E-2")
+    assert not any(
+        "E" in token.text
+        for token in tokens
+        if token.kind is TokenKind.IDENTIFIER
+    )
+
+
+def test_integer_with_exponent_and_no_fraction() -> None:
+    tokens = _code_tokens(
+        _fixed("COMPUTE X = 5E3."),
+    )
+    numeric = next(
+        token
+        for token in tokens
+        if token.kind is TokenKind.NUMERIC_LITERAL
+    )
+
+    assert numeric.text == "5E3"
+    assert numeric.value == Decimal("5E3")
 
 
 def test_trailing_period_is_not_absorbed_into_numeral() -> None:
@@ -338,6 +444,56 @@ def test_malformed_continuation_reports_error() -> None:
     assert result.has_errors is True
 
 
+def test_comment_line_interrupting_a_continued_literal_is_transparent() -> None:
+    # Editor §Lexer-3: a comment line between a literal's opening line and
+    # its `-` continuation must not be treated as fatally terminating it.
+    source = (
+        "       01  X VALUE 'THIS IS A VERY LONG MESS\n"
+        "      * a note\n"
+        "      -    'AGE THAT CONTINUES'.\n"
+    )
+    result = tokenize_cobol_source(
+        source,
+        source_format=CobolSourceFormat.FIXED,
+    )
+
+    assert result.diagnostics == ()
+    literal = next(
+        token
+        for token in result.tokens
+        if token.kind is TokenKind.ALPHANUMERIC_LITERAL
+    )
+    assert (
+        literal.value
+        == "THIS IS A VERY LONG MESSAGE THAT CONTINUES"
+    )
+    comment = next(
+        token
+        for token in result.tokens
+        if token.kind is TokenKind.COMMENT
+    )
+    assert "a note" in comment.text
+
+
+def test_unterminated_literal_span_reflects_its_actual_text_length() -> None:
+    # Editor §Lexer-4: the span must not always collapse to zero length.
+    result = tokenize_cobol_source(
+        _fixed("DISPLAY 'UNCLOSED"),
+        source_format=CobolSourceFormat.FIXED,
+    )
+    literal = next(
+        token
+        for token in result.tokens
+        if token.kind is TokenKind.ALPHANUMERIC_LITERAL
+    )
+
+    assert literal.span.start != literal.span.end
+    assert (
+        literal.span.end.column - literal.span.start.column
+        == len(literal.text)
+    )
+
+
 # --- comments -------------------------------------------------------------
 
 
@@ -367,9 +523,12 @@ def test_blank_comment_line_emits_no_token() -> None:
     )
 
 
-def test_free_format_line_starting_with_asterisk_is_comment() -> None:
+def test_free_format_line_starting_with_comment_marker_is_comment() -> None:
+    # Corrected per Editor §Lexer-1: free-format whole-line comments require
+    # the real `*>` marker, not a bare `*` (which is also the multiplication
+    # operator and can legitimately start a statement-continuation line).
     tokens = _code_tokens(
-        "* whole line comment\nDISPLAY 'HI'.\n",
+        "*> whole line comment\nDISPLAY 'HI'.\n",
         source_format=CobolSourceFormat.FREE,
     )
     comment = next(
@@ -379,6 +538,25 @@ def test_free_format_line_starting_with_asterisk_is_comment() -> None:
     )
 
     assert "whole line comment" in comment.text
+
+
+def test_free_format_bare_asterisk_continuation_is_not_swallowed_as_comment() -> None:
+    # Editor §Lexer-1's actual repro: a statement continued onto its own
+    # line via the multiply operator must not be misread as a comment.
+    tokens = _code_tokens(
+        "COMPUTE TOTAL = QUANTITY\n    * PRICE.\n",
+        source_format=CobolSourceFormat.FREE,
+    )
+    kinds = [token.kind for token in tokens]
+
+    assert TokenKind.COMMENT not in kinds
+    assert TokenKind.ASTERISK in kinds
+    identifiers = [
+        token.text
+        for token in tokens
+        if token.kind is TokenKind.IDENTIFIER
+    ]
+    assert "PRICE" in identifiers
 
 
 def test_free_format_inline_comment_marker() -> None:
@@ -539,6 +717,54 @@ def test_end_of_file_token_is_always_last() -> None:
     )
 
     assert result.tokens[-1].kind is TokenKind.END_OF_FILE
+
+
+def test_end_of_file_position_is_never_before_a_real_token_without_trailing_newline() -> None:
+    # Editor §Lexer-7: no trailing newline must not place EOF before real
+    # tokens on the source's last physical line.
+    source = (
+        "       DISPLAY 'HI'.\n"
+        "       STOP RUN."
+    )
+    result = tokenize_cobol_source(
+        source,
+        source_format=CobolSourceFormat.FIXED,
+    )
+    eof = result.tokens[-1]
+    last_real_token = result.tokens[-2]
+
+    assert eof.kind is TokenKind.END_OF_FILE
+    assert (
+        eof.span.start.line,
+        eof.span.start.column,
+    ) >= (
+        last_real_token.span.end.line,
+        last_real_token.span.end.column,
+    )
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\r", "\x0b", "\x0c", "\x1c", " ", " "],
+)
+def test_end_of_file_position_is_never_before_a_real_token_with_exotic_line_separators(
+    separator: str,
+) -> None:
+    # Editor §Lexer-9: `str.splitlines()` (which drives every real token's
+    # line number) recognizes far more line separators than a bare "\n" --
+    # EOF must be computed the same way, not via `source.count("\n")`.
+    source = (
+        f"       DISPLAY 'A'.{separator}"
+        f"       DISPLAY 'B'.{separator}"
+    )
+    result = tokenize_cobol_source(
+        source,
+        source_format=CobolSourceFormat.FIXED,
+    )
+    eof = result.tokens[-1]
+    last_real_token = result.tokens[-2]
+
+    assert eof.span.start.line >= last_real_token.span.end.line
 
 
 def test_has_errors_false_when_only_warnings_present() -> None:

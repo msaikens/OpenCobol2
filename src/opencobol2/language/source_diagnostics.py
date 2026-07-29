@@ -73,6 +73,19 @@ def compute_source_diagnostics(
             semantic_result.diagnostics,
         )
 
+    # Editor §Editor-Facing-8: stage order (lex, then parse, then
+    # semantic) is not necessarily source order -- an early parse
+    # error and a later lex error would otherwise come back with the
+    # parse error listed second. Sorted by position, with Python's
+    # stable sort preserving stage order as the tiebreak for two
+    # diagnostics at the identical position.
+    diagnostics.sort(
+        key=lambda diagnostic: (
+            diagnostic.position.line,
+            diagnostic.position.column,
+        ),
+    )
+
     return tuple(
         diagnostics,
     )

@@ -22,6 +22,7 @@ from PySide6.QtGui import (
     QContextMenuEvent,
     QFont,
     QFontDatabase,
+    QKeyEvent,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -430,6 +431,17 @@ class SourceEditorWidget(QPlainTextEdit):
             parent,
         )
 
+        # Coding-area column guides (and printing) are painted from
+        # "one visual row == one logical line starting at column 1" --
+        # true only without word-wrap. Fixed-format COBOL is
+        # column-sensitive by convention anyway, so a horizontal
+        # scrollbar on an overly-long line is the right trade-off here,
+        # not silently wrapping it and desyncing every guide line past
+        # the first visual row.
+        self.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.NoWrap,
+        )
+
         self.document_id = document_id
         self._line_number_color = QColor(
             theme.colors.line_number_foreground,
@@ -502,7 +514,14 @@ class SourceEditorWidget(QPlainTextEdit):
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
         )
-        self.blockCountChanged.connect(
+        # textChanged, not blockCountChanged: an in-place edit that
+        # keeps the same line count (e.g. replacing an IF line's text
+        # with a DISPLAY statement on that same physical line) still
+        # changes which lines should fold, but never fires
+        # blockCountChanged -- leaving toggle_fold() working off a
+        # now-stale range for a fold-start line that may not even be a
+        # fold-start anymore.
+        self.textChanged.connect(
             self._update_fold_ranges,
         )
         self.updateRequest.connect(
@@ -556,6 +575,53 @@ class SourceEditorWidget(QPlainTextEdit):
             self._highlighter.apply_theme(
                 theme,
             )
+
+    def refresh_cobol_support(
+        self,
+        path: Path | None,
+        theme: Theme,
+    ) -> None:
+        """Re-evaluate COBOL support after this tab's on-disk path changes.
+
+        `is_cobol_source`/the highlighter/folding are otherwise only
+        ever set up once, from the path given at construction time --
+        Save As can turn a plain-text tab into a `.cbl`/`.cob` one (or
+        the reverse) without the tab ever being recreated, so nothing
+        would otherwise notice. Must be called explicitly after a
+        successful Save As.
+        """
+
+        new_is_cobol_source = _is_cobol_source(
+            path,
+        )
+
+        if new_is_cobol_source == self.is_cobol_source:
+            return
+
+        self.is_cobol_source = new_is_cobol_source
+
+        if self._highlighter is not None:
+            # Detach before dropping the reference -- parented to the
+            # document, it would otherwise keep being invoked by Qt's
+            # own rendering pipeline even with no Python reference
+            # left to it.
+            self._highlighter.setDocument(
+                None,
+            )
+            self._highlighter = None
+
+        if self.is_cobol_source:
+            self._highlighter = CobolSyntaxHighlighter(
+                self.document(),
+                theme=theme,
+            )
+
+        # Folding is gated on `self._highlighter is not None`;
+        # re-running this recomputes _folding_enabled and expands any
+        # folds if support was just lost.
+        self.apply_editor_settings(
+            self._editor_settings,
+        )
 
     def _apply_minimap_colors(
         self,
@@ -810,6 +876,43 @@ class SourceEditorWidget(QPlainTextEdit):
                 ).height()
             )
             block_number += 1
+
+    def keyPressEvent(
+        self,
+        event: QKeyEvent,
+    ) -> None:
+        """Expand Tab to spaces when configured, otherwise default handling.
+
+        The lexer computes every highlight/diagnostic column against a
+        tab-*expanded* copy of each line (`language/lexer.py`'s own
+        `expandtabs`), but a literal `\\t` character in the real
+        document text shifts every subsequent column on that line out
+        from under those positions -- there's no way to reconcile the
+        two without either translating columns back through expansion
+        everywhere they're consumed, or simply not letting a literal
+        tab reach the document in the first place. `insert_spaces`
+        already exists for `format_document()`'s on-demand conversion;
+        honoring it here for live typing closes the gap at the source
+        instead.
+        """
+
+        if (
+            event.key() == Qt.Key.Key_Tab
+            and self._editor_settings.insert_spaces
+            and not self.textCursor().hasSelection()
+        ):
+            cursor = self.textCursor()
+            tab_width = self._editor_settings.tab_width
+            column = cursor.positionInBlock()
+            spaces_needed = tab_width - (column % tab_width)
+            cursor.insertText(
+                " " * spaces_needed,
+            )
+            return
+
+        super().keyPressEvent(
+            event,
+        )
 
     def resizeEvent(
         self,
@@ -1797,11 +1900,18 @@ class SourceEditorWidget(QPlainTextEdit):
         first_visible_line = (
             self.firstVisibleBlock().blockNumber()
         )
+        last_visible_line = (
+            self._last_visible_block_number()
+        )
         indicator_top = (
             first_visible_line * line_height
         )
         indicator_height = max(
-            self._visible_line_count()
+            (
+                last_visible_line
+                - first_visible_line
+                + 1
+            )
             * line_height,
             2,
         )
@@ -1873,6 +1983,43 @@ class SourceEditorWidget(QPlainTextEdit):
                 / line_height,
             ),
         )
+
+    def _last_visible_block_number(
+        self,
+    ) -> int:
+        """Return the highest document block index shown in the viewport.
+
+        Folding can make a small number of on-screen rows span a much
+        wider range of block indices -- hidden blocks in between
+        consume no screen space but still occupy minimap-scale index
+        range. This walks forward from the first visible block,
+        consuming one row of the viewport's row budget per *visible*
+        block (line-wrap is forced off, so one visible block is always
+        exactly one rendered row) to find the actual last block index
+        the viewport currently covers, rather than assuming the
+        visible row count and the block-index span are the same thing.
+        """
+
+        block = self.firstVisibleBlock()
+
+        if not block.isValid():
+            return 0
+
+        remaining_rows = self._visible_line_count()
+        last_block_number = block.blockNumber()
+
+        while (
+            block.isValid()
+            and remaining_rows > 0
+        ):
+            last_block_number = block.blockNumber()
+
+            if block.isVisible():
+                remaining_rows -= 1
+
+            block = block.next()
+
+        return last_block_number
 
     def toggle_fold(
         self,
@@ -2620,7 +2767,18 @@ class EditorTabsWidget(QTabWidget):
         self,
         printer: QPrinter,
     ) -> bool:
-        """Print the active tab's document contents, if one is open."""
+        """Print the active tab's document contents, if one is open.
+
+        `QPlainTextEdit.print_()` uses the document's standard
+        print/layout path, which doesn't consult per-block visibility
+        -- folded-away content is included in full regardless, with
+        nothing on the printed page to show it was ever collapsed on
+        screen. Rather than reimplement printing to filter out folded
+        content (losing formatting/line-numbering fidelity for a
+        printout that would then be silently *missing* source lines,
+        arguably a worse surprise than the current one), this warns
+        and lets the user cancel instead.
+        """
 
         editor = self.currentWidget()
 
@@ -2629,6 +2787,24 @@ class EditorTabsWidget(QTabWidget):
             SourceEditorWidget,
         ):
             return False
+
+        if editor._collapsed_start_lines:
+            choice = QMessageBox.question(
+                self,
+                "Print File",
+                "This document has folded (collapsed) sections. "
+                "Printing always includes their full content, "
+                "regardless of what's currently visible on screen. "
+                "Continue?",
+                (
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                ),
+                QMessageBox.StandardButton.Yes,
+            )
+
+            if choice != QMessageBox.StandardButton.Yes:
+                return False
 
         editor.print_(
             printer,
@@ -2986,6 +3162,12 @@ class EditorTabsWidget(QTabWidget):
             )
             return
 
+        editor.refresh_cobol_support(
+            Path(
+                path_str,
+            ),
+            self._theme,
+        )
         self._refresh_tab_chrome(
             editor.document_id,
         )
@@ -3041,6 +3223,14 @@ class EditorTabsWidget(QTabWidget):
             index,
         )
         self._update_welcome_page_visibility()
+
+        # The Bookmarks/Breakpoints panels only refresh on these two
+        # signals, which otherwise only fire on an explicit toggle --
+        # without this, a closed tab's markers keep showing in those
+        # panels (with a now-meaningless file name) until some
+        # unrelated toggle elsewhere happens to trigger a refresh.
+        self.bookmarks_changed.emit()
+        self.breakpoints_changed.emit()
 
     def _editor_at(
         self,

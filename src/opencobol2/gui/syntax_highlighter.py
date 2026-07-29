@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import (
     QColor,
     QSyntaxHighlighter,
@@ -98,6 +99,24 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
             QTextCharFormat,
         ] = {}
 
+        # Parented to self so Qt destroys this timer (and cancels any
+        # pending timeout) if the highlighter itself is destroyed
+        # first -- a bare QTimer.singleShot(0, self.rehighlight)
+        # keeps no such link and can fire after `self`'s underlying
+        # C++ object is already gone.
+        self._rehighlight_timer = QTimer(
+            self,
+        )
+        self._rehighlight_timer.setSingleShot(
+            True,
+        )
+        self._rehighlight_timer.setInterval(
+            0,
+        )
+        self._rehighlight_timer.timeout.connect(
+            self.rehighlight,
+        )
+
         self.apply_theme(
             theme,
         )
@@ -150,6 +169,7 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
             self._retokenize(
                 full_text,
             )
+            self._schedule_full_rehighlight()
 
         block_number = self.currentBlock().blockNumber()
 
@@ -219,6 +239,30 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
                 length,
                 merged_format,
             )
+
+    def _schedule_full_rehighlight(
+        self,
+    ) -> None:
+        """Queue a full rehighlight after retokenizing on this pass.
+
+        Qt only calls `highlightBlock()` for the block(s) whose own
+        text just changed -- but retokenizing the whole document can
+        change what tokens an *untouched* block should have (e.g. a
+        continuation string literal spanning two lines: editing line N
+        can turn line N+1 from "mid-literal" into "plain code" without
+        line N+1's own text changing at all). Without this, that
+        other block keeps its stale formatting until it happens to be
+        edited directly. Deferred via a queued call, not called
+        synchronously, since `rehighlight()` re-invokes
+        `highlightBlock()` for every block and would recurse into this
+        same method while it's still on the stack.
+        """
+
+        # QTimer.isActive() is the timer's own re-entrancy guard --
+        # starting an already-running single-shot timer just resets
+        # its remaining time, so a burst of edits before the queued
+        # call fires still only results in one rehighlight() pass.
+        self._rehighlight_timer.start()
 
     def _retokenize(
         self,

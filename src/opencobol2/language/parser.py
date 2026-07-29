@@ -102,6 +102,20 @@ _DATA_CLAUSE_KEYWORDS = frozenset(
     },
 )
 
+_PIC_CLAUSE_KEYWORDS = frozenset(
+    {
+        "PIC",
+        "PICTURE",
+    },
+)
+
+_VALUE_CLAUSE_KEYWORDS = frozenset(
+    {
+        "VALUE",
+        "VALUES",
+    },
+)
+
 STATEMENT_VERBS = frozenset(
     {
         "ACCEPT",
@@ -239,15 +253,35 @@ class _Cursor:
 def _word(
     token: Token,
 ) -> str:
-    """Return a token's upper-cased word text, or '' if not word-like."""
+    """Return a token's upper-cased word text, or '' if not word-like.
+
+    Includes `NUMERIC_LITERAL` tokens so a purely-numeric paragraph or
+    section name (`0100.`, a real, historically common IBM-mainframe
+    numbering convention) is recognized as a header by
+    `_at_paragraph_header`/`_at_procedure_section_header` -- see Editor
+    Phase 4 tracker findings Parser-2/Parser-10.
+    """
 
     if token.kind in (
         TokenKind.RESERVED_WORD,
         TokenKind.IDENTIFIER,
+        TokenKind.NUMERIC_LITERAL,
     ):
         return token.text.upper()
 
     return ""
+
+
+def _is_valid_level_number(
+    value: int,
+) -> bool:
+    """Return whether `value` is a legal COBOL data item level number."""
+
+    return 1 <= value <= 49 or value in (
+        66,
+        77,
+        88,
+    )
 
 
 class CobolParser:
@@ -809,6 +843,19 @@ class CobolParser:
             )
             else 0
         )
+
+        if (
+            level_token.kind is TokenKind.NUMERIC_LITERAL
+            and not _is_valid_level_number(
+                level_number,
+            )
+        ):
+            self._error(
+                "Invalid data item level number: "
+                f"{level_number}.",
+                level_token,
+            )
+
         name: str | None = None
 
         next_token = self._cursor.current()
@@ -837,6 +884,10 @@ class CobolParser:
         if self._cursor.current().kind is TokenKind.PERIOD:
             self._cursor.advance()
 
+        self._check_duplicate_data_clauses(
+            clauses,
+        )
+
         return DataItemNode(
             level_number=level_number,
             name=name,
@@ -848,6 +899,41 @@ class CobolParser:
                 end=self._cursor.last_end,
             ),
         )
+
+    def _check_duplicate_data_clauses(
+        self,
+        clauses: list[DataDescriptionClause],
+    ) -> None:
+        """Diagnose a second `PIC`/`PICTURE` or `VALUE`/`VALUES` clause
+        on one data item.
+
+        Both pairs are true COBOL synonyms of one clause kind, not
+        independently repeatable clauses -- unlike a genuinely
+        parseable duplicate today, which is silently accepted with the
+        last occurrence winning downstream (see the debugger's
+        PICTURE/USAGE resolution).
+        """
+
+        pic_seen = False
+        value_seen = False
+
+        for clause in clauses:
+            if clause.keyword in _PIC_CLAUSE_KEYWORDS:
+                if pic_seen:
+                    self._error(
+                        "Duplicate PIC clause on this data item.",
+                        clause.tokens[0],
+                    )
+
+                pic_seen = True
+            elif clause.keyword in _VALUE_CLAUSE_KEYWORDS:
+                if value_seen:
+                    self._error(
+                        "Duplicate VALUE clause on this data item.",
+                        clause.tokens[0],
+                    )
+
+                value_seen = True
 
     def _parse_data_clause(
         self,
@@ -913,7 +999,14 @@ class CobolParser:
                         leading_statements,
                     ),
                     span=SourceSpan(
-                        start=start,
+                        # Editor §Parser-6: start at the leading
+                        # paragraph's own first statement, not the
+                        # enclosing PROCEDURE DIVISION header -- a
+                        # "select this paragraph's text"/fold feature
+                        # must not include the division header itself.
+                        start=leading_statements[
+                            0
+                        ].span.start,
                         end=self._cursor.last_end,
                     ),
                 ),
@@ -975,7 +1068,11 @@ class CobolParser:
                         leading_statements,
                     ),
                     span=SourceSpan(
-                        start=start,
+                        # Editor §Parser-6, section-header mirror of the
+                        # same fix above.
+                        start=leading_statements[
+                            0
+                        ].span.start,
                         end=self._cursor.last_end,
                     ),
                 ),
@@ -1083,6 +1180,9 @@ class CobolParser:
             token,
         )
 
+        if word == "EXIT":
+            return self._parse_exit()
+
         if word == "MOVE":
             return self._parse_move()
 
@@ -1114,6 +1214,53 @@ class CobolParser:
         self._cursor.advance()
 
         return None
+
+    def _parse_exit(
+        self,
+    ) -> GenericStatement:
+        """Parse an `EXIT`/`EXIT PERFORM`/`EXIT PARAGRAPH`/`EXIT SECTION`/
+        `EXIT PROGRAM` statement.
+
+        Handled as its own case rather than falling into
+        `_parse_generic_statement`: EXIT's own optional operand keyword
+        can itself be a statement verb (`PERFORM`), which the generic
+        operand loop's next-verb boundary check would otherwise mistake
+        for the start of a brand-new, unrelated statement -- destroying
+        `EXIT PERFORM` into a bare `EXIT` plus a phantom out-of-line
+        `PerformStatement`, and (when written directly inside a loop
+        body rather than nested in an `IF`) letting that phantom
+        PERFORM's own modifier scan consume the enclosing loop's real
+        `END-PERFORM` as its own terminator.
+        """
+
+        start = self._cursor.current().span.start
+        exit_token = self._cursor.advance()
+        tokens: list[Token] = [
+            exit_token,
+        ]
+
+        if self._is_word_current(
+            "PERFORM",
+            "PARAGRAPH",
+            "SECTION",
+            "PROGRAM",
+        ):
+            tokens.append(
+                self._cursor.advance(),
+            )
+
+        self._consume_optional_period()
+
+        return GenericStatement(
+            verb="EXIT",
+            tokens=tuple(
+                tokens,
+            ),
+            span=SourceSpan(
+                start=start,
+                end=self._cursor.last_end,
+            ),
+        )
 
     def _parse_generic_statement(
         self,
@@ -1196,6 +1343,7 @@ class CobolParser:
             "TO",
         ):
             self._cursor.advance()
+            paren_depth = 0
 
             while (
                 not self._cursor.at_end()
@@ -1206,10 +1354,34 @@ class CobolParser:
             ):
                 token = self._cursor.current()
 
-                if token.kind in (
-                    TokenKind.IDENTIFIER,
-                    TokenKind.RESERVED_WORD,
+                if token.kind is TokenKind.LEFT_PARENTHESIS:
+                    paren_depth += 1
+                elif token.kind is TokenKind.RIGHT_PARENTHESIS:
+                    paren_depth = max(
+                        0,
+                        paren_depth - 1,
+                    )
+                elif (
+                    paren_depth == 0
+                    and token.kind
+                    in (
+                        TokenKind.IDENTIFIER,
+                        TokenKind.RESERVED_WORD,
+                    )
+                    and _word(
+                        token,
+                    )
+                    not in (
+                        "OF",
+                        "IN",
+                    )
                 ):
+                    # A target's own subscript (`WS-TABLE(I)`) is not
+                    # itself another MOVE target -- only the qualifier
+                    # keyword and its own subscript, if any, are skipped
+                    # here; `OF`/`IN` qualifiers are likewise not a
+                    # second target name, just a link to the enclosing
+                    # group this target is qualified by.
                     target_names.append(
                         token.text,
                     )
@@ -1279,6 +1451,8 @@ class CobolParser:
             # "RUN." for a paragraph name.
             self._cursor.advance()
 
+        operand_tokens: list[Token] = []
+
         while (
             not self._cursor.at_end()
             and self._cursor.current().kind is not TokenKind.PERIOD
@@ -1286,11 +1460,16 @@ class CobolParser:
             and not self._at_next_verb()
             and not self._at_structural_terminator()
         ):
-            self._cursor.advance()
+            operand_tokens.append(
+                self._cursor.advance(),
+            )
 
         self._consume_optional_period()
 
         return StopRunStatement(
+            operand_tokens=tuple(
+                operand_tokens,
+            ),
             span=SourceSpan(
                 start=start,
                 end=self._cursor.last_end,
@@ -1440,6 +1619,11 @@ class CobolParser:
                 not followed_by_times
                 and (
                     current.kind is TokenKind.IDENTIFIER
+                    # A purely-numeric paragraph name (`PERFORM 0200`,
+                    # the same legacy mainframe numbering style as
+                    # Parser-2's header fix) is a legitimate PERFORM
+                    # target too, not just an IDENTIFIER/RESERVED_WORD.
+                    or current.kind is TokenKind.NUMERIC_LITERAL
                     or (
                         current.kind is TokenKind.RESERVED_WORD
                         and current_word not in STATEMENT_VERBS
@@ -1464,7 +1648,44 @@ class CobolParser:
                     "THROUGH",
                 ):
                     self._cursor.advance()
-                    through_name = self._cursor.advance().text
+                    through_candidate = self._cursor.current()
+                    through_word = _word(
+                        through_candidate,
+                    )
+                    # Guarded the same way `looks_like_target` above is:
+                    # an absent/malformed through-target (source ending
+                    # right after THRU, or a period immediately
+                    # following it) must not be blindly consumed as the
+                    # through-name text -- doing so either swallows the
+                    # real statement terminator or, at end of file,
+                    # produces an empty string that
+                    # `PerformStatement.__post_init__`'s own validation
+                    # then rejects by raising uncaught (Parser-4).
+                    through_looks_valid = (
+                        through_candidate.kind
+                        is TokenKind.IDENTIFIER
+                        or through_candidate.kind
+                        is TokenKind.NUMERIC_LITERAL
+                        or (
+                            through_candidate.kind
+                            is TokenKind.RESERVED_WORD
+                            and through_word
+                            not in STATEMENT_VERBS
+                            and through_word
+                            not in _STRUCTURAL_TERMINATORS
+                        )
+                    )
+
+                    if through_looks_valid:
+                        through_name = (
+                            self._cursor.advance().text
+                        )
+                    else:
+                        self._error(
+                            "Expected a paragraph name after "
+                            "THRU/THROUGH.",
+                            through_candidate,
+                        )
 
         modifier_tokens: list[Token] = []
         stopped_reason: str | None = None

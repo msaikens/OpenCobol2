@@ -749,6 +749,351 @@ def test_leading_unnamed_paragraph() -> None:
     assert result.unit.procedure.paragraphs[0].name is None
 
 
+# --- Phase 4 fixes (tracker Parser-1/2/3/4/6/7/8/9/10/11/12) ----------------
+
+
+def test_exit_perform_is_not_destroyed() -> None:
+    # Editor §Parser-1: `EXIT PERFORM` nested in an IF used to split into
+    # an orphaned GenericStatement('EXIT') plus a phantom PerformStatement.
+    statements = _statements(
+        "PERFORM UNTIL WS-DONE\n"
+        "    IF WS-FLAG = 1\n"
+        "        EXIT PERFORM\n"
+        "    END-IF\n"
+        "    DISPLAY WS-FLAG\n"
+        "END-PERFORM\n"
+        "STOP RUN.",
+    )
+
+    outer_perform = statements[0]
+    assert isinstance(
+        outer_perform,
+        PerformStatement,
+    )
+    if_statement = outer_perform.body[0]
+    exit_statement = if_statement.then_statements[0]
+
+    assert isinstance(
+        exit_statement,
+        GenericStatement,
+    )
+    assert exit_statement.verb == "EXIT"
+    assert [
+        token.text.upper()
+        for token in exit_statement.tokens
+    ] == ["EXIT", "PERFORM"]
+    # No phantom second statement in the IF's THEN branch.
+    assert len(if_statement.then_statements) == 1
+    # The outer loop's own body is untouched by the nested EXIT PERFORM.
+    assert len(outer_perform.body) == 2
+
+
+def test_exit_perform_in_loop_body_does_not_eat_the_real_end_perform() -> None:
+    # Editor §Parser-9: EXIT PERFORM written directly in a loop body (not
+    # nested inside an IF) used to have its phantom PerformStatement
+    # consume the enclosing loop's real END-PERFORM, silently pulling
+    # STOP RUN into the loop body.
+    statements = _statements(
+        "PERFORM UNTIL WS-DONE\n"
+        "    DISPLAY 'X'\n"
+        "    EXIT PERFORM\n"
+        "END-PERFORM\n"
+        "STOP RUN.",
+    )
+
+    assert len(statements) == 2
+    outer_perform = statements[0]
+    assert isinstance(
+        outer_perform,
+        PerformStatement,
+    )
+    assert len(outer_perform.body) == 2
+    exit_statement = outer_perform.body[1]
+    assert isinstance(
+        exit_statement,
+        GenericStatement,
+    )
+    assert exit_statement.verb == "EXIT"
+    assert isinstance(
+        statements[1],
+        StopRunStatement,
+    )
+
+
+def test_numeric_paragraph_names_are_recognized_as_headers() -> None:
+    # Editor §Parser-2: `0100.`/`0200.` (a real, historically common
+    # mainframe numbering convention) used to collapse into one
+    # anonymous leading paragraph with two "Expected a statement" errors.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       PROCEDURE DIVISION.\n"
+        "       0100.\n"
+        "           PERFORM 0200\n"
+        "           STOP RUN.\n"
+        "       0200.\n"
+        "           DISPLAY 'IN 0200'.\n"
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.diagnostics == ()
+    names = [
+        paragraph.name
+        for paragraph in result.unit.procedure.paragraphs
+    ]
+    assert names == ["0100", "0200"]
+
+
+def test_perform_numeric_paragraph_target() -> None:
+    # Editor §Parser-10: `PERFORM 0200` used to fail the target-detection
+    # heuristic and swallow the following STOP RUN into a phantom body.
+    statements = _statements(
+        "PERFORM 0200\nSTOP RUN.",
+    )
+
+    assert len(statements) == 2
+    perform = statements[0]
+    assert isinstance(
+        perform,
+        PerformStatement,
+    )
+    assert perform.target_name == "0200"
+    assert perform.body == ()
+    assert isinstance(
+        statements[1],
+        StopRunStatement,
+    )
+
+
+def test_move_qualified_target_does_not_leak_the_qualifier_keyword() -> None:
+    # Editor §Parser-3: `MOVE x TO field OF group` used to inject the
+    # qualifier keyword itself as a bogus third target name.
+    statements = _statements(
+        "MOVE 'X' TO CUSTOMER-NAME OF CUSTOMER-REC.",
+    )
+    move = statements[0]
+
+    assert isinstance(
+        move,
+        MoveStatement,
+    )
+    assert move.target_names == (
+        "CUSTOMER-NAME",
+        "CUSTOMER-REC",
+    )
+
+
+def test_move_target_does_not_leak_a_subscript_identifier() -> None:
+    # Editor §Parser-11: the same unguarded target loop also captured a
+    # subscript variable (`WS-TABLE(I)`) as a bogus second target.
+    statements = _statements(
+        "MOVE 'X' TO WS-TABLE(I).",
+    )
+    move = statements[0]
+
+    assert isinstance(
+        move,
+        MoveStatement,
+    )
+    assert move.target_names == ("WS-TABLE",)
+
+
+def test_move_target_numeric_subscript_still_excluded() -> None:
+    # Sanity check: a numeric subscript was never captured (only
+    # identifier subscripts were affected by Parser-11).
+    statements = _statements(
+        "MOVE 'X' TO WS-TABLE(1).",
+    )
+    move = statements[0]
+
+    assert move.target_names == ("WS-TABLE",)
+
+
+def test_perform_thru_missing_target_does_not_crash() -> None:
+    # Editor §Parser-4: `PERFORM PARA-A THRU` at end of file used to
+    # crash with an uncaught ValueError from PerformStatement's own
+    # non-empty-string validation.
+    source = _fixed(
+        "PERFORM PARA-A THRU",
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.has_errors is True
+    perform = result.unit.procedure.paragraphs[0].statements[0]
+    assert isinstance(
+        perform,
+        PerformStatement,
+    )
+    assert perform.target_name == "PARA-A"
+    assert perform.through_name is None
+
+
+def test_perform_thru_period_does_not_swallow_the_terminator() -> None:
+    # Editor §Parser-4: `PERFORM PARA-A THRU.` used to silently consume
+    # the real statement-terminating period as bogus through-name text,
+    # with zero diagnostics. It's now correctly diagnosed as malformed
+    # (a real, though clearly mistaken, source construct) -- but the key
+    # regression check is that the real period is no longer swallowed,
+    # so STOP RUN still parses as its own separate statement afterward.
+    result = _parse(
+        _fixed(
+            "PERFORM PARA-A THRU.\nSTOP RUN.",
+        ),
+    )
+
+    assert result.has_errors is True
+    statements = result.unit.procedure.paragraphs[0].statements
+    assert len(statements) == 2
+    perform = statements[0]
+    assert isinstance(
+        perform,
+        PerformStatement,
+    )
+    assert perform.target_name == "PARA-A"
+    assert perform.through_name is None
+    assert isinstance(
+        statements[1],
+        StopRunStatement,
+    )
+
+
+def test_leading_paragraph_span_starts_at_its_first_statement() -> None:
+    # Editor §Parser-6: the synthetic leading-unnamed-paragraph's span
+    # used to start at the enclosing PROCEDURE DIVISION header, not its
+    # own first statement.
+    result = _parse(
+        _fixed(
+            "DISPLAY 'ONE'\nDISPLAY 'TWO'.",
+        ).replace(
+            "       MAIN-PARA.\n",
+            "",
+        ),
+    )
+
+    assert result.diagnostics == ()
+    paragraph = result.unit.procedure.paragraphs[0]
+    first_statement = paragraph.statements[0]
+
+    assert paragraph.span.start == first_statement.span.start
+    assert paragraph.span.start != result.unit.procedure.span.start
+
+
+def test_stop_literal_retains_its_operand_tokens() -> None:
+    # Editor §Parser-7: `STOP 'OPERATOR HALT'.` used to discard the
+    # literal entirely, making it indistinguishable from a plain STOP RUN.
+    statements = _statements(
+        "STOP 'OPERATOR HALT'.",
+    )
+    stop = statements[0]
+
+    assert isinstance(
+        stop,
+        StopRunStatement,
+    )
+    assert [
+        token.value or token.text
+        for token in stop.operand_tokens
+    ] == ["OPERATOR HALT"]
+
+
+def test_stop_run_has_no_operand_tokens() -> None:
+    statements = _statements(
+        "STOP RUN.",
+    )
+    stop = statements[0]
+
+    assert stop.operand_tokens == ()
+
+
+def test_duplicate_pic_clause_is_diagnosed() -> None:
+    # Editor §Parser-8: two PIC clauses on one item used to be accepted
+    # with no diagnostic at all, with the last one silently winning
+    # downstream (the debugger's PICTURE/USAGE resolution).
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-X PIC 9(3) PIC X(10) VALUE 1 VALUE 2.\n"
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.has_errors is True
+    messages = [
+        diagnostic.message
+        for diagnostic in result.diagnostics
+    ]
+    assert any(
+        "Duplicate PIC clause" in message
+        for message in messages
+    )
+    assert any(
+        "Duplicate VALUE clause" in message
+        for message in messages
+    )
+
+
+def test_single_pic_and_value_clause_is_not_flagged() -> None:
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-X PIC 9(3) VALUE 1.\n"
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.diagnostics == ()
+
+
+def test_invalid_level_number_is_diagnosed() -> None:
+    # Editor §Parser-12: a level number outside 01-49/66/77/88 used to
+    # be accepted with no diagnostic at all.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       100  WS-X PIC X.\n"
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Invalid data item level number" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_valid_level_numbers_are_not_flagged() -> None:
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. TEST.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-GROUP.\n"
+        "           05  WS-FIELD PIC X.\n"
+        "       66  WS-RENAME RENAMES WS-FIELD.\n"
+        "       01  WS-FLAG PIC X.\n"
+        "           88  WS-FLAG-ON VALUE 'Y'.\n"
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.diagnostics == ()
+
+
 # --- real-world legacy files -------------------------------------------------
 
 

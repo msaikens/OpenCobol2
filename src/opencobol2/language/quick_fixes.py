@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from opencobol2.compiler.models import CobolSourceFormat
 from opencobol2.language.diagnostics import LexDiagnostic, ParseDiagnostic
+from opencobol2.language.lexer import (
+    FIXED_FORMAT_CONTENT_END_COLUMN,
+    FIXED_FORMAT_CONTENT_START_COLUMN,
+)
 
 
 _UNTERMINATED_LITERAL_MESSAGE = (
@@ -33,6 +38,8 @@ class QuickFix:
 def compute_quick_fix(
     source_text: str,
     diagnostic: LexDiagnostic | ParseDiagnostic,
+    *,
+    source_format: CobolSourceFormat = CobolSourceFormat.FIXED,
 ) -> QuickFix | None:
     """Return a mechanical fix for a diagnostic, if one is known.
 
@@ -80,14 +87,47 @@ def compute_quick_fix(
     ):
         return None
 
+    # FIXED-format source only ever lexes columns 8-72 as program text;
+    # anything from column 73 onward is the sequence-number/reference
+    # area and is never read. Appending at the raw line's physical end
+    # can land past that boundary (a trailing-content-past-column-72
+    # line), leaving the fix outside the window the lexer scans at all
+    # -- applying it would appear to succeed while leaving the
+    # diagnostic unchanged. Instead of the raw line length, the
+    # insertion point is the end of the FIXED-format content area's
+    # own *real* content -- trailing whitespace within that area
+    # trimmed off -- which is always at or before column 72 by
+    # construction.
+    if source_format is CobolSourceFormat.FIXED:
+        content_area = line_text[
+            FIXED_FORMAT_CONTENT_START_COLUMN
+            - 1 : FIXED_FORMAT_CONTENT_END_COLUMN
+        ].rstrip()
+        insert_column = (
+            FIXED_FORMAT_CONTENT_START_COLUMN
+            + len(
+                content_area,
+            )
+        )
+
+        if insert_column > FIXED_FORMAT_CONTENT_END_COLUMN + 1:
+            # No room left in the content area to insert a closing
+            # quote at all -- offering a fix that can't actually help
+            # is worse than offering none.
+            return None
+    else:
+        insert_column = (
+            len(
+                line_text,
+            )
+            + 1
+        )
+
     return QuickFix(
         title=(
             f"Insert missing closing {quote_character}"
         ),
         line=diagnostic.position.line,
-        column=len(
-            line_text,
-        )
-        + 1,
+        column=insert_column,
         insert_text=quote_character,
     )

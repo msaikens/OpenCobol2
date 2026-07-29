@@ -96,19 +96,31 @@ class SymbolTable:
             if symbol.name.upper() == normalized
         )
 
+    def find_procedure_symbols(
+        self,
+        name: str,
+    ) -> tuple[ProcedureSymbol, ...]:
+        """Return every procedure symbol matching a name, case-insensitively."""
+
+        normalized = name.upper()
+
+        return tuple(
+            symbol
+            for symbol in self.procedure_symbols
+            if symbol.name.upper() == normalized
+        )
+
     def find_procedure_symbol(
         self,
         name: str,
     ) -> ProcedureSymbol | None:
         """Return the first procedure symbol matching a name, if any."""
 
-        normalized = name.upper()
+        matches = self.find_procedure_symbols(
+            name,
+        )
 
-        for symbol in self.procedure_symbols:
-            if symbol.name.upper() == normalized:
-                return symbol
-
-        return None
+        return matches[0] if matches else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -207,6 +219,7 @@ def analyze_compilation_unit(
     data_symbols = (
         _build_data_symbols(
             unit,
+            context.diagnostics,
         )
         if unit.data is not None
         else ()
@@ -223,6 +236,13 @@ def analyze_compilation_unit(
         data_symbols=data_symbols,
         procedure_symbols=procedure_symbols,
     )
+
+    if unit.data is not None:
+        _resolve_data_clause_references(
+            unit,
+            symbol_table,
+            context,
+        )
 
     if unit.procedure is not None:
         _resolve_references(
@@ -247,6 +267,7 @@ def analyze_compilation_unit(
 
 def _build_data_symbols(
     unit: CompilationUnitNode,
+    diagnostics: list[ParseDiagnostic],
 ) -> tuple[DataSymbol, ...]:
     """Build the data item symbol table, respecting level-number nesting."""
 
@@ -255,6 +276,14 @@ def _build_data_symbols(
     for section in unit.data.sections:
         stack: list[tuple[int, str | None]] = []
         last_non_condition_name: str | None = None
+        # Scoped to this one section, not the whole data division --
+        # WORKING-STORAGE and LINKAGE (for example) are separate areas
+        # where the same name legitimately recurs. Only ordinary
+        # (non-88, non-66) sibling items under the same immediate
+        # parent are tracked here (Semantic-3); 88-level condition
+        # names and 66-level RENAMES entries have their own separate
+        # naming conventions and are not covered by this check.
+        seen_siblings: set[tuple[str | None, str]] = set()
 
         for item in section.items:
             level = item.level_number
@@ -275,8 +304,13 @@ def _build_data_symbols(
                 continue
 
             if level == 66:
+                # Editor §Semantic-9: the enclosing 01-level record --
+                # the bottom of the ancestor stack, since a 66-level
+                # RENAMES entry does not itself push onto the stack --
+                # not `stack[-1]`, which is merely the most recently
+                # processed *sibling* elementary item.
                 parent_name = (
-                    stack[-1][1]
+                    stack[0][1]
                     if stack
                     else None
                 )
@@ -313,6 +347,27 @@ def _build_data_symbols(
                 )
 
             if item.name is not None:
+                sibling_key = (
+                    parent_name,
+                    item.name.upper(),
+                )
+
+                if sibling_key in seen_siblings:
+                    diagnostics.append(
+                        ParseDiagnostic(
+                            severity=DiagnosticSeverity.ERROR,
+                            message=(
+                                "Duplicate data item name under "
+                                f"the same parent: {item.name}"
+                            ),
+                            position=item.span.start,
+                        ),
+                    )
+                else:
+                    seen_siblings.add(
+                        sibling_key,
+                    )
+
                 symbols.append(
                     DataSymbol(
                         name=item.name,
@@ -340,19 +395,69 @@ def _build_data_symbols(
     )
 
 
+_REFERENCE_BEARING_CLAUSE_KEYWORDS = frozenset(
+    {
+        "REDEFINES",
+        "RENAMES",
+        "OCCURS",
+    },
+)
+
+
+def _resolve_data_clause_references(
+    unit: CompilationUnitNode,
+    symbol_table: SymbolTable,
+    context: _AnalysisContext,
+) -> None:
+    """Resolve names referenced from within data-description clauses.
+
+    Reference resolution otherwise only ever walks `unit.procedure`,
+    so a name used only inside a data-description clause -- most
+    notably a `REDEFINES` target, a `RENAMES ... THRU` range, or an
+    `OCCURS ... DEPENDING ON` subscript-count -- was previously
+    invisible to `find_data_references` (Editor §Semantic-4). Each
+    qualifying clause's own token list is fed through the same
+    best-effort `_resolve_identifier_tokens` scan already used for
+    every other loosely-parsed token list in this module.
+    """
+
+    for section in unit.data.sections:
+        for item in section.items:
+            for clause in item.clauses:
+                if (
+                    clause.keyword
+                    in _REFERENCE_BEARING_CLAUSE_KEYWORDS
+                ):
+                    _resolve_identifier_tokens(
+                        clause.tokens,
+                        symbol_table,
+                        context,
+                    )
+
+
 def _build_procedure_symbols(
     procedure: ProcedureDivisionNode,
     diagnostics: list[ParseDiagnostic],
 ) -> tuple[ProcedureSymbol, ...]:
-    """Build the paragraph/section symbol table, flagging duplicate names."""
+    """Build the paragraph/section symbol table, flagging duplicate names.
+
+    Section names must be unique across the whole procedure division,
+    but a paragraph name may legally repeat across two *different*
+    sections (disambiguated by `PERFORM x IN section-name`) -- see
+    Editor Phase 4 tracker finding Semantic-1. Duplicate detection is
+    therefore scoped per enclosing paragraph list: the top-level
+    (unsectioned) paragraphs are one scope, and each section's own
+    paragraphs are a separate scope from every other section's.
+    """
 
     symbols: list[ProcedureSymbol] = []
-    seen_names: set[str] = set()
+    section_names_seen: set[str] = set()
 
     def _add(
         name: str | None,
         kind: ProcedureSymbolKind,
         span: object,
+        seen_names: set[str],
     ) -> None:
         if name is None:
             return
@@ -382,11 +487,14 @@ def _build_procedure_symbols(
             ),
         )
 
+    top_level_paragraph_names_seen: set[str] = set()
+
     for paragraph in procedure.paragraphs:
         _add(
             paragraph.name,
             ProcedureSymbolKind.PARAGRAPH,
             paragraph.span,
+            top_level_paragraph_names_seen,
         )
 
     for section in procedure.sections:
@@ -394,13 +502,17 @@ def _build_procedure_symbols(
             section.name,
             ProcedureSymbolKind.SECTION,
             section.span,
+            section_names_seen,
         )
+
+        section_paragraph_names_seen: set[str] = set()
 
         for paragraph in section.paragraphs:
             _add(
                 paragraph.name,
                 ProcedureSymbolKind.PARAGRAPH,
                 paragraph.span,
+                section_paragraph_names_seen,
             )
 
     return tuple(
@@ -479,7 +591,7 @@ def _resolve_statements(
                 symbol_table,
                 context,
             )
-            _resolve_identifier_tokens(
+            _resolve_perform_modifier_tokens(
                 statement.modifier_tokens,
                 symbol_table,
                 context,
@@ -535,11 +647,24 @@ def _resolve_statements(
         ):
             # tokens[0] is always the verb itself (a reserved word, so
             # the identifier filter below already skips it).
-            _resolve_identifier_tokens(
-                statement.tokens,
-                symbol_table,
-                context,
-            )
+            if statement.verb == "GO":
+                _resolve_go_to_targets(
+                    statement.tokens,
+                    symbol_table,
+                    context,
+                )
+            elif statement.verb == "ALTER":
+                _resolve_alter_targets(
+                    statement.tokens,
+                    symbol_table,
+                    context,
+                )
+            else:
+                _resolve_identifier_tokens(
+                    statement.tokens,
+                    symbol_table,
+                    context,
+                )
 
 
 def _resolve_data_names(
@@ -548,7 +673,14 @@ def _resolve_data_names(
     symbol_table: SymbolTable,
     context: _AnalysisContext,
 ) -> None:
-    """Resolve a list of data name references, reporting problems."""
+    """Resolve a list of data name references (MOVE targets), reporting
+    problems.
+
+    MOVE targets are always ordinary receiving fields, never
+    condition-names -- `MOVE value TO condition-name` is illegal COBOL
+    (Editor §Semantic-10), so a match that's exclusively a condition
+    name is flagged even though the name itself did resolve.
+    """
 
     for name in names:
         matches = symbol_table.find_data_symbols(
@@ -579,6 +711,17 @@ def _resolve_data_names(
                         severity=DiagnosticSeverity.WARNING,
                         message=(
                             f"Ambiguous reference to data name: {name}"
+                        ),
+                        position=position,
+                    ),
+                )
+            elif matches[0].is_condition_name:
+                context.diagnostics.append(
+                    ParseDiagnostic(
+                        severity=DiagnosticSeverity.ERROR,
+                        message=(
+                            "Condition-name cannot be used as a "
+                            f"MOVE target: {name}"
                         ),
                         position=position,
                     ),
@@ -647,14 +790,24 @@ def _resolve_procedure_name(
     symbol_table: SymbolTable,
     context: _AnalysisContext,
 ) -> None:
-    """Resolve one PERFORM target/through name, reporting problems."""
+    """Resolve one paragraph/section name reference, reporting problems.
+
+    Mirrors `_resolve_data_names`'s ambiguity handling (Editor
+    §Semantic-5): since Semantic-1's fix legitimately allows the same
+    paragraph name to be declared in two different sections, an
+    unqualified reference matching more than one is now a real,
+    reachable case, not the merely-hypothetical one it used to be
+    while every such duplicate was rejected outright at declaration.
+    """
 
     if name is None:
         return
 
-    if symbol_table.find_procedure_symbol(
+    matches = symbol_table.find_procedure_symbols(
         name,
-    ) is None:
+    )
+
+    if not matches:
         context.diagnostics.append(
             ParseDiagnostic(
                 severity=DiagnosticSeverity.ERROR,
@@ -672,3 +825,192 @@ def _resolve_procedure_name(
                 position=position,
             ),
         )
+
+        if len(
+            matches,
+        ) > 1:
+            context.diagnostics.append(
+                ParseDiagnostic(
+                    severity=DiagnosticSeverity.WARNING,
+                    message=(
+                        "Ambiguous reference to paragraph or "
+                        f"section: {name}"
+                    ),
+                    position=position,
+                ),
+            )
+
+
+_PERFORM_QUALIFIER_KEYWORDS = frozenset(
+    {
+        "IN",
+        "OF",
+    },
+)
+
+
+def _resolve_perform_modifier_tokens(
+    modifier_tokens: tuple[Token, ...],
+    symbol_table: SymbolTable,
+    context: _AnalysisContext,
+) -> None:
+    """Resolve a PERFORM statement's modifier tokens.
+
+    An `IN`/`OF` section qualifier (`PERFORM name IN section-name`) is
+    routed to procedure-symbol resolution instead of the generic
+    data-name scan below -- the parser has no dedicated AST field for
+    this qualifier, so it lands in `modifier_tokens` alongside genuine
+    data-name-bearing modifiers (`VARYING`, `WITH TEST`), and without
+    this split a section name would be checked as if it might be a
+    data item (Editor §Semantic-6).
+    """
+
+    length = len(
+        modifier_tokens,
+    )
+    remaining: list[Token] = []
+    index = 0
+
+    while index < length:
+        token = modifier_tokens[index]
+        word = (
+            token.text.upper()
+            if token.kind is TokenKind.RESERVED_WORD
+            else ""
+        )
+
+        if (
+            word in _PERFORM_QUALIFIER_KEYWORDS
+            and index + 1 < length
+            and modifier_tokens[index + 1].kind
+            in (
+                TokenKind.IDENTIFIER,
+                TokenKind.RESERVED_WORD,
+            )
+        ):
+            qualifier_token = modifier_tokens[index + 1]
+            _resolve_procedure_name(
+                qualifier_token.text,
+                qualifier_token.span.start,
+                symbol_table,
+                context,
+            )
+            index += 2
+            continue
+
+        remaining.append(
+            token,
+        )
+        index += 1
+
+    _resolve_identifier_tokens(
+        tuple(
+            remaining,
+        ),
+        symbol_table,
+        context,
+    )
+
+
+def _resolve_go_to_targets(
+    tokens: tuple[Token, ...],
+    symbol_table: SymbolTable,
+    context: _AnalysisContext,
+) -> None:
+    """Resolve a `GO TO` statement's paragraph-name target(s).
+
+    `GO TO`'s target(s) belong in the procedure namespace, not the
+    generic data-name scan (Editor §Semantic-11). The legacy
+    multi-target `GO TO t1 t2 ... DEPENDING ON data-name` form's
+    selector after `DEPENDING ON` is a genuine data name and is
+    excluded from procedure-name resolution, falling back to the
+    ordinary best-effort data-name scan instead.
+    """
+
+    after_depending = False
+    selector_tokens: list[Token] = []
+
+    # tokens[0] is the GO verb itself.
+    for token in tokens[1:]:
+        word = (
+            token.text.upper()
+            if token.kind is TokenKind.RESERVED_WORD
+            else ""
+        )
+
+        if word == "DEPENDING":
+            after_depending = True
+            continue
+
+        if word in (
+            "TO",
+            "ON",
+        ):
+            continue
+
+        if after_depending:
+            selector_tokens.append(
+                token,
+            )
+        elif token.kind in (
+            TokenKind.IDENTIFIER,
+            TokenKind.NUMERIC_LITERAL,
+        ):
+            _resolve_procedure_name(
+                token.text,
+                token.span.start,
+                symbol_table,
+                context,
+            )
+
+    _resolve_identifier_tokens(
+        tuple(
+            selector_tokens,
+        ),
+        symbol_table,
+        context,
+    )
+
+
+_ALTER_KEYWORDS = frozenset(
+    {
+        "TO",
+        "PROCEED",
+    },
+)
+
+
+def _resolve_alter_targets(
+    tokens: tuple[Token, ...],
+    symbol_table: SymbolTable,
+    context: _AnalysisContext,
+) -> None:
+    """Resolve an `ALTER` statement's paragraph-name targets.
+
+    Every operand of `ALTER para-1 TO [PROCEED TO] para-2[, para-3 TO
+    [PROCEED TO] para-4]...` is a paragraph name -- there are no
+    data-name operands at all, unlike `GO TO`'s DEPENDING ON form
+    (Editor §Semantic-11).
+    """
+
+    # tokens[0] is the ALTER verb itself.
+    for token in tokens[1:]:
+        word = (
+            token.text.upper()
+            if token.kind is TokenKind.RESERVED_WORD
+            else ""
+        )
+
+        if word in _ALTER_KEYWORDS:
+            continue
+
+        if token.kind in (
+            TokenKind.IDENTIFIER,
+            TokenKind.NUMERIC_LITERAL,
+        ):
+            _resolve_procedure_name(
+                token.text,
+                token.span.start,
+                symbol_table,
+                context,
+            )

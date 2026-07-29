@@ -1,7 +1,9 @@
 """Unit tests for local project task process execution."""
 
+import os
 from pathlib import Path
 import subprocess
+import sys
 from uuid import uuid4
 
 import pytest
@@ -151,3 +153,77 @@ def test_invoke_task_process_rejects_non_positive_timeout() -> None:
             run_id=uuid4(),
             timeout_seconds=0,
         )
+
+
+# --- Real subprocess execution (no subprocess.run mocking) -----------------
+#
+# Every test above mocks subprocess.run, so none of them exercise the
+# real interaction between this module and the OS process/pipe layer.
+# These use the real Python interpreter as a stand-in child process.
+
+
+def test_invoke_task_process_runs_a_real_process(
+    tmp_path: Path,
+) -> None:
+    result = invoke_task_process(
+        command=(
+            sys.executable,
+            "-c",
+            "print('hello from child')",
+        ),
+        run_id=uuid4(),
+        timeout_seconds=30,
+        working_directory=tmp_path,
+    )
+
+    assert result.status is TaskExecutionStatus.COMPLETED
+    assert result.return_code == 0
+    assert "hello from child" in result.stdout
+
+
+def test_invoke_task_process_passes_working_directory_and_environment(
+    tmp_path: Path,
+) -> None:
+    child_environment = dict(os.environ)
+    child_environment["OC2_TEST_VAR"] = "expected-value"
+
+    result = invoke_task_process(
+        command=(
+            sys.executable,
+            "-c",
+            "import os; print(os.getcwd()); print(os.environ['OC2_TEST_VAR'])",
+        ),
+        run_id=uuid4(),
+        timeout_seconds=30,
+        working_directory=tmp_path,
+        environment=child_environment,
+    )
+
+    assert result.status is TaskExecutionStatus.COMPLETED
+    output_lines = result.stdout.splitlines()
+    assert Path(output_lines[0]) == tmp_path.resolve()
+    assert output_lines[1] == "expected-value"
+
+
+def test_invoke_task_process_real_timeout_kills_a_slow_process() -> None:
+    result = invoke_task_process(
+        command=(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(30)",
+        ),
+        run_id=uuid4(),
+        timeout_seconds=0.5,
+    )
+
+    assert result.status is TaskExecutionStatus.TIMED_OUT
+
+
+def test_invoke_task_process_real_failed_to_start() -> None:
+    result = invoke_task_process(
+        command=("definitely-not-a-real-executable-xyz",),
+        run_id=uuid4(),
+        timeout_seconds=5,
+    )
+
+    assert result.status is TaskExecutionStatus.FAILED_TO_START

@@ -269,6 +269,48 @@ def test_gutter_click_toggles_the_fold_under_it(
     assert 4 in editor._collapsed_start_lines
 
 
+def test_in_place_edit_with_no_line_count_change_refreshes_fold_ranges(
+    qapp,
+) -> None:
+    """blockCountChanged alone must not be the only trigger for
+    recomputing fold ranges -- an edit that replaces a fold-start
+    line's text with something no longer foldable, keeping the same
+    number of lines, must still drop that stale fold range."""
+
+    editor = _build_folding_editor()
+
+    starts_before = {
+        fold_range.start_line
+        for fold_range in editor._fold_ranges
+    }
+    # fold_range.start_line is 1-based; 1-based line 5 is "IF 1 > 0"
+    # (0-based document block 4).
+    assert 5 in starts_before
+
+    # Replace that line's text in place with a plain DISPLAY statement
+    # -- same physical line, same line count, no longer an IF at all.
+    block = editor.document().findBlockByNumber(
+        4,
+    )
+    cursor = editor.textCursor()
+    cursor.setPosition(
+        block.position(),
+    )
+    cursor.movePosition(
+        cursor.MoveOperation.EndOfBlock,
+        cursor.MoveMode.KeepAnchor,
+    )
+    cursor.insertText(
+        "           DISPLAY 1",
+    )
+
+    starts_after = {
+        fold_range.start_line
+        for fold_range in editor._fold_ranges
+    }
+    assert 5 not in starts_after
+
+
 def test_editing_that_shifts_fold_lines_expands_everything_safely(
     qapp,
 ) -> None:

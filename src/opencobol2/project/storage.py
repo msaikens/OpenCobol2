@@ -76,6 +76,10 @@ class ProjectStorage:
                     encoding="utf-8",
                 )
             )
+        except UnicodeDecodeError as error:
+            raise ProjectFormatError(
+                "Project file is not valid UTF-8."
+            ) from error
         except json.JSONDecodeError as error:
             raise ProjectFormatError(
                 "Project file contains invalid JSON."
@@ -430,7 +434,13 @@ def _decode_project(
     except (
         TypeError,
         ValueError,
+        RecursionError,
     ) as error:
+        # RecursionError is a RuntimeError, not a ValueError/TypeError
+        # -- an unusually deep (but not otherwise invalid) nested
+        # virtual_folders structure would otherwise crash with a bare
+        # interpreter recursion error instead of this same clean,
+        # documented format error every other decode failure gets.
         raise ProjectFormatError(
             f"Project file contains an invalid value: {error}"
         ) from error

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 
 
@@ -119,7 +120,7 @@ class Token:
     kind: TokenKind
     text: str
     span: SourceSpan
-    value: str | int | float | None = None
+    value: str | int | float | Decimal | None = None
 
     def __post_init__(self) -> None:
         """Validate token state."""
@@ -154,6 +155,7 @@ class Token:
                 str,
                 int,
                 float,
+                Decimal,
             ),
         ):
             raise TypeError(

@@ -537,9 +537,18 @@ class Project:
                 "Project schema version must be an integer."
             )
 
-        if self.schema_version <= 0:
+        if self.schema_version != CURRENT_PROJECT_SCHEMA_VERSION:
+            # A Project instance always represents the current,
+            # fully-migrated state -- any version migration belongs
+            # at the raw-JSON decode layer (ProjectStorage), which
+            # stamps the constructed Project with the current version
+            # rather than handing this constructor a stale one. If
+            # this weren't enforced, a project could be saved with a
+            # schema_version its own loader immediately rejects.
             raise ValueError(
-                "Project schema version must be positive."
+                "Project schema version must be "
+                f"{CURRENT_PROJECT_SCHEMA_VERSION}, got "
+                f"{self.schema_version}."
             )
 
         if not isinstance(
@@ -693,6 +702,22 @@ class Project:
                 "Project task IDs must be unique."
             )
 
+        task_names = tuple(
+            task.name
+            for task in tasks
+        )
+
+        if len(
+            set(
+                task_names,
+            ),
+        ) != len(
+            task_names,
+        ):
+            raise ValueError(
+                "Project task names must be unique."
+            )
+
         launch_configurations = tuple(
             self.launch_configurations,
         )
@@ -723,6 +748,22 @@ class Project:
         ):
             raise ValueError(
                 "Launch configuration IDs must be unique."
+            )
+
+        launch_configuration_names = tuple(
+            launch_configuration.name
+            for launch_configuration in launch_configurations
+        )
+
+        if len(
+            set(
+                launch_configuration_names,
+            ),
+        ) != len(
+            launch_configuration_names,
+        ):
+            raise ValueError(
+                "Launch configuration names must be unique."
             )
 
         if (
@@ -911,12 +952,22 @@ def _require_relative_project_path(
         normalized_value,
     )
 
-    if path.is_absolute() or normalized_value.startswith(
-        (
-            "/",
-            "\\",
-        ),
+    if (
+        path.is_absolute()
+        or path.drive
+        or normalized_value.startswith(
+            (
+                "/",
+                "\\",
+            ),
+        )
     ):
+        # PureWindowsPath.is_absolute() requires *both* a drive and a
+        # root -- a drive-relative string like "E:payload/nc.exe" has
+        # a drive but no root, so is_absolute() is False even though
+        # joining it onto another path discards that path entirely
+        # (PureWindowsPath("C:/proj") / "E:payload" == "E:payload").
+        # Checking path.drive directly closes that gap.
         raise ValueError(
             f"{name} must be relative."
         )
@@ -996,6 +1047,7 @@ def _require_string_mapping(
         )
 
     normalized_values: dict[str, str] = {}
+    seen_folded_keys: dict[str, str] = {}
 
     for key, value in values.items():
         if not isinstance(
@@ -1014,6 +1066,20 @@ def _require_string_mapping(
                 f"{name} values must be strings."
             )
 
+        # Environment variable names are case-insensitive on some
+        # platforms (Windows); accepting both "PATH" and "Path" in
+        # the same override map is an unresolvable ambiguity, not a
+        # legitimate use case, so reject it here rather than letting
+        # it surface later as unpredictable subprocess behavior.
+        folded_key = key.casefold()
+
+        if folded_key in seen_folded_keys:
+            raise ValueError(
+                f"{name} keys must not collide case-insensitively: "
+                f"{seen_folded_keys[folded_key]!r} and {key!r}."
+            )
+
+        seen_folded_keys[folded_key] = key
         normalized_values[key] = value
 
     return normalized_values

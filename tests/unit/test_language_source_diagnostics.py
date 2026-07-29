@@ -28,6 +28,44 @@ def test_parse_diagnostic_is_surfaced() -> None:
     )
 
 
+def test_diagnostics_are_sorted_by_source_position() -> None:
+    # Editor §Editor-Facing-8: diagnostics used to come back in pipeline
+    # stage order (lex, then parse, then semantic) rather than source
+    # order -- an early parse error and a later lex error on a
+    # different line came back with the parse error listed second.
+    source = (
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01 WS-X PIC X VALUE 'UNCLOSED\n"
+    )
+
+    diagnostics = compute_source_diagnostics(
+        source,
+    )
+
+    assert len(diagnostics) >= 2
+    positions = [
+        (diagnostic.position.line, diagnostic.position.column)
+        for diagnostic in diagnostics
+    ]
+    assert positions == sorted(
+        positions,
+    )
+    assert any(
+        "Expected IDENTIFICATION DIVISION"
+        in diagnostic.message
+        for diagnostic in diagnostics
+    )
+    assert any(
+        "not terminated" in diagnostic.message
+        for diagnostic in diagnostics
+    )
+    # The parse error (line 1) must actually come before the lex error
+    # (line 3) in the returned tuple, not just happen to sort correctly.
+    assert diagnostics[0].position.line == 1
+    assert diagnostics[-1].position.line == 3
+
+
 def test_semantic_diagnostic_is_surfaced() -> None:
     source = (
         "       IDENTIFICATION DIVISION.\n"

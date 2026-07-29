@@ -126,8 +126,45 @@ def test_run_task_invokes_expected_command(
 
     assert result.succeeded is True
     assert captured_kwargs["command"] == ("cobc", "-x", "main.cob")
-    assert captured_kwargs["run_id"] == task.task_id
+    # run_id must be a fresh per-invocation identifier, not the task's
+    # own permanent ID -- otherwise two concurrent runs of the same
+    # task would be indistinguishable to any caller correlating
+    # output or attempting to cancel one of them.
+    assert isinstance(captured_kwargs["run_id"], UUID)
+    assert captured_kwargs["run_id"] != task.task_id
     assert captured_kwargs["working_directory"] == tmp_path
+
+
+def test_run_task_mints_a_distinct_run_id_per_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_run_ids: list[UUID] = []
+
+    def invoke_task_process(
+        **kwargs: object,
+    ) -> TaskRunResult:
+        captured_run_ids.append(kwargs["run_id"])
+
+        return _completed_result(
+            kwargs["run_id"],
+            kwargs["command"],
+        )
+
+    monkeypatch.setattr(
+        project_service_module,
+        "invoke_task_process",
+        invoke_task_process,
+    )
+
+    project, task = _project_with_task(tmp_path)
+    service = ProjectTaskRunnerService()
+
+    service.run_task(project, task.task_id)
+    service.run_task(project, task.task_id)
+
+    assert len(captured_run_ids) == 2
+    assert captured_run_ids[0] != captured_run_ids[1]
 
 
 def test_run_task_resolves_relative_working_directory(
@@ -204,6 +241,112 @@ def test_run_task_merges_environment_with_project_overrides(
     environment = captured_kwargs["environment"]
     assert environment["COB_CONFIG_DIR"] == "project-config"
     assert environment["COB_COPY_DIR"] == "task-copy"
+
+
+def test_run_task_environment_merge_is_case_insensitive_on_windows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """os.environ is case-insensitive on Windows, but dict(os.environ)
+    is not -- an override differing only in case from an ambient
+    variable must replace it, not sit alongside it as a second,
+    differently-cased entry whose precedence is otherwise undefined."""
+
+    from dataclasses import replace
+
+    monkeypatch.setattr(
+        project_service_module.os,
+        "name",
+        "nt",
+    )
+    monkeypatch.setenv(
+        "Path",
+        "C:\\ambient",
+    )
+
+    captured_kwargs: dict[str, object] = {}
+
+    def invoke_task_process(
+        **kwargs: object,
+    ) -> TaskRunResult:
+        captured_kwargs.update(kwargs)
+
+        return _completed_result(
+            kwargs["run_id"],
+            kwargs["command"],
+        )
+
+    monkeypatch.setattr(
+        project_service_module,
+        "invoke_task_process",
+        invoke_task_process,
+    )
+
+    project, task = _project_with_task(
+        tmp_path,
+        environment_overrides={"PATH": "C:\\override"},
+    )
+
+    service = ProjectTaskRunnerService()
+    service.run_task(project, task.task_id)
+
+    environment = captured_kwargs["environment"]
+    matching_keys = [
+        key for key in environment if key.casefold() == "path"
+    ]
+    assert matching_keys == ["PATH"]
+    assert environment["PATH"] == "C:\\override"
+
+
+def test_run_task_environment_merge_stays_case_sensitive_off_windows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a platform where environment variables really are
+    case-sensitive, PATH and Path must remain two distinct entries --
+    collapsing them there would be the actual regression."""
+
+    from dataclasses import replace
+
+    monkeypatch.setattr(
+        project_service_module.os,
+        "name",
+        "posix",
+    )
+    monkeypatch.setenv(
+        "PATH",
+        "/ambient",
+    )
+
+    captured_kwargs: dict[str, object] = {}
+
+    def invoke_task_process(
+        **kwargs: object,
+    ) -> TaskRunResult:
+        captured_kwargs.update(kwargs)
+
+        return _completed_result(
+            kwargs["run_id"],
+            kwargs["command"],
+        )
+
+    monkeypatch.setattr(
+        project_service_module,
+        "invoke_task_process",
+        invoke_task_process,
+    )
+
+    project, task = _project_with_task(
+        tmp_path,
+        environment_overrides={"Path": "/override"},
+    )
+
+    service = ProjectTaskRunnerService()
+    service.run_task(project, task.task_id)
+
+    environment = captured_kwargs["environment"]
+    assert environment["PATH"] == "/ambient"
+    assert environment["Path"] == "/override"
 
 
 def test_run_task_rejects_unknown_task_id(
