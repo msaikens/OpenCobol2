@@ -24,7 +24,6 @@ from opencobol2.compiler.providers import (
 from opencobol2.compiler.runtimes import (
     CustomLocalCompilerRuntime,
     CustomLocalCompilerRuntimeFactory,
-    CustomLocalCompilerTemplateError,
     build_custom_local_compiler_command,
 )
 
@@ -270,7 +269,16 @@ def test_module_output_arguments_are_selected() -> None:
     assert "--executable" not in command
 
 
-def test_unknown_template_placeholder_is_rejected() -> None:
+def test_unknown_template_placeholder_is_rejected_at_profile_validation() -> (
+    None
+):
+    # Editor §CompilerAbstraction-7: this used to only fail later, at
+    # actual compile-command-building time (via
+    # `build_custom_local_compiler_command`) -- a broken template is
+    # now caught as soon as the profile is validated (which
+    # `create_runtime` already does, via
+    # `resolve_compiler_profile_configuration`), before a runtime is
+    # ever created from it.
     profile = _create_profile(
         configuration={
             "compile_arguments": (
@@ -279,20 +287,12 @@ def test_unknown_template_placeholder_is_rejected() -> None:
         },
     )
 
-    runtime = (
-        CustomLocalCompilerRuntimeFactory()
-        .create_runtime(
-            profile,
-        )
-    )
-
     with pytest.raises(
-        CustomLocalCompilerTemplateError,
+        ValueError,
         match="Unknown placeholder 'unknown'",
     ):
-        build_custom_local_compiler_command(
-            runtime.configuration,
-            _create_request(),
+        CustomLocalCompilerRuntimeFactory().create_runtime(
+            profile,
         )
 
 

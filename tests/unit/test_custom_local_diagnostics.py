@@ -109,6 +109,45 @@ def test_gcc_format_does_not_parse_msvc_location() -> None:
     assert diagnostics == ()
 
 
+def test_truncated_diagnostic_line_producing_empty_message_is_skipped() -> (
+    None
+):
+    # Editor §CompilerProcess-2: mirrors the identical guard added to
+    # `gnucobol_diagnostics.py` -- a diagnostic-shaped line truncated
+    # right after its severity prefix can still match via
+    # lazy-quantifier backtracking with a message that strips down to
+    # empty, which would otherwise crash `CompilerDiagnostic`'s own
+    # non-empty-message invariant instead of being skipped.
+    diagnostics = parse_custom_local_diagnostics(
+        "program.cob:5: error:  \nprogram.cob:6: error: real problem",
+        "gcc",
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].message == "real problem"
+
+
+def test_unrecognized_severity_word_still_produces_a_diagnostic() -> None:
+    # Editor §CompilerProcess-7: mirrors the identical generic fallback
+    # added to `gnucobol_diagnostics.py` -- the severity word used to
+    # be a closed list (`fatal error|error|warning|note`), so any other
+    # category word (a hypothetical `info:` line) silently produced
+    # zero diagnostics.
+    diagnostics = parse_custom_local_diagnostics(
+        "program.cob:9: info: additional context",
+        "gcc",
+    )
+
+    assert len(diagnostics) == 1
+
+    diagnostic = diagnostics[0]
+
+    assert diagnostic.severity is DiagnosticSeverity.NOTE
+    assert diagnostic.source_path == Path("program.cob")
+    assert diagnostic.line == 9
+    assert diagnostic.message == "additional context"
+
+
 def test_unknown_diagnostic_format_is_rejected() -> None:
     with pytest.raises(
         ValueError,

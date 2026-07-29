@@ -65,6 +65,23 @@ def test_compile_request_normalizes_values() -> None:
     )
 
 
+def test_compile_request_rejects_non_string_library() -> None:
+    # Editor §CompilerAbstraction-6: a non-string `libraries` entry
+    # used to crash with a bare `AttributeError` from `.strip()`
+    # instead of a clear, typed validation error.
+    with pytest.raises(
+        TypeError,
+        match="Compiler request libraries must be strings",
+    ):
+        CompileRequest(
+            source_path="program.cob",
+            output_path="program",
+            libraries=[
+                123,
+            ],
+        )
+
+
 def test_compile_request_debug_symbols_defaults_to_false() -> None:
     request = CompileRequest(
         source_path="program.cob",

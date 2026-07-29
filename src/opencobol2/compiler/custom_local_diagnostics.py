@@ -79,6 +79,62 @@ _GCC_TRAILING_CODE_PATTERN = re.compile(
     r"\s*$",
 )
 
+# Editor §CompilerProcess-7: mirrors the identical generic fallback
+# patterns in `gnucobol_diagnostics.py` -- every pattern above requires
+# the severity token to be literally one of
+# `fatal error|error|warning|note`, so a line using any other category
+# word produced zero diagnostics. These are only tried after the
+# format-specific closed-word-list patterns have already failed, so
+# every existing recognized-severity line still resolves exactly as
+# before.
+_GENERIC_GCC_DIAGNOSTIC_PATTERN = re.compile(
+    r"^"
+    r"(?P<source_path>.+)"
+    r":(?P<line>[1-9]\d*)"
+    r"(?::(?P<column>[1-9]\d*))?"
+    r":\s*"
+    r"(?P<severity>[A-Za-z]+)"
+    r":\s*"
+    r"(?P<message>.+?)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+_GENERIC_GCC_UNLOCATED_DIAGNOSTIC_PATTERN = re.compile(
+    r"^"
+    r"(?:[^:]+:\s*)?"
+    r"(?P<severity>[A-Za-z]+)"
+    r":\s*"
+    r"(?P<message>.+?)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+_GENERIC_MSVC_DIAGNOSTIC_PATTERN = re.compile(
+    r"^"
+    r"(?P<source_path>.+)"
+    r"\("
+    r"(?P<line>[1-9]\d*)"
+    r"(?:,(?P<column>[1-9]\d*))?"
+    r"\)"
+    r"\s*:\s*"
+    r"(?P<severity>[A-Za-z]+)"
+    r":\s*"
+    r"(?P<message>.+?)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+_GENERIC_MSVC_UNLOCATED_DIAGNOSTIC_PATTERN = re.compile(
+    r"^"
+    r"(?:[^:]+:\s*)?"
+    r"(?P<severity>[A-Za-z]+)"
+    r":\s*"
+    r"(?P<message>.+?)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
 
 def parse_custom_local_diagnostics(
     output: str,
@@ -138,6 +194,12 @@ def parse_custom_local_diagnostics(
                 or _GCC_UNLOCATED_DIAGNOSTIC_PATTERN.match(
                     raw_text,
                 )
+                or _GENERIC_GCC_DIAGNOSTIC_PATTERN.match(
+                    raw_text,
+                )
+                or _GENERIC_GCC_UNLOCATED_DIAGNOSTIC_PATTERN.match(
+                    raw_text,
+                )
             )
         else:
             match = (
@@ -145,6 +207,12 @@ def parse_custom_local_diagnostics(
                     raw_text,
                 )
                 or _MSVC_UNLOCATED_DIAGNOSTIC_PATTERN.match(
+                    raw_text,
+                )
+                or _GENERIC_MSVC_DIAGNOSTIC_PATTERN.match(
+                    raw_text,
+                )
+                or _GENERIC_MSVC_UNLOCATED_DIAGNOSTIC_PATTERN.match(
                     raw_text,
                 )
             )
@@ -172,6 +240,15 @@ def parse_custom_local_diagnostics(
 
             if gcc_code is not None:
                 code = gcc_code
+
+        # Editor §CompilerProcess-2: mirrors the identical guard in
+        # `gnucobol_diagnostics.py` -- a diagnostic-shaped line
+        # truncated right after its severity prefix can match via
+        # lazy-quantifier backtracking with a message that strips down
+        # to empty, which would otherwise crash `CompilerDiagnostic`'s
+        # own non-empty-message invariant instead of being skipped.
+        if not message.strip():
+            continue
 
         source_path_text = match.groupdict().get(
             "source_path",

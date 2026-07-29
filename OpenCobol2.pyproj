@@ -1191,7 +1191,6 @@
     <Folder Include="src\opencobol2\tool_windows\" />
     <Folder Include="src\opencobol2\services\" />
     <Folder Include="src\opencobol2\settings\" />
-    <Folder Include="src\opencobol2\test\" />
     <Folder Include="src\opencobol2\toolchains\" />
     <Folder Include="tests\" />
     <Folder Include="tests\integration\" />

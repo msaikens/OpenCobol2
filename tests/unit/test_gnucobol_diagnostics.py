@@ -163,6 +163,61 @@ compilation terminated
     assert diagnostic.message == "syntax error"
 
 
+def test_note_severity_strips_trailing_warning_code() -> None:
+    # Editor §CompilerProcess-4: a real GnuCOBOL 3.2.0 `-Wall` build
+    # emits the `[-Wxxx]` marker on `note:` lines that accompany a
+    # warning too, not only on the `warning:` line itself -- this used
+    # to only be stripped for WARNING severity, leaving the bracket
+    # glued onto every such note's message with `code` left `None`.
+    diagnostics = parse_gnucobol_diagnostics(
+        "program.cob:5: note: value is truncated [-Wtruncate]"
+    )
+
+    assert len(diagnostics) == 1
+
+    diagnostic = diagnostics[0]
+
+    assert diagnostic.severity is DiagnosticSeverity.NOTE
+    assert diagnostic.message == "value is truncated"
+    assert diagnostic.code == "-Wtruncate"
+
+
+def test_truncated_diagnostic_line_producing_empty_message_is_skipped() -> (
+    None
+):
+    # Editor §CompilerProcess-2: a diagnostic-shaped line truncated
+    # right after its `: severity:` prefix can still match via
+    # lazy-quantifier backtracking, capturing a single leftover
+    # whitespace character as the "message" -- constructing a
+    # `CompilerDiagnostic` from that used to raise `ValueError`
+    # uncaught from this function, instead of the line being skipped.
+    diagnostics = parse_gnucobol_diagnostics(
+        "program.cob:5: error:  \nprogram.cob:6: error: real problem"
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].message == "real problem"
+
+
+def test_unrecognized_severity_word_still_produces_a_diagnostic() -> None:
+    # Editor §CompilerProcess-7: the severity word used to be a closed
+    # list (`fatal error|error|warning|note`) -- any other category
+    # word (a hypothetical `info:` line) matched none of the patterns
+    # and silently produced zero diagnostics.
+    diagnostics = parse_gnucobol_diagnostics(
+        "program.cob:9: info: additional context"
+    )
+
+    assert len(diagnostics) == 1
+
+    diagnostic = diagnostics[0]
+
+    assert diagnostic.severity is DiagnosticSeverity.NOTE
+    assert diagnostic.source_path == Path("program.cob")
+    assert diagnostic.line == 9
+    assert diagnostic.message == "additional context"
+
+
 def test_preserves_diagnostic_order() -> None:
     diagnostics = parse_gnucobol_diagnostics(
         """\

@@ -7,6 +7,7 @@ from opencobol2.compiler.providers.models import (
     CompilerConfigurationFieldKind,
     CompilerExecutionKind,
     CompilerProfile,
+    _normalize_nonempty_string,
     _validate_configuration_value,
 )
 from opencobol2.compiler.providers.registry import (
@@ -59,8 +60,20 @@ class _DeclarativeCompilerProvider:
                 "must be unique."
             )
 
-        self._provider_id = provider_id
-        self._display_name = display_name
+        # Editor §CompilerAbstraction-4: normalized the same way
+        # `CompilerProfile.provider_id` already is, so the registry's
+        # own stripped dict key, the profile's normalized provider_id,
+        # and this provider's own `provider_id` property can never
+        # disagree by whitespace alone -- `validate_profile`'s
+        # identity check below compares them directly.
+        self._provider_id = _normalize_nonempty_string(
+            provider_id,
+            "Compiler provider ID",
+        )
+        self._display_name = _normalize_nonempty_string(
+            display_name,
+            "Compiler provider display name",
+        )
         self._execution_kind = execution_kind
         self._configuration_fields = configuration_fields
 
@@ -357,6 +370,139 @@ class CustomLocalCompilerProvider(
                 ),
             ),
         )
+
+    def validate_profile(
+        self,
+        profile: CompilerProfile,
+    ) -> None:
+        """Validate one compiler profile, including argument templates.
+
+        Editor §CompilerAbstraction-7: the inherited field-kind check
+        alone accepts a syntactically broken template (unbalanced
+        braces, a placeholder name that doesn't exist) with no error
+        at profile-save time -- it would only fail later, at actual
+        compile-invocation time in `runtimes/custom_local.py`, with a
+        different and less helpful error than anything the profile
+        dialog showed. Each template field is dry-run formatted here
+        against the same placeholder names the real compile-time
+        formatter (`_format_argument`) supplies, without importing
+        that runtime module directly (which would create a circular
+        import: `runtimes.custom_local` already imports from this
+        `providers` package).
+        """
+
+        super().validate_profile(
+            profile,
+        )
+
+        for (
+            field_key,
+            sample_values,
+        ) in _TEMPLATE_FIELD_SAMPLE_VALUES.items():
+            value = profile.configuration.get(
+                field_key,
+            )
+
+            if value is None:
+                continue
+
+            templates = (
+                value
+                if isinstance(
+                    value,
+                    (
+                        list,
+                        tuple,
+                    ),
+                )
+                else (
+                    value,
+                )
+            )
+
+            for template in templates:
+                if not isinstance(
+                    template,
+                    str,
+                ):
+                    # Already caught by the inherited field-kind
+                    # check above.
+                    continue
+
+                _validate_argument_template(
+                    template,
+                    sample_values,
+                    field_key,
+                )
+
+
+_TEMPLATE_FIELD_SAMPLE_VALUES: dict[
+    str,
+    dict[str, str],
+] = {
+    "compile_arguments": {
+        "source": "",
+        "output": "",
+    },
+    "executable_output_arguments": {
+        "source": "",
+        "output": "",
+    },
+    "module_output_arguments": {
+        "source": "",
+        "output": "",
+    },
+    "fixed_format_arguments": {
+        "source": "",
+        "output": "",
+    },
+    "free_format_arguments": {
+        "source": "",
+        "output": "",
+    },
+    "standard_argument_template": {
+        "standard": "",
+    },
+    "copy_directory_argument_template": {
+        "directory": "",
+    },
+    "library_directory_argument_template": {
+        "directory": "",
+    },
+    "library_argument_template": {
+        "library": "",
+    },
+}
+
+
+def _validate_argument_template(
+    template: str,
+    sample_values: dict[str, str],
+    field_key: str,
+) -> None:
+    """Dry-run one argument template with placeholder stand-ins.
+
+    Mirrors `runtimes/custom_local.py::_format_argument`'s own
+    `str.format_map()` call and error handling, but raises a plain
+    `ValueError` (this validation layer's own established error type)
+    instead of that module's `CustomLocalCompilerTemplateError`, to
+    avoid importing the runtime layer here.
+    """
+
+    try:
+        template.format_map(
+            sample_values,
+        )
+    except KeyError as error:
+        raise ValueError(
+            f"Unknown placeholder {error.args[0]!r} in "
+            f"{field_key}."
+        ) from error
+    except ValueError as error:
+        raise ValueError(
+            "Invalid compiler argument template in "
+            f"{field_key}: {error}"
+        ) from error
 
 
 def create_builtin_compiler_provider_registry(

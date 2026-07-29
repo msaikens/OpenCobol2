@@ -399,6 +399,68 @@ def test_custom_timeout_is_passed_to_subprocess(
     ]
 
 
+def test_per_call_timeout_overrides_instance_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Editor §CompilerProcess-6: the single activated compiler instance
+    # is reused for every file in a whole-project build, so one
+    # legitimately slow-to-compile file couldn't get more time without
+    # changing the instance-wide default for every other file too --
+    # mirrors the equivalent per-call override already added to the
+    # Git service layer.
+    toolchain = _toolchain()
+    request = _request()
+    captured_timeout: list[float] = []
+
+    def fake_run(
+        command: tuple[str, ...],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        captured_timeout.append(kwargs["timeout"])
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        gnucobol.subprocess,
+        "run",
+        fake_run,
+    )
+
+    compiler = GnuCobolCompiler(
+        toolchain=toolchain,
+        timeout_seconds=30.0,
+    )
+
+    compiler.compile(
+        request,
+        base_environment={},
+        timeout_seconds=90.0,
+    )
+
+    assert captured_timeout == [90.0]
+
+
+def test_per_call_timeout_override_must_be_positive() -> None:
+    compiler = GnuCobolCompiler(
+        toolchain=_toolchain(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="must be greater than zero",
+    ):
+        compiler.compile(
+            _request(),
+            base_environment={},
+            timeout_seconds=0.0,
+        )
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     [

@@ -82,6 +82,20 @@ class CompilerSettings:
                 "Compiler profile IDs must be unique."
             )
 
+        # Editor §CompilerAbstraction-5: two profiles with different
+        # IDs but the identical display name used to be accepted
+        # silently, leaving two indistinguishable entries in any
+        # profile picker that lists profiles by display name.
+        display_names = tuple(
+            profile.display_name
+            for profile in profiles
+        )
+
+        if len(set(display_names)) != len(display_names):
+            raise ValueError(
+                "Compiler profile display names must be unique."
+            )
+
         if (
             self.default_profile_id is not None
             and self.default_profile_id not in profile_ids

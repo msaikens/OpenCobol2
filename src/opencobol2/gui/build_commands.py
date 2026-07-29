@@ -210,12 +210,26 @@ def create_build_project_handler(
                 f"Compiling {relative_path}...",
             )
 
+            # Editor §CompilerProcess-1: deriving the output path from
+            # the source filename alone (discarding its directory)
+            # meant two source files with the same base name in
+            # different folders silently clobbered each other's
+            # compiled binary. Mirroring the source file's own
+            # directory structure under `output_directory` keeps every
+            # compiled output unique, exactly as it already is on disk
+            # for the sources themselves.
+            output_path = (
+                output_directory
+                / relative_path.with_suffix("")
+            )
+            output_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
             request = CompileRequest(
                 source_path=source_file,
-                output_path=(
-                    output_directory
-                    / source_file.stem
-                ),
+                output_path=output_path,
                 output_kind=(
                     CompilerOutputKind.EXECUTABLE
                 ),

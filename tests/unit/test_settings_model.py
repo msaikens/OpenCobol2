@@ -145,7 +145,11 @@ def test_compiler_profile_ids_must_be_unique() -> None:
         )
 
 
-def test_compiler_profile_display_names_may_duplicate() -> None:
+def test_compiler_profile_display_names_must_be_unique() -> None:
+    # Editor §CompilerAbstraction-5: two profiles with different IDs
+    # but the identical display name used to be accepted silently,
+    # leaving two indistinguishable entries in any profile picker that
+    # lists profiles by display name.
     first_profile = CompilerProfile(
         provider_id="example.first",
         display_name="COBOL",
@@ -153,6 +157,31 @@ def test_compiler_profile_display_names_may_duplicate() -> None:
     second_profile = CompilerProfile(
         provider_id="example.second",
         display_name="COBOL",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Compiler profile display names must be unique",
+    ):
+        CompilerSettings(
+            default_profile_id=first_profile.profile_id,
+            profiles=(
+                first_profile,
+                second_profile,
+            ),
+        )
+
+
+def test_compiler_profiles_with_different_display_names_are_accepted() -> (
+    None
+):
+    first_profile = CompilerProfile(
+        provider_id="example.first",
+        display_name="COBOL A",
+    )
+    second_profile = CompilerProfile(
+        provider_id="example.second",
+        display_name="COBOL B",
     )
 
     settings = CompilerSettings(

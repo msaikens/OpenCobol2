@@ -81,13 +81,34 @@ class CompileRequest:
             "additional_inputs",
             tuple(Path(path) for path in self.additional_inputs),
         )
+        # Editor §CompilerAbstraction-6: every entry must be validated
+        # as a string *before* calling `.strip()` on it -- unlike
+        # `additional_arguments` just below, which defensively coerces
+        # via `str(...)`, a non-string entry here used to raise a bare
+        # `AttributeError` instead of a clear, typed validation error.
+        normalized_libraries: list[str] = []
+
+        for library in self.libraries:
+            if not isinstance(
+                library,
+                str,
+            ):
+                raise TypeError(
+                    "Compiler request libraries must be strings."
+                )
+
+            stripped_library = library.strip()
+
+            if stripped_library:
+                normalized_libraries.append(
+                    stripped_library,
+                )
+
         object.__setattr__(
             self,
             "libraries",
             tuple(
-                library.strip()
-                for library in self.libraries
-                if library.strip()
+                normalized_libraries,
             ),
         )
         object.__setattr__(

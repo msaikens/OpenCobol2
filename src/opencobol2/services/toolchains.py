@@ -11,6 +11,9 @@ from opencobol2.compiler.providers import (
     CompilerProfile,
     GNUCOBOL_PROVIDER_ID,
 )
+from opencobol2.services.compilers import (
+    DefaultCompilerProfileNotConfiguredError,
+)
 from opencobol2.settings import (
     SettingsService,
 )
@@ -49,9 +52,33 @@ class GnuCobolToolchainService:
             else base_environment
         )
 
-        environment.update(
-            profile.environment_overrides,
-        )
+        for (
+            key,
+            value,
+        ) in profile.environment_overrides.items():
+            if os.name == "nt":
+                # Editor §CompilerAbstraction-2: `os.environ` is
+                # case-insensitive on Windows, but the plain dict this
+                # builds is not -- a plain-dict `.update()` would leave
+                # a stale differently-cased entry (e.g. ambient "PATH"
+                # plus an override "Path") both present, and which one
+                # a spawned child process actually observes would
+                # depend on incidental dict ordering rather than the
+                # override deterministically winning. Same pattern
+                # already established in
+                # `services/project.py::_merge_environment`.
+                existing_key = _find_case_insensitive_key(
+                    environment,
+                    key,
+                )
+
+                if (
+                    existing_key is not None
+                    and existing_key != key
+                ):
+                    del environment[existing_key]
+
+            environment[key] = value
 
         for (
             configuration_key,
@@ -73,10 +100,18 @@ class GnuCobolToolchainService:
                     f"{configuration_key!r} must be a string."
                 )
 
-            if not value.strip():
+            # Editor §CompilerAbstraction-1: a whitespace-padded value
+            # (a leading/trailing space from a pasted path, say) must
+            # not be passed through unstripped -- `Path(padded)` and a
+            # padded environment variable value both silently fail to
+            # resolve as if the value were absent, rather than raising
+            # a clear "invalid path" error.
+            stripped_value = value.strip()
+
+            if not stripped_value:
                 continue
 
-            environment[environment_key] = value
+            environment[environment_key] = stripped_value
 
         return environment
 
@@ -122,7 +157,12 @@ class GnuCobolToolchainService:
         )
 
         if profile is None:
-            raise ValueError(
+            # Editor §CompilerAbstraction-3: matches the typed error
+            # `CompilerProfileService.resolve_default` already raises
+            # for the identical condition, rather than a bare
+            # `ValueError` a caller following this codebase's own
+            # "catch the typed domain error" convention wouldn't catch.
+            raise DefaultCompilerProfileNotConfiguredError(
                 "No default compiler profile is configured."
             )
 
@@ -169,9 +209,37 @@ class GnuCobolToolchainService:
                 "'compiler_path' must be a string."
             )
 
-        if not value.strip():
+        stripped_value = value.strip()
+
+        if not stripped_value:
             return None
 
+        # Editor §CompilerAbstraction-1: a whitespace-padded path (a
+        # leading/trailing space from a pasted value) must not be
+        # passed through unstripped -- `Path(padded).is_file()` fails
+        # to resolve even when the unpadded file genuinely exists,
+        # silently treating a configured compiler as absent instead of
+        # a clear "invalid path" error.
         return Path(
-            value,
+            stripped_value,
         )
+
+
+def _find_case_insensitive_key(
+    environment: dict[str, str],
+    key: str,
+) -> str | None:
+    """Return an existing key matching `key` case-insensitively, if any.
+
+    Mirrors `services/project.py::_find_case_insensitive_key` exactly;
+    duplicated locally rather than imported since the two modules are
+    otherwise unrelated and this is a small, self-contained helper.
+    """
+
+    folded_key = key.casefold()
+
+    for existing_key in environment:
+        if existing_key.casefold() == folded_key:
+            return existing_key
+
+    return None

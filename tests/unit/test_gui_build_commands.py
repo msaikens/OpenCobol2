@@ -316,6 +316,59 @@ def test_build_handler_compiles_successful_and_failing_sources(
     assert (output_directory / "sub").is_file()
 
 
+def test_build_handler_keeps_same_named_sources_in_different_directories_separate(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §CompilerProcess-1: output paths used to be derived from
+    # the source filename alone, discarding its directory -- two
+    # source files with the same base name in different folders (a
+    # realistic copybook/utility-naming pattern) silently clobbered
+    # each other's compiled binary.
+    module_a = tmp_path / "moduleA"
+    module_b = tmp_path / "moduleB"
+    module_a.mkdir()
+    module_b.mkdir()
+    (module_a / "UTILS.cbl").write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    (module_b / "UTILS.cbl").write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    settings_service = SettingsService(
+        SettingsStorage(tmp_path / "settings.json"),
+    )
+    _configure_stub_profile(
+        settings_service,
+        _write_stub_compiler(tmp_path),
+    )
+
+    output_widget = OutputWidget()
+    handler = create_build_project_handler(
+        project_explorer=ProjectExplorerWidget(project),
+        output_widget=output_widget,
+        problems_widget=ProblemsWidget(),
+        runtime_activation_service=(
+            _build_runtime_activation_service(settings_service)
+        ),
+    )
+
+    handler(None)
+
+    output_directory = tmp_path / project.properties.output_directory
+
+    assert (output_directory / "moduleA" / "UTILS").is_file()
+    assert (output_directory / "moduleB" / "UTILS").is_file()
+    assert "Build complete: 2 file(s) compiled." in (
+        output_widget.toPlainText()
+    )
+
+
 def test_build_handler_creates_missing_output_directory(
     qapp,
     tmp_path: Path,

@@ -14,6 +14,7 @@ from opencobol2.compiler.providers import (
     JsonValue,
 )
 from opencobol2.services import (
+    DefaultCompilerProfileNotConfiguredError,
     GnuCobolToolchainService,
 )
 from opencobol2.settings import (
@@ -248,6 +249,122 @@ def test_structured_configuration_overrides_profile_environment(
     )
 
 
+def test_padded_compiler_path_is_stripped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Editor §CompilerAbstraction-1: a whitespace-padded compiler path
+    # used to be passed through unstripped, so `Path(padded).is_file()`
+    # would fail to resolve even when the unpadded file genuinely
+    # exists, silently treating a configured compiler as absent.
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    profile = _create_gnucobol_profile(
+        configuration={
+            "compiler_path": "  C:/custom/gnucobol/bin/cobc.exe  ",
+        },
+    )
+    _configure_default_profile(
+        settings_service,
+        profile,
+    )
+
+    captured_path: Path | None = None
+
+    def fake_discover(
+        explicit_path=None,
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        nonlocal captured_path
+        captured_path = explicit_path
+
+        return None
+
+    monkeypatch.setattr(
+        toolchain_services,
+        "discover_gnucobol",
+        fake_discover,
+    )
+
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+
+    service.discover(
+        base_environment={},
+    )
+
+    assert captured_path == Path(
+        "C:/custom/gnucobol/bin/cobc.exe",
+    )
+
+
+def test_padded_structured_environment_value_is_stripped(
+    tmp_path: Path,
+) -> None:
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    profile = _create_gnucobol_profile(
+        configuration={
+            "copy_directory": "  C:/tools/copybooks  ",
+        },
+    )
+
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+
+    environment = service.process_environment(
+        profile,
+        {},
+    )
+
+    assert (
+        environment["COB_COPY_DIR"]
+        == "C:/tools/copybooks"
+    )
+
+
+def test_environment_override_replaces_a_differently_cased_base_key(
+    tmp_path: Path,
+) -> None:
+    # Editor §CompilerAbstraction-2: `os.environ` is case-insensitive
+    # on Windows, but a plain dict is not -- a naive `.update()` used
+    # to leave both the original ambient key and the differently-cased
+    # override present, with which one a spawned child process actually
+    # observes left to incidental dict ordering.
+    settings_service = _create_settings_service(
+        tmp_path,
+    )
+    profile = _create_gnucobol_profile(
+        environment_overrides={
+            "Path": "Z:/overridden/bin",
+        },
+    )
+
+    service = GnuCobolToolchainService(
+        settings_service=settings_service,
+    )
+
+    environment = service.process_environment(
+        profile,
+        {
+            "PATH": "C:/original/bin",
+        },
+    )
+
+    matching_keys = [
+        key
+        for key in environment
+        if key.casefold() == "path"
+    ]
+    assert matching_keys == ["Path"]
+    assert environment["Path"] == "Z:/overridden/bin"
+
+
 def test_process_environment_does_not_mutate_base_mapping(
     tmp_path: Path,
 ) -> None:
@@ -422,8 +539,12 @@ def test_missing_default_profile_is_rejected(
         settings_service=settings_service,
     )
 
+    # Editor §CompilerAbstraction-3: this used to be a bare ValueError,
+    # inconsistent with the typed error
+    # `CompilerProfileService.resolve_default` already raises for the
+    # identical condition.
     with pytest.raises(
-        ValueError,
+        DefaultCompilerProfileNotConfiguredError,
         match="No default compiler profile is configured",
     ):
         service.discover(

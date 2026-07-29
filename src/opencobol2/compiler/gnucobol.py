@@ -56,11 +56,22 @@ class GnuCobolCompiler:
         request: CompileRequest,
         *,
         base_environment: Mapping[str, str] | None = None,
+        timeout_seconds: float | None = None,
     ) -> GnuCobolCompilation:
-        """Compile one COBOL request and parse captured diagnostics."""
+        """Compile one COBOL request and parse captured diagnostics.
+
+        Editor §CompilerProcess-6: `timeout_seconds`, when given,
+        overrides `self.timeout_seconds` for this call only -- the
+        single activated compiler instance is reused for every file in
+        a whole-project build, so one legitimately slow-to-compile
+        file shouldn't need to change the timeout for every other file
+        too (mirrors the equivalent per-call override this tracker
+        already added to the Git service layer).
+        """
         process_result = self._invoke(
             request,
             base_environment=base_environment,
+            timeout_seconds=timeout_seconds,
         )
 
         diagnostics = parse_gnucobol_diagnostics(
@@ -79,6 +90,7 @@ class GnuCobolCompiler:
         request: CompileRequest,
         *,
         base_environment: Mapping[str, str] | None = None,
+        timeout_seconds: float | None = None,
     ) -> CompileResult:
         """Invoke the configured GnuCOBOL compiler process."""
         command = build_gnucobol_command(
@@ -92,6 +104,17 @@ class GnuCobolCompiler:
             else base_environment
         )
 
+        effective_timeout_seconds = (
+            self.timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+
+        if effective_timeout_seconds <= 0:
+            raise ValueError(
+                "Compiler timeout must be greater than zero."
+            )
+
         started_at = time.perf_counter()
 
         try:
@@ -101,8 +124,15 @@ class GnuCobolCompiler:
                 env=environment,
                 capture_output=True,
                 text=True,
+                # Editor §CompilerProcess-3: without a pinned
+                # `encoding=`, decoding falls back to the system's
+                # preferred encoding (`cp1252` on Windows), silently
+                # mangling non-ASCII diagnostic text -- the same bug
+                # shape already found and fixed for Git's own
+                # subprocess layer (`git/process.py`).
+                encoding="utf-8",
                 errors="replace",
-                timeout=self.timeout_seconds,
+                timeout=effective_timeout_seconds,
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
@@ -117,7 +147,7 @@ class GnuCobolCompiler:
                 elapsed_seconds=elapsed_seconds,
                 error_message=(
                     "GnuCOBOL compilation timed out after "
-                    f"{self.timeout_seconds:g} seconds."
+                    f"{effective_timeout_seconds:g} seconds."
                 ),
             )
         except OSError as error:
@@ -240,6 +270,7 @@ def _normalize_process_output(
 
     if isinstance(output, bytes):
         return output.decode(
+            "utf-8",
             errors="replace",
         )
 

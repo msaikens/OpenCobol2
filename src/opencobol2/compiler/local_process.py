@@ -85,6 +85,13 @@ def invoke_local_compiler_process(
             env=process_environment,
             capture_output=True,
             text=True,
+            # Editor §CompilerProcess-3: without a pinned `encoding=`,
+            # decoding falls back to the system's preferred encoding
+            # (`cp1252` on Windows), silently mangling non-ASCII
+            # diagnostic text -- the same bug shape already found and
+            # fixed for Git's own subprocess layer
+            # (`git/process.py`) and for `gnucobol.py` above.
+            encoding="utf-8",
             errors="replace",
             timeout=timeout_seconds,
             check=False,
@@ -179,6 +186,7 @@ def _normalize_process_output(
         bytes,
     ):
         return output.decode(
+            "utf-8",
             errors="replace",
         )
 

@@ -106,7 +106,7 @@ def test_profile_validation_routes_to_provider() -> None:
     assert provider.validated_profile is profile
 
 
-def test_builtin_registry_contains_four_providers() -> None:
+def test_builtin_registry_contains_the_two_builtin_providers() -> None:
     registry = create_builtin_compiler_provider_registry()
 
     provider_ids = {
@@ -118,3 +118,39 @@ def test_builtin_registry_contains_four_providers() -> None:
         GNUCOBOL_PROVIDER_ID,
         CUSTOM_COMPILER_PROVIDER_ID,
     }
+
+
+def test_declarative_provider_normalizes_a_padded_provider_id() -> None:
+    # Editor §CompilerAbstraction-4: the registry strips `provider_id`
+    # for its own dict key, but a declarative provider used to keep
+    # whatever `provider_id` string it was constructed with verbatim --
+    # a padded `provider_id` resolved fine via the registry, but then
+    # failed the provider's own identity check in `validate_profile`,
+    # rejecting a profile the registry had just correctly resolved.
+    from opencobol2.compiler.providers.builtins import (
+        _DeclarativeCompilerProvider,
+    )
+
+    provider = _DeclarativeCompilerProvider(
+        provider_id="  plugin.example  ",
+        display_name="  Plugin Example  ",
+        execution_kind=CompilerExecutionKind.LOCAL_PROCESS,
+        configuration_fields=(),
+    )
+
+    assert provider.provider_id == "plugin.example"
+    assert provider.display_name == "Plugin Example"
+
+    registry = CompilerProviderRegistry()
+    registry.register(
+        provider,
+    )
+
+    profile = CompilerProfile(
+        provider_id="plugin.example",
+        display_name="Configured Plugin",
+    )
+
+    registry.validate_profile(
+        profile,
+    )
