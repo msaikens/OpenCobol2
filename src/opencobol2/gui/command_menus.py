@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMenu,
@@ -78,6 +79,20 @@ def populate_menu(
     _ancestor_surface_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Clear and repopulate one menu from current command contribution state."""
+
+    # Editor §UIShell-2: `menu.clear()` below only empties the menu's own
+    # action list -- a submenu `QMenu` created by a *previous*
+    # populate_menu() call (via addMenu() further down) stays alive as an
+    # orphaned QObject child of `menu` forever, since nothing else ever
+    # deletes it, and this whole function reruns on every `aboutToShow`.
+    # Explicitly deleting every direct-child submenu before rebuilding is
+    # what actually reclaims it; nested descendants are cleaned up
+    # automatically by Qt once their own direct parent is deleted.
+    for stale_submenu in menu.findChildren(
+        QMenu,
+        options=Qt.FindChildOption.FindDirectChildrenOnly,
+    ):
+        stale_submenu.deleteLater()
 
     menu.clear()
     # A submenu contribution whose submenu_id points back to one of its

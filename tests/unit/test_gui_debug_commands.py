@@ -12,17 +12,20 @@ handlers' active/inactive/error-reporting behavior.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from PySide6.QtWidgets import QMessageBox
 
 from opencobol2.commands import CommandContext
+from opencobol2.debugger.gdb_adapter import GdbNotRunningError
 from opencobol2.debugger.models import Breakpoint, Variable, WatchExpression
 from opencobol2.debugger.service import DebuggerServiceError
+from opencobol2.documents import DocumentService
 from opencobol2.gui.debug_commands import (
     collect_local_variables,
     create_debug_continue_handler,
+    create_debug_start_handler,
     create_debug_step_into_handler,
     create_debug_step_out_handler,
     create_debug_step_over_handler,
@@ -30,11 +33,16 @@ from opencobol2.gui.debug_commands import (
     evaluate_watch_expressions,
 )
 from opencobol2.gui.debug_session import DebugSessionController
+from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.gui.output_panel import OutputWidget
+from opencobol2.gui.problems_panel import ProblemsWidget
+from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.language import (
     analyze_compilation_unit,
     parse_cobol_tokens,
     tokenize_cobol_source,
 )
+from opencobol2.theming import create_builtin_theme_registry, DARK_THEME_ID
 
 
 class _FakeDebuggerService:
@@ -86,6 +94,9 @@ class _FakeDebuggerService:
         return ()
 
     def read_variable(self, name: str) -> Variable:
+        if name == "RAISES-ADAPTER-ERROR":
+            raise GdbNotRunningError("GDB is not running.")
+
         if name not in self.variables:
             raise DebuggerServiceError(f"{name!r} is not a known data item.")
 
@@ -210,6 +221,61 @@ def test_evaluate_watch_expressions_reports_an_error(qapp) -> None:
     assert watches[0].error is not None
 
 
+def test_collect_local_variables_skips_items_that_raise_an_adapter_error(
+    qapp,
+) -> None:
+    # Editor §DebugGUI-3: `read_variable` can raise `GdbAdapterError`/
+    # `GdbNotRunningError`/`TimeoutError` from the underlying memory
+    # read, not just `DebuggerServiceError` -- catching only the
+    # latter let one flaky read escape uncaught and abort collecting
+    # every other local variable.
+    program = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. DEMO.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01  WS-A  PIC 9(4) VALUE 10.\n"
+        "       01  RAISES-ADAPTER-ERROR  PIC 9(4).\n"
+        "       PROCEDURE DIVISION.\n"
+        "       STOP RUN.\n"
+    )
+    lex_result = tokenize_cobol_source(program)
+    parse_result = parse_cobol_tokens(lex_result)
+    analysis = analyze_compilation_unit(parse_result.unit)
+
+    service = _FakeDebuggerService()
+    service.variables = {"WS-A": "0010"}
+    controller = _started_controller(service)
+
+    variables = collect_local_variables(controller, analysis.symbol_table)
+
+    assert {variable.name for variable in variables} == {"WS-A"}
+
+
+def test_evaluate_watch_expressions_falls_back_after_an_adapter_error(
+    qapp,
+) -> None:
+    # Editor §DebugGUI-3: mirrors the identical fix in
+    # `collect_local_variables` -- a `GdbNotRunningError` from the
+    # `read_variable` attempt must still fall through to the raw GDB
+    # expression evaluator below, not propagate uncaught.
+    service = _FakeDebuggerService()
+    service.expressions = {"RAISES-ADAPTER-ERROR": "raw-value"}
+    controller = _started_controller(service)
+
+    watches = evaluate_watch_expressions(
+        controller,
+        ("RAISES-ADAPTER-ERROR",),
+    )
+
+    assert watches == (
+        WatchExpression(
+            expression="RAISES-ADAPTER-ERROR",
+            value="raw-value",
+        ),
+    )
+
+
 # -- simple action handlers -----------------------------------------------
 
 
@@ -284,3 +350,61 @@ def test_step_over_handler_reports_an_error_via_message_box(qapp) -> None:
         handler(CommandContext())
 
     mock_warning.assert_called_once()
+
+
+def test_start_handler_aborts_when_the_pre_flight_save_fails(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §DebugGUI-5: `handle_debug_start` used to save the active
+    # document if modified but never re-check `is_modified` after the
+    # save call returned -- a failed save (caught internally with only
+    # a `QMessageBox.critical`) left the document still modified, and
+    # debugging proceeded regardless, silently compiling whatever was
+    # already on disk instead of what the editor showed.
+    document_service = DocumentService()
+    theme = create_builtin_theme_registry().get(DARK_THEME_ID)
+    editor_tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=theme,
+    )
+    source_path = tmp_path / "demo.cbl"
+    source_path.write_text("IDENTIFICATION DIVISION.\n")
+    editor_tabs.open_path(source_path)
+    editor_tabs.widget(0).setPlainText(
+        "IDENTIFICATION DIVISION. * changed",
+    )
+
+    debug_controller = DebugSessionController()
+    handler = create_debug_start_handler(
+        editor_tabs_widget=editor_tabs,
+        project_explorer=ProjectExplorerWidget(None),
+        debug_controller=debug_controller,
+        compiler_profile_service=MagicMock(),
+        toolchain_service=MagicMock(),
+        symbol_table_holder=[None],
+        output_widget=OutputWidget(),
+        problems_widget=ProblemsWidget(),
+    )
+
+    with (
+        patch.object(
+            DocumentService,
+            "save_document",
+            side_effect=OSError("boom"),
+        ),
+        patch.object(QMessageBox, "critical"),
+        patch.object(QMessageBox, "warning") as mock_warning,
+        patch.object(QMessageBox, "information") as mock_information,
+    ):
+        handler(CommandContext())
+
+    mock_warning.assert_called_once()
+    mock_information.assert_not_called()
+    assert debug_controller.is_active is False
+    assert (
+        editor_tabs.document_service.workspace.get_document(
+            editor_tabs.widget(0).document_id,
+        ).document.is_modified
+        is True
+    )

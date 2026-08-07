@@ -319,3 +319,59 @@ def test_service_sets_tab_group() -> None:
     )
 
     assert state.tab_group_id == "bottom-results"
+
+
+def test_listener_is_notified_of_every_state_change() -> None:
+    service = _create_service(
+        _create_definition(),
+    )
+    seen_states = []
+    service.add_listener(
+        seen_states.append,
+    )
+
+    service.show(
+        "output",
+    )
+    service.hide(
+        "output",
+    )
+
+    assert [
+        state.visible
+        for state in seen_states
+    ] == [
+        True,
+        False,
+    ]
+
+
+def test_a_raising_listener_does_not_break_the_state_change_or_other_listeners() -> (
+    None
+):
+    service = _create_service(
+        _create_definition(),
+    )
+    seen_states = []
+
+    def raising_listener(
+        state,
+    ) -> None:
+        raise RuntimeError(
+            "a broken listener",
+        )
+
+    service.add_listener(
+        raising_listener,
+    )
+    service.add_listener(
+        seen_states.append,
+    )
+
+    state = service.show(
+        "output",
+    )
+
+    assert state.visible is True
+    assert len(seen_states) == 1
+    assert seen_states[0].visible is True

@@ -643,7 +643,9 @@
     <Compile Include="src\opencobol2\gui\editor.py" />
     <Compile Include="src\opencobol2\gui\find_results_panel.py" />
     <Compile Include="src\opencobol2\gui\git_changes.py" />
+    <Compile Include="src\opencobol2\gui\git_commands.py" />
     <Compile Include="src\opencobol2\gui\git_repository.py" />
+    <Compile Include="src\opencobol2\gui\help_commands.py" />
     <Compile Include="src\opencobol2\gui\locals_panel.py" />
     <Compile Include="src\opencobol2\gui\main_window.py" />
     <Compile Include="src\opencobol2\gui\memory_panel.py" />
@@ -757,6 +759,7 @@
     <Compile Include="tests\unit\test_custom_local_runtime.py" />
     <Compile Include="tests\unit\test_custom_local_runtime_activation.py" />
     <Compile Include="tests\unit\test_debugger_cobol_values.py" />
+    <Compile Include="tests\unit\test_debugger_gdb_adapter.py" />
     <Compile Include="tests\unit\test_debugger_gnucobol_symbols.py" />
     <Compile Include="tests\unit\test_debugger_mi_protocol.py" />
     <Compile Include="tests\unit\test_debugger_models.py" />
@@ -797,6 +800,7 @@
     <Compile Include="src\opencobol2\__init__.py" />
     <Compile Include="tests\unit\test_gui_application.py" />
     <Compile Include="tests\unit\test_gui_bookmarks_panel.py" />
+    <Compile Include="tests\unit\test_gui_breakpoints_panel.py" />
     <Compile Include="tests\unit\test_gui_build_commands.py" />
     <Compile Include="tests\unit\test_gui_call_stack_panel.py" />
     <Compile Include="tests\unit\test_gui_coding_area_guides.py" />
@@ -810,7 +814,9 @@
     <Compile Include="tests\unit\test_gui_editor_folding.py" />
     <Compile Include="tests\unit\test_gui_find_results_panel.py" />
     <Compile Include="tests\unit\test_gui_git_changes.py" />
+    <Compile Include="tests\unit\test_gui_git_commands.py" />
     <Compile Include="tests\unit\test_gui_git_repository.py" />
+    <Compile Include="tests\unit\test_gui_help_commands.py" />
     <Compile Include="tests\unit\test_gui_locals_panel.py" />
     <Compile Include="tests\unit\test_gui_main_window.py" />
     <Compile Include="tests\unit\test_gui_memory_panel.py" />

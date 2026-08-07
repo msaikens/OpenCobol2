@@ -26,7 +26,11 @@ from opencobol2.debugger.cobol_values import (
     parse_picture_spec,
     usage_from_clause_keyword,
 )
-from opencobol2.debugger.gdb_adapter import GdbAdapter
+from opencobol2.debugger.gdb_adapter import (
+    GdbAdapter,
+    GdbAdapterError,
+    GdbNotRunningError,
+)
 from opencobol2.debugger.gnucobol_symbols import (
     GeneratedFieldSymbol,
     parse_generated_symbol_map,
@@ -241,10 +245,40 @@ class DebuggerService:
         self._adapter.start(executable_path, environment=environment)
         self._state = DebuggerState.PAUSED
 
+    def _send_command(self, command: str) -> MIRecord:
+        """Send one MI command, translating adapter-layer failures.
+
+        Editor §DebuggerLogic-6: every caller of
+        `GdbAdapter.send_command` in this class used to leave
+        `GdbAdapterError`/`GdbNotRunningError`/`TimeoutError` -- three
+        exception types with no relation to this class's own
+        `DebuggerServiceError` -- to propagate straight through. A
+        caller that (reasonably) only catches `DebuggerServiceError`
+        around a debugger call would be surprised by a different,
+        adapter-layer exception type for what is, from a COBOL-
+        debugging caller's perspective, the identical "the debugger
+        command failed" outcome.
+        """
+
+        try:
+            return self._adapter.send_command(
+                command,
+            )
+        except (
+            GdbAdapterError,
+            GdbNotRunningError,
+            TimeoutError,
+        ) as error:
+            raise DebuggerServiceError(
+                str(
+                    error,
+                ),
+            ) from error
+
     def add_breakpoint(self, source_file: str, line: int) -> Breakpoint:
         """Insert a breakpoint at a source file/line and return it."""
 
-        result = self._adapter.send_command(
+        result = self._send_command(
             f"-break-insert {source_file}:{line}",
         )
         breakpoint_ = _breakpoint_from_mi(result.get("bkpt", {}))
@@ -254,7 +288,7 @@ class DebuggerService:
     def remove_breakpoint(self, number: int) -> None:
         """Delete a previously inserted breakpoint by its number."""
 
-        self._adapter.send_command(f"-break-delete {number}")
+        self._send_command(f"-break-delete {number}")
         self._breakpoints.pop(number, None)
 
     def breakpoints(self) -> tuple[Breakpoint, ...]:
@@ -265,31 +299,31 @@ class DebuggerService:
     def run(self) -> None:
         """Start executing the debugged program from the beginning."""
 
-        self._adapter.send_command("-exec-run")
+        self._send_command("-exec-run")
         self._state = DebuggerState.RUNNING
 
     def continue_(self) -> None:
         """Resume a paused program."""
 
-        self._adapter.send_command("-exec-continue")
+        self._send_command("-exec-continue")
         self._state = DebuggerState.RUNNING
 
     def step_over(self) -> None:
         """Step one source line, stepping over any call."""
 
-        self._adapter.send_command("-exec-next")
+        self._send_command("-exec-next")
         self._state = DebuggerState.RUNNING
 
     def step_into(self) -> None:
         """Step one source line, stepping into any call."""
 
-        self._adapter.send_command("-exec-step")
+        self._send_command("-exec-step")
         self._state = DebuggerState.RUNNING
 
     def step_out(self) -> None:
         """Run until the current function returns."""
 
-        self._adapter.send_command("-exec-finish")
+        self._send_command("-exec-finish")
         self._state = DebuggerState.RUNNING
 
     def step_over_cobol_line(
@@ -318,12 +352,23 @@ class DebuggerService:
         self,
         *,
         timeout_seconds: float = 10.0,
-        max_internal_steps: int = 50,
+        max_internal_steps: int = 1000,
     ) -> StoppedEvent:
         """Step into, transparently skipping GnuCOBOL's own runtime frames.
 
         See `step_over_cobol_line` for why this internal repeat-and-check
         loop is necessary.
+
+        Editor §DebuggerLogic-5: unlike `step_over_cobol_line` (which
+        skips a called subprogram's internals entirely via `-exec-next`'s
+        own return-address breakpoint), stepping *into* a real `CALL`
+        single-steps through every one of GnuCOBOL's runtime
+        frame-management instructions in the callee's prologue --
+        measured directly against a real dynamically-loaded subprogram
+        at 19 raw steps just to reach the callee's `PROCEDURE DIVISION`
+        header line, and 51-500 to reach its first real statement. The
+        previous default of 50 reliably failed on this exact, ordinary
+        scenario with a raw internal error instead of a normal landing.
         """
 
         return self._smart_step(
@@ -393,7 +438,7 @@ class DebuggerService:
     def stack_frames(self) -> tuple[StackFrame, ...]:
         """Return the current thread's call stack, innermost first."""
 
-        result = self._adapter.send_command("-stack-list-frames")
+        result = self._send_command("-stack-list-frames")
         stack = result.get("stack", ())
 
         return tuple(
@@ -403,7 +448,7 @@ class DebuggerService:
     def threads(self) -> tuple[ThreadInfo, ...]:
         """Return every thread in the debugged process."""
 
-        result = self._adapter.send_command("-thread-info")
+        result = self._send_command("-thread-info")
         raw_threads = result.get("threads", ())
 
         threads = []
@@ -427,12 +472,12 @@ class DebuggerService:
     def registers(self) -> tuple[RegisterValue, ...]:
         """Return every named CPU register's current value (hex format)."""
 
-        names_result = self._adapter.send_command(
+        names_result = self._send_command(
             "-data-list-register-names",
         )
         names = names_result.get("register-names", ())
 
-        values_result = self._adapter.send_command(
+        values_result = self._send_command(
             "-data-list-register-values x",
         )
         raw_values = values_result.get("register-values", ())
@@ -454,7 +499,7 @@ class DebuggerService:
     def read_memory(self, address: str, length: int) -> MemoryBytes:
         """Read `length` raw bytes starting at a GDB-evaluable address."""
 
-        result = self._adapter.send_command(
+        result = self._send_command(
             f"-data-read-memory-bytes {address} {length}",
         )
         entry = result.get("memory")[0]
@@ -468,7 +513,7 @@ class DebuggerService:
         """Evaluate an arbitrary GDB expression and return its display text."""
 
         escaped = _escape_mi_expression(expression)
-        result = self._adapter.send_command(
+        result = self._send_command(
             f'-data-evaluate-expression "{escaped}"',
         )
         return result.get("value", "")
@@ -503,7 +548,7 @@ class DebuggerService:
 
         picture, usage = resolve_picture_and_usage(data_symbols[0].item)
 
-        memory_result = self._adapter.send_command(
+        memory_result = self._send_command(
             "-data-read-memory-bytes "
             f"{field_symbol.buffer_variable} {field_symbol.byte_length}",
         )

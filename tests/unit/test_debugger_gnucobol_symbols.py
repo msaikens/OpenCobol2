@@ -122,3 +122,78 @@ def test_parse_generated_symbol_map_of_empty_text_is_empty() -> None:
         )
         == {}
     )
+
+
+# Taken verbatim from a real `cobc 3.2.0` `-g -debug` compilation of a
+# WORKING-STORAGE group record (`CUSTOMER-REC`) with two nested
+# elementary items, plus a REDEFINES view of a separate top-level item.
+_REAL_GROUP_HEADER = """\
+static cob_u8_t\tb_17[8] __attribute__((aligned));\t/* CUSTOMER-REC */
+static cob_u8_t\tb_22[3] __attribute__((aligned));\t/* WS-REDEF-BASE */
+
+static cob_field f_18\t= {3, b_17, &a_1};\t/* CUST-AMOUNT */
+static cob_field f_19\t= {5, b_17 + 3, &a_3};\t/* CUST-BALANCE */
+static cob_field f_23\t= {3, b_22, &a_1};\t/* WS-REDEF-VIEW */
+"""
+
+
+def test_parse_generated_symbol_map_recovers_a_group_member_at_offset_zero() -> (
+    None
+):
+    # Editor §DebuggerLogic-1: a group member at the start of its
+    # group's buffer has no offset of its own, only the group's own
+    # buffer variable directly.
+    symbols = parse_generated_symbol_map(
+        _REAL_GROUP_HEADER,
+    )
+
+    cust_amount = symbols["CUST-AMOUNT"]
+    assert cust_amount.buffer_variable == "b_17"
+    assert cust_amount.byte_length == 3
+
+
+def test_parse_generated_symbol_map_recovers_a_group_member_at_a_nonzero_offset() -> (
+    None
+):
+    # Editor §DebuggerLogic-1: a group member after the first one gets
+    # a constant byte offset into the shared group buffer -- GDB's own
+    # expression evaluator understands `buffer+N` directly, so no
+    # separate offset field is needed on `GeneratedFieldSymbol`.
+    symbols = parse_generated_symbol_map(
+        _REAL_GROUP_HEADER,
+    )
+
+    cust_balance = symbols["CUST-BALANCE"]
+    assert cust_balance.buffer_variable == "b_17+3"
+    assert cust_balance.byte_length == 5
+
+
+def test_parse_generated_symbol_map_recovers_a_redefines_view() -> None:
+    # Editor §DebuggerLogic-3: a REDEFINES view gets the identical
+    # `cob_field`-pointing-into-another-buffer shape as a group member,
+    # here pointing at `WS-REDEF-BASE`'s own dedicated buffer.
+    symbols = parse_generated_symbol_map(
+        _REAL_GROUP_HEADER,
+    )
+
+    redefines_view = symbols["WS-REDEF-VIEW"]
+    assert redefines_view.buffer_variable == "b_22"
+    assert redefines_view.byte_length == 3
+
+
+def test_parse_generated_symbol_map_does_not_confuse_group_and_members() -> (
+    None
+):
+    symbols = parse_generated_symbol_map(
+        _REAL_GROUP_HEADER,
+    )
+
+    assert set(
+        symbols,
+    ) == {
+        "CUSTOMER-REC",
+        "WS-REDEF-BASE",
+        "CUST-AMOUNT",
+        "CUST-BALANCE",
+        "WS-REDEF-VIEW",
+    }

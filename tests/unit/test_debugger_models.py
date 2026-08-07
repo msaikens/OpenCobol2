@@ -12,6 +12,7 @@ from opencobol2.debugger import (
     RegisterValue,
     StackFrame,
     StopReason,
+    StoppedEvent,
     ThreadInfo,
     Variable,
     WatchExpression,
@@ -64,6 +65,20 @@ def test_breakpoint_rejects_invalid_values(
         )
 
 
+def test_breakpoint_rejects_empty_source_path() -> None:
+    # Editor §DebuggerCore-8: an empty/blank source path used to
+    # silently normalize to `Path('.')` via `Path("")`, misrepresenting
+    # an unknown/missing source location as a real, resolvable path.
+    with pytest.raises(
+        ValueError,
+    ):
+        Breakpoint(
+            number=1,
+            source_path="   ",
+            line=1,
+        )
+
+
 def test_stack_frame_normalizes_source_path() -> None:
     frame = StackFrame(
         level=0,
@@ -108,6 +123,31 @@ def test_stack_frame_rejects_non_positive_line() -> None:
         )
 
 
+def test_stack_frame_rejects_empty_function_name() -> None:
+    # Editor §DebuggerCore-6: `function_name` is a required field, but
+    # nothing previously rejected a blank one.
+    with pytest.raises(
+        ValueError,
+    ):
+        StackFrame(
+            level=0,
+            function_name="",
+        )
+
+
+def test_stack_frame_rejects_empty_source_path() -> None:
+    # Editor §DebuggerCore-8: an empty/blank source path used to
+    # silently normalize to `Path('.')` instead of being rejected.
+    with pytest.raises(
+        ValueError,
+    ):
+        StackFrame(
+            level=0,
+            function_name="main",
+            source_path="",
+        )
+
+
 def test_variable_rejects_empty_name() -> None:
     with pytest.raises(
         ValueError,
@@ -128,6 +168,19 @@ def test_variable_defaults() -> None:
     assert variable.type_name is None
 
 
+def test_variable_name_is_normalized() -> None:
+    # Editor §DebuggerCore-7: mirrors `WatchExpression.expression`,
+    # which already re-assigns its stripped value -- this used to
+    # validate non-emptiness via `.strip()` but never store the
+    # normalized result back, leaving padding on the instance.
+    variable = Variable(
+        name="  WS-COUNT  ",
+        value="1",
+    )
+
+    assert variable.name == "WS-COUNT"
+
+
 def test_thread_info_rejects_non_positive_id() -> None:
     with pytest.raises(
         ValueError,
@@ -135,6 +188,18 @@ def test_thread_info_rejects_non_positive_id() -> None:
         ThreadInfo(
             thread_id=0,
             state="running",
+        )
+
+
+def test_thread_info_rejects_empty_state() -> None:
+    # Editor §DebuggerCore-6: `state` is a required field, but nothing
+    # previously rejected a blank one.
+    with pytest.raises(
+        ValueError,
+    ):
+        ThreadInfo(
+            thread_id=1,
+            state="",
         )
 
 
@@ -146,6 +211,16 @@ def test_register_value_rejects_empty_name() -> None:
             name="",
             value="0x0",
         )
+
+
+def test_register_value_name_is_normalized() -> None:
+    # Editor §DebuggerCore-7: see the identical fix on `Variable`.
+    register = RegisterValue(
+        name="  eax  ",
+        value="0x0",
+    )
+
+    assert register.name == "eax"
 
 
 def test_memory_bytes_rejects_negative_address() -> None:
@@ -215,3 +290,24 @@ def test_stop_reason_from_gdb_reason_falls_back_to_other() -> None:
         )
         is StopReason.OTHER
     )
+
+
+def test_stopped_event_allows_no_thread_id() -> None:
+    event = StoppedEvent(
+        reason=StopReason.EXITED_NORMALLY,
+    )
+
+    assert event.thread_id is None
+
+
+def test_stopped_event_rejects_non_positive_thread_id() -> None:
+    # Editor §DebuggerCore-5: `thread_id` describes the identical "a
+    # GDB thread ID" concept as `ThreadInfo.thread_id`, which already
+    # requires a positive value.
+    with pytest.raises(
+        ValueError,
+    ):
+        StoppedEvent(
+            reason=StopReason.BREAKPOINT_HIT,
+            thread_id=0,
+        )

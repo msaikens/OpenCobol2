@@ -21,6 +21,7 @@ from opencobol2.services.tool_windows import ToolWindowService
 from opencobol2.tool_windows import (
     ToolWindowArea,
     ToolWindowDefinition,
+    ToolWindowState,
 )
 
 
@@ -108,6 +109,15 @@ class ToolWindowDockManager:
                 definition,
             )
 
+        # Editor §UIShell-1: without this, every View-menu tool-window
+        # command (`activate()`) and the two hand-rolled reveal-panel
+        # workarounds elsewhere only ever updated domain state -- the
+        # real `QDockWidget` never moved, so a hidden panel stayed
+        # hidden forever with no way to bring it back through the menu.
+        tool_window_service.add_listener(
+            self._on_state_changed,
+        )
+
     @property
     def dock_widgets(
         self,
@@ -191,6 +201,34 @@ class ToolWindowDockManager:
         ] = dock_widget
 
         return dock_widget
+
+    def _on_state_changed(
+        self,
+        state: ToolWindowState,
+    ) -> None:
+        """Reflect a tool window's domain-state change onto its real dock widget.
+
+        The reverse direction (`_on_visibility_changed` below) already
+        guards against exactly the re-entrant loop this could otherwise
+        cause: it only calls back into the service when the dock
+        widget's new visibility actually differs from the state that
+        was just stored, and by the time this listener runs, the store
+        already happened.
+        """
+
+        dock_widget = self._dock_widgets.get(
+            state.tool_window_id,
+        )
+
+        if dock_widget is None:
+            return
+
+        dock_widget.setVisible(
+            state.visible,
+        )
+
+        if state.visible and state.active:
+            dock_widget.raise_()
 
     def _on_visibility_changed(
         self,

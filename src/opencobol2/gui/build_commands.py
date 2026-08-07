@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import fnmatch
 from pathlib import Path
+import shutil
 
 from PySide6.QtWidgets import (
     QMessageBox,
@@ -276,3 +277,104 @@ def create_build_project_handler(
         )
 
     return handle_build_project
+
+
+def create_clean_project_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    output_widget: OutputWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> CommandHandler:
+    """Create a handler that empties the open project's output directory."""
+
+    def handle_clean_project(
+        context: CommandContext,
+    ) -> None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+        project = project_explorer.project
+
+        if project is None:
+            QMessageBox.information(
+                parent_widget,
+                "Clean Project",
+                "No project is open.",
+            )
+            return
+
+        output_directory = (
+            project.root_path
+            / project.properties.output_directory
+        )
+
+        if not output_directory.is_dir():
+            output_widget.append_line(
+                "Nothing to clean: the output directory "
+                "does not exist.",
+            )
+            return
+
+        removed_count = 0
+
+        for entry in output_directory.iterdir():
+            if entry.is_dir():
+                shutil.rmtree(
+                    entry,
+                    ignore_errors=True,
+                )
+            else:
+                entry.unlink(
+                    missing_ok=True,
+                )
+
+            removed_count += 1
+
+        output_widget.append_line(
+            f"Clean complete: removed {removed_count} "
+            f"item(s) from {project.properties.output_directory}.",
+        )
+
+    return handle_clean_project
+
+
+def create_rebuild_project_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    output_widget: OutputWidget,
+    problems_widget: ProblemsWidget,
+    runtime_activation_service: CompilerRuntimeActivationService,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> CommandHandler:
+    """Create a handler that cleans the output directory, then builds the project."""
+
+    clean_handler = create_clean_project_handler(
+        project_explorer=project_explorer,
+        output_widget=output_widget,
+        parent_widget_provider=parent_widget_provider,
+    )
+    build_handler = create_build_project_handler(
+        project_explorer=project_explorer,
+        output_widget=output_widget,
+        problems_widget=problems_widget,
+        runtime_activation_service=runtime_activation_service,
+        parent_widget_provider=parent_widget_provider,
+    )
+
+    def handle_rebuild_project(
+        context: CommandContext,
+    ) -> None:
+        clean_handler(
+            context,
+        )
+        build_handler(
+            context,
+        )
+
+    return handle_rebuild_project

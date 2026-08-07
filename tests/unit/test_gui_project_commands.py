@@ -117,6 +117,49 @@ def test_open_handler_loads_project_from_selected_path(
     assert explorer.project == result
 
 
+def test_open_handler_records_the_opened_path_in_the_holder(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §ProjectPanels-1: this is what lets Project Properties
+    # save its changes back to the right file -- nothing tracked
+    # which file the open project came from before this existed.
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "project.json"
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    explorer = ProjectExplorerWidget()
+    project_file_path_holder: list[Path | None] = [
+        None,
+    ]
+    handler = create_project_open_handler(
+        project_explorer=explorer,
+        project_file_path_holder=project_file_path_holder,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        handler(
+            None,
+        )
+
+    assert project_file_path_holder[0] == project_file
+
+
 def test_open_handler_reports_error_for_missing_project_file(
     qapp,
     tmp_path: Path,
@@ -242,6 +285,32 @@ def test_close_handler_clears_project(
     )
 
     assert explorer.project is None
+
+
+def test_close_handler_clears_the_recorded_project_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    explorer = ProjectExplorerWidget(
+        project,
+    )
+    project_file_path_holder: list[Path | None] = [
+        tmp_path / "project.json",
+    ]
+    handler = create_project_close_handler(
+        project_explorer=explorer,
+        project_file_path_holder=project_file_path_holder,
+    )
+
+    handler(
+        None,
+    )
+
+    assert project_file_path_holder[0] is None
 
 
 def test_create_project_from_details_creates_and_persists(
@@ -437,6 +506,55 @@ def test_new_project_handler_creates_project_end_to_end(
     assert project_file.is_file()
 
 
+def test_new_project_handler_records_the_created_path_in_the_holder(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget()
+    project_file_path_holder: list[Path | None] = [
+        None,
+    ]
+    handler = create_project_new_handler(
+        project_explorer=explorer,
+        project_file_path_holder=project_file_path_holder,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.project_commands.QInputDialog.getText",
+            return_value=(
+                "Demo",
+                True,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands."
+            "QFileDialog.getExistingDirectory",
+            return_value=str(
+                tmp_path,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands."
+            "QFileDialog.getSaveFileName",
+            return_value=(
+                str(
+                    project_file,
+                ),
+                "",
+            ),
+        ),
+    ):
+        handler(
+            None,
+        )
+
+    assert project_file_path_holder[0] == project_file
+
+
 def test_save_as_handler_shows_information_when_no_project_open(
     qapp,
 ) -> None:
@@ -521,6 +639,45 @@ def test_save_as_handler_persists_current_project_to_new_path(
 
     assert result == project
     assert new_path.is_file()
+
+
+def test_save_as_handler_records_the_new_path_in_the_holder(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    explorer = ProjectExplorerWidget(
+        project,
+    )
+    project_file_path_holder: list[Path | None] = [
+        tmp_path / "original.json",
+    ]
+    handler = create_project_save_as_handler(
+        project_explorer=explorer,
+        project_file_path_holder=project_file_path_holder,
+    )
+    new_path = (
+        tmp_path / "copy.json"
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands."
+        "QFileDialog.getSaveFileName",
+        return_value=(
+            str(
+                new_path,
+            ),
+            "",
+        ),
+    ):
+        handler(
+            None,
+        )
+
+    assert project_file_path_holder[0] == new_path
 
 
 def test_save_as_handler_reports_error_on_save_failure(
@@ -718,6 +875,49 @@ def test_open_recent_handler_opens_project_and_re_records(
         ]
         == project_file
     )
+
+
+def test_open_recent_handler_records_the_opened_path_in_the_holder(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    explorer = ProjectExplorerWidget()
+    project_file_path_holder: list[Path | None] = [
+        None,
+    ]
+    handler = create_project_open_recent_handler(
+        project_explorer=explorer,
+        settings_service=settings_service,
+        project_file_path_holder=project_file_path_holder,
+    )
+
+    handler(
+        CommandContext(
+            values={
+                "path": str(
+                    project_file,
+                ),
+            },
+        )
+    )
+
+    assert project_file_path_holder[0] == project_file
 
 
 def test_open_recent_handler_reports_error_for_missing_file(

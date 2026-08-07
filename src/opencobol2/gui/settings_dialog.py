@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -463,10 +464,26 @@ class SettingsDialog(QDialog):
     def _apply_and_accept(
         self,
     ) -> None:
-        """Persist every tab's settings, then close the dialog as accepted."""
+        """Persist every tab's settings, then close the dialog as accepted.
 
-        self._settings_service.update_editor(
-            EditorSettings(
+        Editor §Dialogs-3: the four `update_*` calls below used to run
+        back-to-back with zero exception handling -- a failure partway
+        through (e.g. an empty theme registry, so the theme combo
+        returns `None` and `ThemeSettings` raises `TypeError`) left
+        every category persisted *before* the failure already applied
+        to disk, with no rollback and no error shown. Every settings
+        object is now built and validated first; persistence only
+        starts once all four have been constructed successfully,
+        mirroring `CompilerProfilesDialog._apply_and_accept`'s
+        existing validate-then-persist structure.
+        """
+
+        git_executable_path_text = (
+            self._git_executable_path_edit.text().strip()
+        )
+
+        try:
+            editor_settings = EditorSettings(
                 font_family=self._font_family_edit.text(),
                 font_size=self._font_size_spin.value(),
                 tab_width=self._tab_width_spin.value(),
@@ -488,9 +505,7 @@ class SettingsDialog(QDialog):
                     self._autosave_interval_spin.value()
                 ),
             )
-        )
-        self._settings_service.update_cobol(
-            CobolSettings(
+            cobol_settings = CobolSettings(
                 default_source_format=(
                     self._source_format_combo.currentData()
                 ),
@@ -503,20 +518,12 @@ class SettingsDialog(QDialog):
                     },
                 ),
             )
-        )
-        self._settings_service.update_theme(
-            ThemeSettings(
+            theme_settings = ThemeSettings(
                 active_theme_id=(
                     self._theme_combo.currentData()
                 ),
             )
-        )
-
-        git_executable_path_text = (
-            self._git_executable_path_edit.text().strip()
-        )
-        self._settings_service.update_external_tools(
-            ExternalToolSettings(
+            external_tool_settings = ExternalToolSettings(
                 git_executable_path=(
                     Path(
                         git_executable_path_text,
@@ -525,6 +532,30 @@ class SettingsDialog(QDialog):
                     else None
                 ),
             )
+        except (
+            TypeError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Settings",
+                str(
+                    error,
+                ),
+            )
+            return
+
+        self._settings_service.update_editor(
+            editor_settings,
+        )
+        self._settings_service.update_cobol(
+            cobol_settings,
+        )
+        self._settings_service.update_theme(
+            theme_settings,
+        )
+        self._settings_service.update_external_tools(
+            external_tool_settings,
         )
 
         self.accept()

@@ -50,6 +50,21 @@ class DebugSessionController(QObject):
     stopped = Signal(object)
     """Fired with a `StoppedEvent` on every pause (queued across threads)."""
 
+    session_ended = Signal()
+    """Fired whenever `stop()` runs, by any path (manual or program exit).
+
+    Editor §DebugGUI-1: ending a session any way other than a natural
+    program exit (i.e. the user clicking "Stop Debugging" while
+    paused) used to leave every debug panel showing the just-ended
+    session's stale data indefinitely, since nothing but the
+    exited-normally branch of the GUI's own stopped-event handler ever
+    cleared them. `stop()` is the one place every session-ending path
+    already funnels through, so it's the correct single place to
+    signal "the panels showing this session's state should reset" --
+    a listener no longer needs to duplicate that call at every call
+    site that can end a session.
+    """
+
     def __init__(self, parent: QObject | None = None) -> None:
         """Create an idle controller; call `start()` to attach a session."""
 
@@ -122,6 +137,8 @@ class DebugSessionController(QObject):
         self._document_id = None
         self._synced_breakpoints = {}
 
+        self.session_ended.emit()
+
     def add_breakpoint(self, line: int) -> None:
         """Insert a real breakpoint at a line in the debugged source file."""
 
@@ -148,7 +165,17 @@ class DebugSessionController(QObject):
         service.remove_breakpoint(number)
 
     def sync_breakpoints(self, current_lines: Sequence[int]) -> None:
-        """Reconcile GDB's breakpoints against a source file's current set."""
+        """Reconcile GDB's breakpoints against a source file's current set.
+
+        Editor §DebugGUI-4: a "reconcile" operation's natural behavior
+        for "no active session to reconcile against" is a no-op, not a
+        raised error -- this used to raise `DebugSessionError` via
+        `add_breakpoint`'s `_require_service()` call instead, forcing
+        every caller to remember to check `is_active` externally first.
+        """
+
+        if not self.is_active:
+            return
 
         current = set(current_lines)
 

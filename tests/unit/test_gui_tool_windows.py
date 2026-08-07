@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -194,6 +196,117 @@ def test_dock_widget_visibility_syncs_back_to_service(
         ).visible
         is False
     )
+
+
+def test_service_activate_shows_the_real_dock_widget(
+    qapp,
+) -> None:
+    # Editor §UIShell-1: `activate()`/`show()`/`hide()` used to only
+    # mutate domain state -- the real `QDockWidget` never moved, so a
+    # hidden panel (like Terminal, hidden by default) stayed invisible
+    # forever with no way to bring it back through the View menu.
+    service = _build_service()
+    window = QMainWindow()
+    window.show()
+    manager = ToolWindowDockManager(
+        main_window=window,
+        tool_window_service=service,
+    )
+
+    beta = manager.get_dock_widget(
+        "beta",
+    )
+    assert beta.isVisible() is False
+
+    service.activate(
+        "beta",
+    )
+
+    assert beta.isVisible() is True
+
+
+def test_service_hide_hides_the_real_dock_widget(
+    qapp,
+) -> None:
+    service = _build_service()
+    window = QMainWindow()
+    window.show()
+    manager = ToolWindowDockManager(
+        main_window=window,
+        tool_window_service=service,
+    )
+
+    alpha = manager.get_dock_widget(
+        "alpha",
+    )
+    assert alpha.isVisible() is True
+
+    service.hide(
+        "alpha",
+    )
+
+    assert alpha.isVisible() is False
+
+
+def test_service_activate_raises_the_dock_widget_to_front(
+    qapp,
+) -> None:
+    service = _build_service()
+    window = QMainWindow()
+    window.show()
+    manager = ToolWindowDockManager(
+        main_window=window,
+        tool_window_service=service,
+    )
+
+    beta = manager.get_dock_widget(
+        "beta",
+    )
+
+    with patch.object(
+        type(
+            beta,
+        ),
+        "raise_",
+    ) as mock_raise:
+        service.activate(
+            "beta",
+        )
+
+    mock_raise.assert_called_once()
+
+
+def test_service_state_change_does_not_reenter_the_service(
+    qapp,
+) -> None:
+    # The dock widget's own `visibilityChanged` signal fires when
+    # `_on_state_changed` calls `setVisible()` -- `_on_visibility_changed`
+    # must recognize the state already matches and not call back into
+    # `show()`/`hide()` again, or every activation would recurse.
+    service = _build_service()
+    window = QMainWindow()
+    window.show()
+    manager = ToolWindowDockManager(
+        main_window=window,
+        tool_window_service=service,
+    )
+    call_count = 0
+    original_store = service._store
+
+    def counting_store(state):
+        nonlocal call_count
+        call_count += 1
+        return original_store(
+            state,
+        )
+
+    service._store = counting_store
+
+    service.activate(
+        "beta",
+    )
+
+    assert call_count == 1
 
 
 def test_manager_rejects_non_main_window(

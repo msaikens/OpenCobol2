@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
@@ -30,6 +31,15 @@ from opencobol2.services.command_contributions import (
 from opencobol2.services.status_bar import StatusBarService
 from opencobol2.services.theming import ThemeService
 from opencobol2.services.tool_windows import ToolWindowService
+
+
+# Editor §UIShell-3: menus already rebuild from live command state on
+# every real `aboutToShow` -- toolbars have no equivalent "about to be
+# interacted with" signal (they're always visible, not opened/closed),
+# so a short periodic refresh is what keeps a toolbar action's
+# enabled/checked/visible state from freezing at whatever was true at
+# app launch, forever.
+_TOOLBAR_REFRESH_INTERVAL_MS = 500
 
 
 class MainWindow(QMainWindow):
@@ -137,6 +147,18 @@ class MainWindow(QMainWindow):
             )
             self._toolbars[surface_id] = toolbar
 
+        self._toolbar_refresh_timer = QTimer(
+            self,
+        )
+        self._toolbar_refresh_timer.timeout.connect(
+            self.refresh_toolbars,
+        )
+
+        if self._toolbars:
+            self._toolbar_refresh_timer.start(
+                _TOOLBAR_REFRESH_INTERVAL_MS,
+            )
+
         self.setStatusBar(
             QStatusBar(
                 self,
@@ -204,6 +226,21 @@ class MainWindow(QMainWindow):
             self._theme_service.active_theme,
         )
         self.refresh_status_bar()
+
+    def refresh_toolbars(
+        self,
+    ) -> None:
+        """Rebuild every toolbar from current command-contribution state."""
+
+        for (
+            surface_id,
+            toolbar,
+        ) in self._toolbars.items():
+            build_toolbar(
+                toolbar,
+                surface_id,
+                self._contribution_service,
+            )
 
     def refresh_status_bar(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
@@ -331,6 +332,52 @@ def test_populate_menu_breaks_self_referencing_submenu_cycle(
     # Showing the nested submenu must not recurse back into itself.
     submenu.aboutToShow.emit()
     assert submenu.actions() == []
+
+
+def test_repeated_menu_opens_do_not_leak_submenu_objects(
+    qapp,
+) -> None:
+    # Editor §UIShell-2: `populate_menu()` reruns on every real
+    # `aboutToShow` -- `menu.clear()` alone only empties the action
+    # list, leaving each previous call's submenu `QMenu` alive forever
+    # as an orphaned child of `menu`. Reproduced with real repeated
+    # `aboutToShow` cycles, exactly as the original finding did.
+    service = _build_service()
+    menu = QMenu()
+    menu.aboutToShow.connect(
+        lambda: populate_menu(
+            menu,
+            "file",
+            service,
+        )
+    )
+
+    for _ in range(20):
+        menu.aboutToShow.emit()
+
+    # `deleteLater()` schedules a `DeferredDelete` event that a real,
+    # running `exec()` loop processes automatically while idle -- a
+    # plain `processEvents()` call deliberately excludes that event
+    # type (to avoid destroying objects mid-callback), so it must be
+    # flushed explicitly here to prove the object is actually gone
+    # rather than merely scheduled.
+    QCoreApplication.sendPostedEvents(
+        None,
+        QEvent.Type.DeferredDelete,
+    )
+
+    assert (
+        len(
+            menu.findChildren(
+                QMenu,
+                options=(
+                    Qt.FindChildOption
+                    .FindDirectChildrenOnly
+                ),
+            )
+        )
+        == 1
+    )
 
 
 def test_populate_menu_keeps_separator_around_hidden_contribution(

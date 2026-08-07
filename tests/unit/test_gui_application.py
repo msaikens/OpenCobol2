@@ -7,9 +7,9 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QPalette, QTextCursor
 from PySide6.QtPrintSupport import QPrintDialog
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from opencobol2.compiler import CompilerDiagnostic
 from opencobol2.compiler.diagnostics import DiagnosticSeverity
@@ -30,7 +30,7 @@ from opencobol2.project import (
     create_project,
     ProjectStorage,
 )
-from opencobol2.theming import LIGHT_THEME_ID
+from opencobol2.theming import DEFAULT_THEME_ID, LIGHT_THEME_ID
 from opencobol2.settings import (
     CompilerSettings,
     EditorSettings,
@@ -1575,6 +1575,120 @@ def test_project_properties_selects_a_project_specific_compiler_profile(
     )
 
 
+def test_project_properties_changes_are_persisted_to_the_project_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §ProjectPanels-1: accepting Project Properties used to
+    # only update in-memory state -- reloading the same project file
+    # afterward showed the change was completely discarded, since
+    # nothing tracked which file the open project had been loaded
+    # from, and no plain "Save Project" command existed to perform a
+    # separate save step.
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    stub_script = tmp_path / "stub_compiler.py"
+    stub_script.write_text(
+        _STUB_COMPILER_SCRIPT,
+    )
+    project_profile = CompilerProfile(
+        provider_id=CUSTOM_COMPILER_PROVIDER_ID,
+        display_name="Project-Specific Compiler",
+        configuration={
+            "executable_path": sys.executable,
+            "compile_arguments": (
+                str(stub_script),
+                "{source}",
+                "-o",
+                "{output}",
+            ),
+        },
+    )
+    existing_compilers = (
+        settings_service.current.compilers
+    )
+    settings_service.update_compilers(
+        CompilerSettings(
+            default_profile_id=(
+                existing_compilers.default_profile_id
+            ),
+            profiles=(
+                *existing_compilers.profiles,
+                project_profile,
+            ),
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "project.json"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    explorer = _project_explorer_content(
+        window,
+    )
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.project_commands.QFileDialog.getOpenFileName",
+        return_value=(
+            str(
+                project_file,
+            ),
+            "",
+        ),
+    ):
+        _find_action(
+            file_menu,
+            "Open Project",
+        ).trigger()
+
+    def fake_exec(
+        dialog_self,
+    ):
+        index = (
+            dialog_self._compiler_profile_combo.findData(
+                project_profile.profile_id,
+            )
+        )
+        dialog_self._compiler_profile_combo.setCurrentIndex(
+            index,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch(
+        "opencobol2.gui.project_properties_dialog."
+        "ProjectPropertiesDialog.exec",
+        fake_exec,
+    ):
+        explorer.project_properties_requested.emit()
+
+    reloaded_project = ProjectStorage(
+        project_file,
+    ).load()
+    assert (
+        reloaded_project.properties
+        .default_compiler_profile_id
+        == project_profile.profile_id
+    )
+
+
 def test_edit_menu_find_and_replace_actions_work_end_to_end(
     qapp,
     tmp_path: Path,
@@ -2183,6 +2297,64 @@ def test_build_project_menu_action_compiles_project_end_to_end(
     ).is_file()
 
 
+def test_closing_a_project_clears_stale_output_and_problems(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §ProjectPanels-2: neither panel was wired to clear on a
+    # project switch -- only the *next* build's own clear calls ever
+    # touched them, so a closed project's build transcript and
+    # diagnostic row stayed on screen indefinitely.
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    _configure_stub_compiler_profile(
+        settings_service,
+        tmp_path,
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    output_widget = _output_content(
+        window,
+    )
+    problems_widget = _problems_content(
+        window,
+    )
+
+    build_menu = window.menus["build"]
+    build_menu.aboutToShow.emit()
+    _find_action(
+        build_menu,
+        "Build Project",
+    ).trigger()
+    assert output_widget.toPlainText() != ""
+    assert problems_widget.rowCount() == 1
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert output_widget.toPlainText() == ""
+    assert problems_widget.rowCount() == 0
+
+
 def test_welcome_page_shown_when_no_documents_are_open(
     qapp,
     tmp_path: Path,
@@ -2492,6 +2664,64 @@ def test_find_in_files_menu_action_searches_and_reveals_results(
         == "MOVE X TO Y."
     )
     assert not dock_widget.isHidden()
+
+
+def test_closing_a_project_clears_stale_find_results(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §SearchOutlineTasks-1: `_on_project_changed` refreshed
+    # five other widgets but never called
+    # `find_results_widget.clear_results()` -- Task List already had
+    # the equivalent hook and correctly cleared, Find Results didn't.
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       MOVE X TO Y.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    find_results_widget = _find_results_content(
+        window,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.search_commands.QInputDialog.getText",
+        return_value=(
+            "MOVE",
+            True,
+        ),
+    ):
+        _find_action(
+            edit_menu,
+            "Find in Files",
+        ).trigger()
+
+    assert find_results_widget.rowCount() == 1
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert find_results_widget.rowCount() == 0
 
 
 def test_find_in_files_without_a_project_shows_a_message(
@@ -3887,4 +4117,739 @@ def test_format_document_menu_action_trims_trailing_whitespace(
     assert editor.toPlainText() == (
         "line one\n"
         "line two\n"
+    )
+
+
+# --- Phase 7 UIBootstrap-1/2/3 -----------------------------------------------
+
+
+def test_exit_menu_action_closes_the_window(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+
+    with patch.object(
+        type(window),
+        "close",
+    ) as mock_close:
+        _find_action(
+            file_menu,
+            "Exit",
+        ).trigger()
+
+    mock_close.assert_called_once()
+
+
+def test_undo_and_redo_menu_actions_affect_the_active_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "original\n",
+    )
+    editor.insertPlainText(
+        "added-",
+    )
+    assert editor.toPlainText() == "added-original\n"
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Undo",
+    ).trigger()
+
+    assert editor.toPlainText() == "original\n"
+
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Redo",
+    ).trigger()
+
+    assert editor.toPlainText() == "added-original\n"
+
+
+def test_cut_and_paste_menu_actions_round_trip_through_the_clipboard(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "cut me",
+    )
+    editor.selectAll()
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Cut",
+    ).trigger()
+
+    assert editor.toPlainText() == ""
+    assert (
+        QApplication.clipboard().text()
+        == "cut me"
+    )
+
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Paste",
+    ).trigger()
+
+    assert editor.toPlainText() == "cut me"
+
+
+def test_copy_menu_action_copies_the_selection_without_modifying_the_document(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "copy me",
+    )
+    editor.selectAll()
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Copy",
+    ).trigger()
+
+    assert editor.toPlainText() == "copy me"
+    assert (
+        QApplication.clipboard().text()
+        == "copy me"
+    )
+
+
+def test_delete_menu_action_removes_the_selection(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "delete me",
+    )
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(
+        len("delete"),
+        QTextCursor.MoveMode.KeepAnchor,
+    )
+    editor.setTextCursor(
+        cursor,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Delete",
+    ).trigger()
+
+    assert editor.toPlainText() == " me"
+
+
+def test_select_all_menu_action_selects_the_active_tab_contents(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "select everything",
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Select All",
+    ).trigger()
+
+    assert (
+        editor.textCursor().selectedText()
+        == "select everything"
+    )
+
+
+def test_go_to_menu_action_moves_the_cursor_to_the_requested_line(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "\n".join(
+            f"line {i}"
+            for i in range(1, 11)
+        ),
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.application.QInputDialog.getInt",
+        return_value=(
+            5,
+            True,
+        ),
+    ):
+        _find_action(
+            edit_menu,
+            "Go To",
+        ).trigger()
+
+    assert (
+        editor.textCursor().blockNumber()
+        == 4
+    )
+
+
+def test_clean_project_menu_action_removes_output_directory_contents(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+
+    output_directory = (
+        tmp_path
+        / project.properties.output_directory
+    )
+    output_directory.mkdir(
+        parents=True,
+    )
+    (
+        output_directory / "leftover.exe"
+    ).write_text(
+        "x",
+    )
+
+    build_menu = window.menus["build"]
+    build_menu.aboutToShow.emit()
+    _find_action(
+        build_menu,
+        "Clean Project",
+    ).trigger()
+
+    assert list(
+        output_directory.iterdir(),
+    ) == []
+
+
+def test_rebuild_project_menu_action_cleans_then_builds(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    _configure_stub_compiler_profile(
+        settings_service,
+        tmp_path,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+
+    output_directory = (
+        tmp_path
+        / project.properties.output_directory
+    )
+    output_directory.mkdir(
+        parents=True,
+    )
+    (
+        output_directory / "stale.txt"
+    ).write_text(
+        "stale",
+    )
+
+    build_menu = window.menus["build"]
+    build_menu.aboutToShow.emit()
+    _find_action(
+        build_menu,
+        "Rebuild Project",
+    ).trigger()
+
+    assert not (
+        output_directory / "stale.txt"
+    ).exists()
+    assert (
+        output_directory / "main"
+    ).is_file()
+
+
+def test_build_run_and_stop_menu_actions_show_not_yet_available_messages(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    build_menu = window.menus["build"]
+
+    with patch(
+        "opencobol2.gui.help_commands.QMessageBox.information",
+    ) as mock_information:
+        build_menu.aboutToShow.emit()
+        _find_action(
+            build_menu,
+            "Run",
+        ).trigger()
+
+        build_menu.aboutToShow.emit()
+        _find_action(
+            build_menu,
+            "Stop",
+        ).trigger()
+
+    assert mock_information.call_count == 2
+
+
+def test_git_fetch_menu_action_is_wired_to_the_real_handler(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    git_menu = window.menus["git"]
+    git_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.git_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            git_menu,
+            "Fetch",
+        ).trigger()
+
+    mock_information.assert_called_once()
+    assert (
+        mock_information.call_args[0][1]
+        == "Fetch"
+    )
+    assert (
+        mock_information.call_args[0][2]
+        == "No project is open."
+    )
+
+
+def test_git_create_repository_menu_action_creates_a_real_repository(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project_root = tmp_path / "project_root"
+    project_root.mkdir()
+    project = create_project(
+        name="Demo",
+        root_path=project_root,
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+
+    git_menu = window.menus["git"]
+    git_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.git_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            git_menu,
+            "Create Git Repository",
+        ).trigger()
+
+    assert (
+        project_root / ".git"
+    ).is_dir()
+    mock_information.assert_called_once()
+
+
+def test_git_manage_branches_menu_action_reveals_panel_and_shows_branches_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository(
+        tmp_path,
+    )
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+
+    dock_widget = (
+        window.dock_manager.get_dock_widget(
+            "git-repository",
+        )
+    )
+    assert dock_widget.isHidden()
+
+    git_menu = window.menus["git"]
+    git_menu.aboutToShow.emit()
+    _find_action(
+        git_menu,
+        "Manage Branches",
+    ).trigger()
+
+    repository_content = _git_repository_content(
+        window,
+    )
+    assert (
+        repository_content._tabs.currentIndex()
+        == 0
+    )
+    assert not dock_widget.isHidden()
+
+
+def test_git_repository_settings_menu_action_shows_not_yet_available_message(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    git_menu = window.menus["git"]
+    git_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.help_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            git_menu,
+            "Repository Settings",
+        ).trigger()
+
+    mock_information.assert_called_once()
+
+
+def test_accessibility_settings_menu_action_shows_not_yet_available_message(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    accessibility_menu = window.menus["accessibility"]
+    accessibility_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.help_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            accessibility_menu,
+            "Accessibility Settings",
+        ).trigger()
+
+    mock_information.assert_called_once()
+
+
+def test_tools_plugins_menu_action_shows_not_yet_available_message(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.help_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            tools_menu,
+            "Plugins",
+        ).trigger()
+
+    mock_information.assert_called_once()
+
+
+def test_help_documentation_menu_action_shows_not_yet_available_message(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    help_menu = window.menus["help"]
+    help_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.help_commands.QMessageBox.information",
+    ) as mock_information:
+        _find_action(
+            help_menu,
+            "Documentation",
+        ).trigger()
+
+    mock_information.assert_called_once()
+
+
+def test_help_about_menu_action_shows_about_dialog(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    help_menu = window.menus["help"]
+    help_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.help_commands.QMessageBox.about",
+    ) as mock_about:
+        _find_action(
+            help_menu,
+            "About OpenCobol2",
+        ).trigger()
+
+    mock_about.assert_called_once()
+
+
+def test_help_keyboard_shortcuts_menu_action_opens_dialog(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    help_menu = window.menus["help"]
+    help_menu.aboutToShow.emit()
+
+    with patch(
+        "opencobol2.gui.help_commands.QDialog.exec",
+        return_value=0,
+    ) as mock_exec:
+        _find_action(
+            help_menu,
+            "Keyboard Shortcuts",
+        ).trigger()
+
+    mock_exec.assert_called_once()
+
+
+def test_theme_service_falls_back_to_default_theme_for_an_unknown_persisted_theme_id(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    settings_service.update_theme(
+        ThemeSettings(
+            active_theme_id="stale-removed-theme",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+
+    assert (
+        window._theme_service.active_theme.theme_id
+        == DEFAULT_THEME_ID
+    )
+
+
+def test_close_project_menu_action_closes_open_editor_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor_tabs.new_file()
+    assert editor_tabs.count() == 2
+
+    file_menu = window.menus["file"]
+    file_menu.aboutToShow.emit()
+    _find_action(
+        file_menu,
+        "Close Project",
+    ).trigger()
+
+    assert editor_tabs.count() == 0
+    assert (
+        _project_explorer_content(
+            window,
+        ).project
+        is None
     )

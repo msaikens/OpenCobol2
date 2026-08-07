@@ -21,6 +21,7 @@ from opencobol2.theming import (
     create_builtin_theme_registry,
     DARK_THEME_ID,
     LIGHT_THEME_ID,
+    ThemeRegistry,
 )
 
 
@@ -278,6 +279,44 @@ def test_apply_and_accept_clears_git_executable_path_when_blank(
     assert (
         reloaded.current.external_tools.git_executable_path
         is None
+    )
+
+
+def test_apply_and_accept_persists_nothing_when_a_later_section_fails_to_construct(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §Dialogs-3: the four `update_*` calls used to run
+    # back-to-back with zero exception handling -- a failure partway
+    # through (here, an empty theme registry makes the theme combo
+    # return `None`, so `ThemeSettings` raises `TypeError`) left
+    # earlier categories (Editor, here) already persisted to disk
+    # before the dialog ever surfaced an error.
+    service = _build_service(
+        tmp_path,
+    )
+    dialog = SettingsDialog(
+        settings_service=service,
+        theme_registry=ThemeRegistry(),
+    )
+    dialog._font_family_edit.setText(
+        "Comic Sans MS",
+    )
+
+    with patch(
+        "opencobol2.gui.settings_dialog.QMessageBox.critical",
+    ) as mock_critical:
+        dialog._apply_and_accept()
+
+    mock_critical.assert_called_once()
+    assert dialog.result() == 0
+
+    reloaded = SettingsService(
+        service.storage,
+    )
+    assert (
+        reloaded.current.editor.font_family
+        != "Comic Sans MS"
     )
 
 

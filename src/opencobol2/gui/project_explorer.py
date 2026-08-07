@@ -268,12 +268,18 @@ def populate_project_tree(
         )
 
         for linked_file in unreferenced_linked_files:
+            item = QTreeWidgetItem(
+                [
+                    linked_file.display_name,
+                ]
+            )
+            item.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                linked_file.target_path,
+            )
             linked_root.addChild(
-                QTreeWidgetItem(
-                    [
-                        linked_file.display_name,
-                    ]
-                )
+                item,
             )
 
     tree.expandItem(
@@ -371,12 +377,23 @@ def _add_virtual_folder(
         )
 
     for member_path in folder.member_paths:
+        # Editor §ProjectPanels-3: physical tree entries get
+        # `setData(0, UserRole, entry)` so the double-click handler's
+        # `isinstance(path, Path)` check finds it -- virtual-folder
+        # members never did, so double-clicking one always silently
+        # failed that check, unlike an ordinary file row.
+        item = QTreeWidgetItem(
+            [
+                member_path,
+            ]
+        )
+        item.setData(
+            0,
+            Qt.ItemDataRole.UserRole,
+            project.root_path / member_path,
+        )
         folder_item.addChild(
-            QTreeWidgetItem(
-                [
-                    member_path,
-                ]
-            )
+            item,
         )
 
     linked_files_by_id = {
@@ -390,12 +407,18 @@ def _add_virtual_folder(
         )
 
         if linked_file is not None:
+            item = QTreeWidgetItem(
+                [
+                    linked_file.display_name,
+                ]
+            )
+            item.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                linked_file.target_path,
+            )
             folder_item.addChild(
-                QTreeWidgetItem(
-                    [
-                        linked_file.display_name,
-                    ]
-                )
+                item,
             )
 
 

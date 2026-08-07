@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -81,6 +82,11 @@ class GdbAdapter:
             _PendingCommand,
         ] = {}
         self._pending_lock = threading.Lock()
+        # Editor §DebuggerCore-11: guards the actual `stdin.write()`/
+        # `flush()` pair below, which used to sit outside any lock --
+        # two threads calling `send_command` concurrently could in
+        # theory have their writes interleave at the OS level.
+        self._write_lock = threading.Lock()
         self._stopped_callbacks: list[
             Callable[[MIRecord], None]
         ] = []
@@ -137,6 +143,18 @@ class GdbAdapter:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # Editor §DebuggerCore-3: without a pinned `encoding=`,
+            # decoding falls back to the system's preferred encoding
+            # (`cp1252` on Windows), silently mangling non-ASCII text
+            # in a variable value or source path -- the same bug shape
+            # already found and fixed for Git's and the compiler
+            # process layer's own subprocess invocations, and worse
+            # here since `cp1252` leaves several byte values
+            # permanently undefined, raising `UnicodeDecodeError` from
+            # inside `_read_loop`'s own line-iteration, before its
+            # `except MIParseError` guard is ever reached.
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             env=(
                 dict(environment)
@@ -217,24 +235,56 @@ class GdbAdapter:
         assert self._process is not None
         assert self._process.stdin is not None
 
-        self._process.stdin.write(
-            f"{token}{command}\n",
-        )
-        self._process.stdin.flush()
+        with self._write_lock:
+            self._process.stdin.write(
+                f"{token}{command}\n",
+            )
+            self._process.stdin.flush()
 
-        if not pending.event.wait(
-            self._command_timeout_seconds,
+        # Editor §DebuggerCore-4: waiting the full configured timeout
+        # in one shot couldn't distinguish "GDB is slow" from "GDB
+        # already died" -- polling in short increments lets a process
+        # death be reported immediately, with a specific error,
+        # instead of wasting the rest of the timeout on a process that
+        # is never going to respond.
+        deadline = (
+            time.monotonic()
+            + self._command_timeout_seconds
+        )
+        poll_interval_seconds = 0.1
+
+        while not pending.event.wait(
+            min(
+                poll_interval_seconds,
+                max(
+                    deadline - time.monotonic(),
+                    0.0,
+                ),
+            )
         ):
-            with self._pending_lock:
-                self._pending.pop(
-                    token,
-                    None,
+            if time.monotonic() >= deadline:
+                with self._pending_lock:
+                    self._pending.pop(
+                        token,
+                        None,
+                    )
+
+                raise TimeoutError(
+                    f"GDB did not respond to {command!r} "
+                    f"within {self._command_timeout_seconds}s."
                 )
 
-            raise TimeoutError(
-                f"GDB did not respond to {command!r} "
-                f"within {self._command_timeout_seconds}s."
-            )
+            if not self.is_running:
+                with self._pending_lock:
+                    self._pending.pop(
+                        token,
+                        None,
+                    )
+
+                raise GdbNotRunningError(
+                    "GDB process exited while waiting "
+                    f"for a response to {command!r}."
+                )
 
         record = pending.record
         assert record is not None
@@ -265,10 +315,11 @@ class GdbAdapter:
                     self._process.stdin
                     is not None
                 )
-                self._process.stdin.write(
-                    "-gdb-exit\n",
-                )
-                self._process.stdin.flush()
+                with self._write_lock:
+                    self._process.stdin.write(
+                        "-gdb-exit\n",
+                    )
+                    self._process.stdin.flush()
 
             self._process.wait(
                 timeout=5,
@@ -283,6 +334,20 @@ class GdbAdapter:
                 self._reader_thread.join(
                     timeout=5,
                 )
+
+            # Editor §DebuggerCore-10: `start()`'s reuse guard checks
+            # `self._process is not None`, but this used to never reset
+            # it back to `None` -- so a fully-terminated adapter could
+            # never be `start()`-ed again, and the error it raised
+            # trying ("already started") was also factually wrong by
+            # that point. Any command still pending from the
+            # just-terminated session is discarded too, so it can't
+            # leak into a subsequent session on the same instance.
+            self._process = None
+            self._reader_thread = None
+
+            with self._pending_lock:
+                self._pending.clear()
 
     def _read_loop(
         self,
@@ -339,7 +404,8 @@ class GdbAdapter:
             for (
                 callback
             ) in self._stopped_callbacks:
-                callback(
+                self._invoke_observer(
+                    callback,
                     record,
                 )
 
@@ -351,7 +417,8 @@ class GdbAdapter:
             for (
                 callback
             ) in self._notify_callbacks:
-                callback(
+                self._invoke_observer(
+                    callback,
                     record,
                 )
 
@@ -363,6 +430,35 @@ class GdbAdapter:
             for (
                 callback
             ) in self._console_callbacks:
-                callback(
+                self._invoke_observer(
+                    callback,
                     record.text,
                 )
+
+    def _invoke_observer(
+        self,
+        callback: Callable[
+            [MIRecord | str],
+            None,
+        ],
+        argument: MIRecord | str,
+    ) -> None:
+        """Call one registered observer, isolating it from the reader loop.
+
+        Editor §DebuggerCore-1: an exception raised inside a registered
+        `on_stopped`/`on_notify`/`on_console_output` callback used to
+        propagate straight out of `_dispatch` into `_read_loop`, which
+        had no guard around it -- permanently and silently killing this
+        long-lived background thread, with no visible symptom except
+        every future command timing out after the full configured wait.
+        A raising observer must never be able to take down the whole
+        adapter, and must never prevent sibling observers registered
+        for the same record from still running.
+        """
+
+        try:
+            callback(
+                argument,
+            )
+        except Exception:
+            pass

@@ -48,12 +48,16 @@ _NAME_DATA_ROLE = Qt.ItemDataRole.UserRole
 # Every real Git failure this panel's mutating actions can trigger, besides
 # the domain-specific already-exists/not-found errors each action also
 # catches: a missing repository mid-operation, a missing `git` executable,
-# a failed command, or a timeout.
+# a failed command, a timeout, or a plain `ValueError` from the service
+# layer's own argument validation (e.g. a dash-prefixed branch/tag name --
+# Editor §GitPanels-1: that validation was added correctly at the service
+# layer, but this tuple was never updated for its exception type).
 _COMMON_GIT_ERRORS = (
     GitRepositoryNotFoundError,
     GitExecutableUnavailableError,
     GitCommandFailedError,
     GitCommandTimedOutError,
+    ValueError,
 )
 
 
@@ -177,6 +181,18 @@ class GitRepositoryWidget(QWidget):
         self._repository_path = path
         self.refresh()
 
+    def show_branches_tab(
+        self,
+    ) -> None:
+        """Switch to the Branches tab (a no-op with no repository open)."""
+
+        if self._repository_path is None:
+            return
+
+        self._tabs.setCurrentIndex(
+            0,
+        )
+
     def refresh(
         self,
     ) -> None:
@@ -202,7 +218,17 @@ class GitRepositoryWidget(QWidget):
                 self._repository_path,
                 max_count=100,
             )
-        except GitRepositoryNotFoundError:
+        except (
+            GitRepositoryNotFoundError,
+            GitExecutableUnavailableError,
+        ):
+            # Editor §GitPanels-2: only `GitRepositoryNotFoundError`
+            # (directory exists but isn't a Git worktree) was caught
+            # here -- if the directory itself vanishes out from under
+            # a still-open panel, the missing-executable-shaped
+            # `GitExecutableUnavailableError` propagated uncaught on
+            # the very next refresh instead of falling back to this
+            # same empty state.
             self._stack.setCurrentWidget(
                 self._empty_label,
             )

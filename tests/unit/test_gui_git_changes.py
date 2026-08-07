@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+from unittest.mock import patch
 
 import pytest
 
@@ -69,6 +70,57 @@ def test_widget_shows_empty_state_for_non_repository_path(
         git_service=GitService(),
         repository_path=tmp_path,
     )
+
+    assert (
+        widget._stack.currentWidget()
+        is widget._empty_label
+    )
+
+
+def test_refresh_falls_back_to_empty_state_when_the_repository_directory_vanishes(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §GitPanels-2: only `GitRepositoryNotFoundError` was
+    # caught here -- if the directory itself (not just `.git`)
+    # vanishes out from under a still-open panel, the
+    # missing-executable-shaped `GitExecutableUnavailableError`
+    # propagated uncaught on the very next refresh.
+    _init_repository(
+        tmp_path,
+    )
+    widget = GitChangesWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+    assert (
+        widget._stack.currentWidget()
+        is widget._content
+    )
+
+    import os
+    import shutil
+    import stat
+
+    def _force_remove(
+        func,
+        path,
+        _exc_info,
+    ) -> None:
+        os.chmod(
+            path,
+            stat.S_IWRITE,
+        )
+        func(
+            path,
+        )
+
+    shutil.rmtree(
+        tmp_path,
+        onexc=_force_remove,
+    )
+
+    widget.refresh()
 
     assert (
         widget._stack.currentWidget()
@@ -153,6 +205,41 @@ def test_double_click_stages_and_unstages_a_file(
 
     assert widget._staged_list.count() == 0
     assert widget._unstaged_list.count() == 1
+
+
+def test_staging_a_path_deleted_out_from_under_the_list_shows_an_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §GitPanels-3: `_stage_paths`/`_unstage_paths`/
+    # `_stage_all`/`_unstage_all` had zero exception handling at all,
+    # unlike `_commit` in this same file.
+    _init_repository(
+        tmp_path,
+    )
+    target_file = tmp_path / "main.cbl"
+    target_file.write_text(
+        "x",
+    )
+
+    widget = GitChangesWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+    item = widget._unstaged_list.item(
+        0,
+    )
+
+    target_file.unlink()
+
+    with patch(
+        "opencobol2.gui.git_changes.QMessageBox.critical",
+    ) as mock_critical:
+        widget._stage_item(
+            item,
+        )
+
+    mock_critical.assert_called_once()
 
 
 def test_stage_all_and_unstage_all_buttons(

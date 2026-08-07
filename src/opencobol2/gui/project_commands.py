@@ -18,6 +18,7 @@ from opencobol2.commands import (
     DynamicMenuItem,
 )
 from opencobol2.commands.builtins import BuiltInCommandIds
+from opencobol2.gui.editor import EditorTabsWidget
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import (
     create_project,
@@ -87,6 +88,7 @@ def create_project_open_handler(
     *,
     project_explorer: ProjectExplorerWidget,
     settings_service: SettingsService | None = None,
+    project_file_path_holder: list[Path | None] | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -134,6 +136,9 @@ def create_project_open_handler(
             )
             return None
 
+        if project_file_path_holder is not None:
+            project_file_path_holder[0] = project_path
+
         return project
 
     return handle_open_project
@@ -142,15 +147,34 @@ def create_project_open_handler(
 def create_project_close_handler(
     *,
     project_explorer: ProjectExplorerWidget,
+    editor_tabs_widget: EditorTabsWidget | None = None,
+    project_file_path_holder: list[Path | None] | None = None,
 ) -> CommandHandler:
-    """Create a handler that closes the currently open project."""
+    """Create a handler that closes the currently open project.
+
+    Editor §UIBootstrap-3: closing a project used to leave that
+    project's open editor tabs (and everything derived from them --
+    bookmarks, breakpoints, outline, debug state) completely
+    untouched, with no indication their owning project was gone.
+    `editor_tabs_widget`, when given, closes every open tab first
+    (reusing `close_all_documents()`'s existing unsaved-changes
+    Save/Discard/Cancel prompting) before the project itself closes --
+    optional only so existing callers that construct this handler
+    without an editor (if any) keep working unchanged.
+    """
 
     def handle_close_project(
         context: CommandContext,
     ) -> None:
+        if editor_tabs_widget is not None:
+            editor_tabs_widget.close_all_documents()
+
         project_explorer.set_project(
             None,
         )
+
+        if project_file_path_holder is not None:
+            project_file_path_holder[0] = None
 
     return handle_close_project
 
@@ -194,6 +218,7 @@ def create_project_new_handler(
     *,
     project_explorer: ProjectExplorerWidget,
     settings_service: SettingsService | None = None,
+    project_file_path_holder: list[Path | None] | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -270,6 +295,9 @@ def create_project_new_handler(
             project,
         )
 
+        if project_file_path_holder is not None:
+            project_file_path_holder[0] = project_file
+
         return project
 
     return handle_new_project
@@ -279,6 +307,7 @@ def create_project_save_as_handler(
     *,
     project_explorer: ProjectExplorerWidget,
     settings_service: SettingsService | None = None,
+    project_file_path_holder: list[Path | None] | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -339,6 +368,9 @@ def create_project_save_as_handler(
                 project_file,
             )
 
+        if project_file_path_holder is not None:
+            project_file_path_holder[0] = project_file
+
         return saved_project
 
     return handle_save_project_as
@@ -387,6 +419,7 @@ def create_project_open_recent_handler(
     *,
     project_explorer: ProjectExplorerWidget,
     settings_service: SettingsService,
+    project_file_path_holder: list[Path | None] | None = None,
     parent_widget_provider: Callable[
         [],
         QWidget | None,
@@ -424,6 +457,9 @@ def create_project_open_recent_handler(
                 ),
             )
             return None
+
+        if project_file_path_holder is not None:
+            project_file_path_holder[0] = project_path
 
         return project
 

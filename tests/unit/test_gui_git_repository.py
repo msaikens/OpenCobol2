@@ -412,6 +412,130 @@ def test_new_branch_cancelled_does_nothing(
     )
 
 
+def test_new_branch_with_a_dash_prefixed_name_shows_an_error_instead_of_crashing(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §GitPanels-1: `GitService.create_branch` correctly rejects
+    # a dash-prefixed ref name via a bare `ValueError`, but
+    # `_COMMON_GIT_ERRORS` never included it, so the error propagated
+    # all the way out of this handler uncaught.
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.git_repository."
+            "QInputDialog.getText",
+            return_value=(
+                "-weird",
+                True,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.git_repository."
+            "QMessageBox.critical",
+        ) as mock_critical,
+    ):
+        widget._new_branch()
+
+    mock_critical.assert_called_once()
+
+
+def test_new_tag_with_a_dash_prefixed_name_shows_an_error_instead_of_crashing(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.git_repository."
+            "QInputDialog.getText",
+            side_effect=[
+                (
+                    "-weird-tag",
+                    True,
+                ),
+                (
+                    "",
+                    True,
+                ),
+            ],
+        ),
+        patch(
+            "opencobol2.gui.git_repository."
+            "QMessageBox.critical",
+        ) as mock_critical,
+    ):
+        widget._new_tag()
+
+    mock_critical.assert_called_once()
+
+
+def test_refresh_falls_back_to_empty_state_when_the_repository_directory_vanishes(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §GitPanels-2: only `GitRepositoryNotFoundError` was
+    # caught here -- if the directory itself (not just `.git`)
+    # vanishes out from under a still-open panel, the
+    # missing-executable-shaped `GitExecutableUnavailableError`
+    # propagated uncaught on the very next refresh.
+    _init_repository_with_history(
+        tmp_path,
+    )
+    widget = GitRepositoryWidget(
+        git_service=GitService(),
+        repository_path=tmp_path,
+    )
+    assert (
+        widget._stack.currentWidget()
+        is widget._tabs
+    )
+
+    import os
+    import shutil
+    import stat
+
+    def _force_remove(
+        func,
+        path,
+        _exc_info,
+    ) -> None:
+        # Git marks its own object files read-only on Windows.
+        os.chmod(
+            path,
+            stat.S_IWRITE,
+        )
+        func(
+            path,
+        )
+
+    shutil.rmtree(
+        tmp_path,
+        onexc=_force_remove,
+    )
+
+    widget.refresh()
+
+    assert (
+        widget._stack.currentWidget()
+        is widget._empty_label
+    )
+
+
 def test_delete_branch_removes_it_when_confirmed(
     qapp,
     tmp_path: Path,

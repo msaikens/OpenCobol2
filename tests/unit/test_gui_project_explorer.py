@@ -495,6 +495,147 @@ def test_double_clicking_a_directory_emits_nothing(
     assert received == []
 
 
+def test_double_clicking_a_virtual_folder_member_emits_its_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §ProjectPanels-3: physical entries get
+    # `setData(0, UserRole, entry)` so the double-click handler's
+    # `isinstance(path, Path)` check finds it -- virtual-folder member
+    # rows never did, so double-clicking one always silently failed
+    # that check, with no visual indication it behaves differently
+    # from an ordinary file row.
+    (tmp_path / "src").mkdir()
+    (
+        tmp_path / "src" / "main.cbl"
+    ).write_text(
+        "x",
+    )
+    virtual_folder = VirtualFolder(
+        folder_id=uuid4(),
+        name="Sources",
+        member_paths=(
+            "src/main.cbl",
+        ),
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project = replace(
+        project,
+        virtual_folders=(
+            virtual_folder,
+        ),
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.file_double_clicked.connect(
+        received.append,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    virtual_root = next(
+        root_item.child(
+            index,
+        )
+        for index in range(
+            root_item.childCount(),
+        )
+        if root_item.child(
+            index,
+        ).text(
+            0,
+        )
+        == "Virtual Folders"
+    )
+    sources_item = virtual_root.child(
+        0,
+    )
+    member_item = sources_item.child(
+        0,
+    )
+    assert member_item.text(
+        0,
+    ) == "src/main.cbl"
+
+    widget._handle_item_double_clicked(
+        member_item,
+        0,
+    )
+
+    assert received == [
+        tmp_path / "src" / "main.cbl",
+    ]
+
+
+def test_double_clicking_a_linked_file_emits_its_target_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    target_path = (
+        tmp_path
+        / ".."
+        / "shared.cpy"
+    )
+    linked_file = LinkedFile(
+        linked_file_id=uuid4(),
+        display_name="shared.cpy",
+        target_path=target_path,
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project = replace(
+        project,
+        linked_files=(
+            linked_file,
+        ),
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+    received = []
+    widget.file_double_clicked.connect(
+        received.append,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    linked_root = next(
+        root_item.child(
+            index,
+        )
+        for index in range(
+            root_item.childCount(),
+        )
+        if root_item.child(
+            index,
+        ).text(
+            0,
+        )
+        == "Linked Files"
+    )
+    linked_item = linked_root.child(
+        0,
+    )
+
+    widget._handle_item_double_clicked(
+        linked_item,
+        0,
+    )
+
+    assert received == [
+        target_path,
+    ]
+
+
 def test_show_project_properties_emits_the_request_signal(
     qapp,
     tmp_path: Path,

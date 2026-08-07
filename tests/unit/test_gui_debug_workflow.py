@@ -198,3 +198,114 @@ def test_debug_menu_drives_a_real_session_end_to_end(
     finally:
         debug_menu.aboutToShow.emit()
         _find_action(debug_menu, "Stop Debugging").trigger()
+
+
+def test_stop_debugging_while_paused_clears_every_debug_panel(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §DebugGUI-1/2: ending a session any way other than a
+    # natural program exit -- i.e. clicking "Stop Debugging" while
+    # still paused at a breakpoint -- used to leave every debug panel
+    # showing the just-ended session's stale data indefinitely, with
+    # the Memory panel specifically never clearing under any
+    # circumstance at all, including the one path (natural exit) that
+    # already cleared the other five.
+    toolchain = discover_gnucobol()
+    gdb_path = shutil.which("gdb")
+
+    if toolchain is None or gdb_path is None:
+        pytest.skip(
+            "GnuCOBOL and/or gdb are not installed; skipping "
+            "real Debug menu integration test."
+        )
+
+    source_path = tmp_path / "demo.cbl"
+    source_path.write_text(_SOURCE)
+    settings_service = SettingsService(
+        SettingsStorage(tmp_path / "settings.json"),
+    )
+    project = create_project(name="Demo", root_path=tmp_path)
+
+    window = create_main_window(
+        settings_service=settings_service,
+        project=project,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.open_path(source_path)
+    editor = editor_tabs.widget(0)
+    editor.go_to_line(10)
+    editor.toggle_breakpoint_at_cursor()
+
+    call_stack_widget = window.dock_manager.get_dock_widget(
+        "call-stack",
+    ).widget()
+    locals_widget = window.dock_manager.get_dock_widget(
+        "locals",
+    ).widget()
+    threads_widget = window.dock_manager.get_dock_widget(
+        "threads",
+    ).widget()
+    registers_widget = window.dock_manager.get_dock_widget(
+        "registers",
+    ).widget()
+    watch_widget = window.dock_manager.get_dock_widget(
+        "watch",
+    ).widget()
+    memory_widget = window.dock_manager.get_dock_widget(
+        "memory",
+    ).widget()
+    output_widget = window.dock_manager.get_dock_widget(
+        "output",
+    ).widget()
+
+    debug_menu = window.menus["debug"]
+
+    with (
+        patch.object(QMessageBox, "warning", _fail_on_message_box),
+        patch.object(
+            QMessageBox, "information", _fail_on_message_box,
+        ),
+    ):
+        debug_menu.aboutToShow.emit()
+        _find_action(debug_menu, "Start Debugging").trigger()
+
+        assert _wait_until(
+            lambda: call_stack_widget.rowCount() > 0,
+        ), (
+            "Call Stack never populated after Start Debugging. "
+            f"Output so far:\n{output_widget.toPlainText()}"
+        )
+
+        watch_widget._input.setText("WS-B")
+        watch_widget._handle_add()
+        assert _wait_until(
+            lambda: watch_widget._table.rowCount() == 1
+            and watch_widget._table.item(0, 1).text() == "0020",
+        )
+
+        memory_widget._address_input.setText("&main")
+        memory_widget._handle_read()
+        assert memory_widget._output.toPlainText() != ""
+
+        # Every panel has real, non-empty data from the live,
+        # still-paused session before Stop Debugging runs.
+        assert call_stack_widget.rowCount() > 0
+        assert locals_widget.rowCount() > 0
+        assert threads_widget.rowCount() > 0
+        assert registers_widget.rowCount() > 0
+        assert watch_widget._table.rowCount() > 0
+
+        debug_menu.aboutToShow.emit()
+        _find_action(debug_menu, "Stop Debugging").trigger()
+
+        assert call_stack_widget.rowCount() == 0
+        assert locals_widget.rowCount() == 0
+        assert threads_widget.rowCount() == 0
+        assert registers_widget.rowCount() == 0
+        # `clear_watches()` deliberately keeps the expression row (so
+        # the user doesn't have to retype it next session) and only
+        # blanks its value -- unlike the other panels, which remove
+        # every row outright.
+        assert watch_widget._table.item(0, 1).text() == ""
+        assert memory_widget._output.toPlainText() == ""

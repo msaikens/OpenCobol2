@@ -29,6 +29,8 @@ from opencobol2.debugger.models import StopReason, StoppedEvent
 from opencobol2.documents import DocumentService
 from opencobol2.gui.build_commands import (
     create_build_project_handler,
+    create_clean_project_handler,
+    create_rebuild_project_handler,
 )
 from opencobol2.gui.call_stack_panel import CallStackWidget
 from opencobol2.gui.command_palette import (
@@ -57,7 +59,21 @@ from opencobol2.gui.editor import (
 )
 from opencobol2.gui.find_results_panel import FindResultsWidget
 from opencobol2.gui.git_changes import GitChangesWidget
+from opencobol2.gui.git_commands import (
+    create_clone_repository_handler,
+    create_create_repository_handler,
+    create_fetch_handler,
+    create_manage_branches_handler,
+    create_pull_handler,
+    create_push_handler,
+    create_sync_handler,
+)
 from opencobol2.gui.git_repository import GitRepositoryWidget
+from opencobol2.gui.help_commands import (
+    create_not_yet_available_handler,
+    create_show_about_handler,
+    create_show_keyboard_shortcuts_handler,
+)
 from opencobol2.gui.locals_panel import LocalsWidget
 from opencobol2.gui.main_window import MainWindow
 from opencobol2.gui.memory_panel import MemoryWidget
@@ -88,7 +104,7 @@ from opencobol2.gui.task_list_panel import TaskListWidget
 from opencobol2.gui.terminal_panel import TerminalWidget
 from opencobol2.gui.threads_panel import ThreadsWidget
 from opencobol2.gui.watch_panel import WatchWidget
-from opencobol2.project import Project
+from opencobol2.project import Project, ProjectStorage
 from opencobol2.services.accessibility import AccessibilityService
 from opencobol2.services.command_contributions import (
     CommandContributionService,
@@ -119,7 +135,11 @@ from opencobol2.status_bar import (
     StatusBarItemDefinition,
     StatusBarItemRegistry,
 )
-from opencobol2.theming import create_builtin_theme_registry
+from opencobol2.theming import (
+    DEFAULT_THEME_ID,
+    ThemeNotFoundError,
+    create_builtin_theme_registry,
+)
 from opencobol2.tool_windows.builtins import (
     BuiltInToolWindowIds,
     create_builtin_tool_window_registry,
@@ -324,14 +344,34 @@ def create_main_window(
     # services) because nothing about it depends on them, and both the
     # editor's initial colors and the Settings dialog's handler need a live
     # ThemeService to read and switch themes.
+    #
+    # Editor §UIBootstrap-2: `ThemeService.__init__` resolves
+    # `initial_theme_id` against the registry eagerly and unguarded --
+    # a persisted `settings.json` referencing a since-removed or
+    # otherwise unregistered theme ID used to crash the entire
+    # application launch with an uncaught `ThemeNotFoundError`. Every
+    # comparable resolution elsewhere in this file (compiler profiles,
+    # Git repository discovery) is already validated with a fallback
+    # before use; this one wasn't.
+    _builtin_theme_registry = create_builtin_theme_registry()
+    _persisted_theme_id = (
+        resolved_settings_service
+        .current
+        .theme
+        .active_theme_id
+    )
+
+    try:
+        _builtin_theme_registry.get(
+            _persisted_theme_id,
+        )
+        _initial_theme_id = _persisted_theme_id
+    except ThemeNotFoundError:
+        _initial_theme_id = DEFAULT_THEME_ID
+
     theme_service = ThemeService(
-        registry=create_builtin_theme_registry(),
-        initial_theme_id=(
-            resolved_settings_service
-            .current
-            .theme
-            .active_theme_id
-        ),
+        registry=_builtin_theme_registry,
+        initial_theme_id=_initial_theme_id,
     )
 
     project_explorer = ProjectExplorerWidget(
@@ -443,6 +483,14 @@ def create_main_window(
     command_service_holder: list[
         CommandService | None
     ] = [None]
+    # Editor §ProjectPanels-1: nothing tracked which file the open
+    # project was loaded from at all, so even a well-intentioned
+    # Project Properties persistence fix had no path to save back to
+    # without this. Updated by every real Open/New/Save-As/Open-Recent
+    # Project handler below and cleared on Close Project.
+    project_file_path_holder: list[
+        Path | None
+    ] = [None]
 
     def _reveal_find_results() -> None:
         """Force the Find Results dock panel visible after a search runs.
@@ -462,6 +510,24 @@ def create_main_window(
         dock_widget = (
             main_window.dock_manager.get_dock_widget(
                 BuiltInToolWindowIds.FIND_RESULTS,
+            )
+        )
+        dock_widget.setVisible(
+            True,
+        )
+        dock_widget.raise_()
+
+    def _reveal_git_repository_panel() -> None:
+        """Force the Git Repository dock panel visible, mirroring `_reveal_find_results`."""
+
+        main_window = main_window_holder[0]
+
+        if main_window is None:
+            return
+
+        dock_widget = (
+            main_window.dock_manager.get_dock_widget(
+                BuiltInToolWindowIds.GIT_REPOSITORY,
             )
         )
         dock_widget.setVisible(
@@ -511,6 +577,34 @@ def create_main_window(
             stripped_new_name,
         )
 
+    def _handle_go_to_line() -> None:
+        """Prompt for a line number and move the active tab's cursor there."""
+
+        editor = editor_tabs_widget.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return
+
+        line_count = editor.document().blockCount()
+        line_number, accepted = QInputDialog.getInt(
+            main_window_holder[0],
+            "Go to Line",
+            f"Line number (1-{line_count}):",
+            1,
+            1,
+            line_count,
+        )
+
+        if not accepted:
+            return
+
+        editor_tabs_widget.go_to_line_on_active_tab(
+            line_number,
+        )
+
     def _handle_file_print() -> None:
         """Print the active tab's document contents, after a Print dialog."""
 
@@ -546,6 +640,26 @@ def create_main_window(
             project_explorer.set_project(
                 dialog.updated_project,
             )
+
+            # Editor §ProjectPanels-1: this used to only update
+            # in-memory state -- reloading the same project file
+            # afterward showed the change was completely discarded,
+            # with no separate "Save Project" command anywhere to
+            # perform one. `project_file_path_holder` is unset only
+            # for a project seeded directly into `create_main_window()`
+            # with no known backing file (mainly a test/embedding
+            # scenario); there is genuinely nowhere to save back to
+            # in that case.
+            project_file_path = (
+                project_file_path_holder[0]
+            )
+
+            if project_file_path is not None:
+                ProjectStorage(
+                    project_file_path,
+                ).save(
+                    dialog.updated_project,
+                )
 
     project_explorer.project_properties_requested.connect(
         _handle_show_project_properties,
@@ -682,6 +796,9 @@ def create_main_window(
                             settings_service=(
                                 resolved_settings_service
                             ),
+                            project_file_path_holder=(
+                                project_file_path_holder
+                            ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),
@@ -690,6 +807,10 @@ def create_main_window(
                     BuiltInCommandIds.PROJECT_CLOSE: (
                         create_project_close_handler(
                             project_explorer=project_explorer,
+                            editor_tabs_widget=editor_tabs_widget,
+                            project_file_path_holder=(
+                                project_file_path_holder
+                            ),
                         )
                     ),
                     BuiltInCommandIds.PROJECT_NEW: (
@@ -697,6 +818,9 @@ def create_main_window(
                             project_explorer=project_explorer,
                             settings_service=(
                                 resolved_settings_service
+                            ),
+                            project_file_path_holder=(
+                                project_file_path_holder
                             ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
@@ -709,6 +833,9 @@ def create_main_window(
                             settings_service=(
                                 resolved_settings_service
                             ),
+                            project_file_path_holder=(
+                                project_file_path_holder
+                            ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),
@@ -719,6 +846,9 @@ def create_main_window(
                             project_explorer=project_explorer,
                             settings_service=(
                                 resolved_settings_service
+                            ),
+                            project_file_path_holder=(
+                                project_file_path_holder
                             ),
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
@@ -830,6 +960,252 @@ def create_main_window(
                     BuiltInCommandIds.DEBUG_STEP_OUT: (
                         create_debug_step_out_handler(
                             debug_controller=debug_controller,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    # Editor §UIBootstrap-1: everything below this
+                    # line previously had no handler at all -- each
+                    # raised `BuiltInCommandHandlerNotConfiguredError`
+                    # when triggered, silently swallowed by PySide6's
+                    # own slot-exception reporter.
+                    BuiltInCommandIds.APPLICATION_EXIT: (
+                        lambda context: (
+                            main_window_holder[0].close()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_UNDO: (
+                        lambda context: (
+                            editor_tabs_widget.undo_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_REDO: (
+                        lambda context: (
+                            editor_tabs_widget.redo_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_CUT: (
+                        lambda context: (
+                            editor_tabs_widget.cut_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_COPY: (
+                        lambda context: (
+                            editor_tabs_widget.copy_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_PASTE: (
+                        lambda context: (
+                            editor_tabs_widget.paste_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_DELETE: (
+                        lambda context: (
+                            editor_tabs_widget
+                            .delete_selection_on_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_SELECT_ALL: (
+                        lambda context: (
+                            editor_tabs_widget
+                            .select_all_on_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_GO_TO: (
+                        lambda context: (
+                            _handle_go_to_line()
+                        )
+                    ),
+                    BuiltInCommandIds.FILE_OPEN_RECENT: (
+                        create_not_yet_available_handler(
+                            "Open Recent File",
+                            "There is no recent-files list yet -- "
+                            "use File > Open Recent Project, or "
+                            "File > Open.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.BUILD_CLEAN_PROJECT: (
+                        create_clean_project_handler(
+                            project_explorer=project_explorer,
+                            output_widget=output_widget,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.BUILD_REBUILD_PROJECT: (
+                        create_rebuild_project_handler(
+                            project_explorer=project_explorer,
+                            output_widget=output_widget,
+                            problems_widget=problems_widget,
+                            runtime_activation_service=(
+                                compiler_runtime_activation_service
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.BUILD_RUN: (
+                        create_not_yet_available_handler(
+                            "Run",
+                            "Running a compiled program outside the "
+                            "debugger isn't implemented yet -- use "
+                            "Debug > Start Debugging.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.BUILD_STOP: (
+                        create_not_yet_available_handler(
+                            "Stop",
+                            "Running a compiled program outside the "
+                            "debugger isn't implemented yet -- use "
+                            "Debug > Stop Debugging.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_FETCH: (
+                        create_fetch_handler(
+                            git_service=git_service,
+                            project_explorer=project_explorer,
+                            git_changes_widget=git_changes_widget,
+                            git_repository_widget=(
+                                git_repository_widget
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_PULL: (
+                        create_pull_handler(
+                            git_service=git_service,
+                            project_explorer=project_explorer,
+                            git_changes_widget=git_changes_widget,
+                            git_repository_widget=(
+                                git_repository_widget
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_PUSH: (
+                        create_push_handler(
+                            git_service=git_service,
+                            project_explorer=project_explorer,
+                            git_changes_widget=git_changes_widget,
+                            git_repository_widget=(
+                                git_repository_widget
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_SYNC: (
+                        create_sync_handler(
+                            git_service=git_service,
+                            project_explorer=project_explorer,
+                            git_changes_widget=git_changes_widget,
+                            git_repository_widget=(
+                                git_repository_widget
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_CLONE_REPOSITORY: (
+                        create_clone_repository_handler(
+                            git_service=git_service,
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_CREATE_REPOSITORY: (
+                        create_create_repository_handler(
+                            git_service=git_service,
+                            project_explorer=project_explorer,
+                            git_changes_widget=git_changes_widget,
+                            git_repository_widget=(
+                                git_repository_widget
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_MANAGE_BRANCHES: (
+                        create_manage_branches_handler(
+                            git_repository_widget=(
+                                git_repository_widget
+                            ),
+                            reveal_git_repository_panel=(
+                                _reveal_git_repository_panel
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.GIT_REPOSITORY_SETTINGS: (
+                        create_not_yet_available_handler(
+                            "Repository Settings",
+                            "Per-repository Git settings aren't "
+                            "implemented yet.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.ACCESSIBILITY_SETTINGS: (
+                        create_not_yet_available_handler(
+                            "Accessibility Settings",
+                            "No accessibility profiles are "
+                            "configured yet.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.TOOLS_PLUGINS: (
+                        create_not_yet_available_handler(
+                            "Plugins",
+                            "The extension/plugin system isn't "
+                            "implemented yet.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.HELP_DOCUMENTATION: (
+                        create_not_yet_available_handler(
+                            "Documentation",
+                            "There is no user documentation yet.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.HELP_KEYBOARD_SHORTCUTS: (
+                        create_show_keyboard_shortcuts_handler(
+                            command_service_provider=(
+                                lambda: command_service_holder[0]
+                            ),
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.HELP_ABOUT: (
+                        create_show_about_handler(
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),
@@ -955,6 +1331,15 @@ def create_main_window(
 
         window.refresh_status_bar()
 
+        # Editor §ProjectPanels-2: neither panel was wired to clear on
+        # a project switch -- only `build_commands.py`'s own clear
+        # calls at the *start* of the next build ever touched them, so
+        # a closed or replaced project's stale build transcript and
+        # diagnostics stayed on screen until the next build happened
+        # to run.
+        output_widget.clear()
+        problems_widget.clear_diagnostics()
+
         repository_path = _discover_repository_path(
             git_service,
             changed_project,
@@ -976,6 +1361,12 @@ def create_main_window(
             else None
         )
         _refresh_task_list()
+        # Editor §SearchOutlineTasks-1: Task List already had this
+        # hook and correctly clears on a project switch; Find Results
+        # was simply missing the equivalent one-line call, so it kept
+        # showing a closed/replaced project's stale search results
+        # indefinitely.
+        find_results_widget.clear_results()
 
     project_explorer.project_changed.connect(
         _on_project_changed,
@@ -1182,6 +1573,21 @@ def create_main_window(
         threads_widget.clear_threads()
         registers_widget.clear_registers()
         watch_widget.clear_watches()
+        # Editor §DebugGUI-2: the Memory panel was never included here,
+        # so it kept showing a dead session's stale hex dump even on
+        # the one path (natural program exit) that already cleared
+        # every other panel.
+        memory_widget.clear_memory()
+
+    # Editor §DebugGUI-1: `stop()` is the one place every
+    # session-ending path (natural exit below, and the manual "Stop
+    # Debugging" command in debug_commands.py) already funnels
+    # through -- connecting the panel clear to its `session_ended`
+    # signal here covers both, instead of only the exited-normally
+    # branch below as before.
+    debug_controller.session_ended.connect(
+        _clear_debug_panels,
+    )
 
     def _handle_debug_stopped(
         event: StoppedEvent,
@@ -1200,7 +1606,6 @@ def create_main_window(
                 f"{event.reason.value}{exit_detail}.",
             )
             debug_controller.stop()
-            _clear_debug_panels()
             return
 
         call_stack_widget.set_frames(

@@ -81,7 +81,12 @@ def collect_local_variables(
 
         try:
             variables.append(controller.read_variable(symbol.name))
-        except DebuggerServiceError:
+        except DEBUG_SESSION_ERRORS:
+            # Editor §DebugGUI-3: `read_variable` can also raise
+            # `GdbAdapterError`/`GdbNotRunningError`/`TimeoutError` from
+            # the underlying memory read, not just `DebuggerServiceError`
+            # -- catching only the latter let one flaky read escape
+            # uncaught and abort collecting every other local variable.
             continue
 
     return tuple(variables)
@@ -102,7 +107,12 @@ def evaluate_watch_expressions(
                 WatchExpression(expression=expression, value=variable.value),
             )
             continue
-        except DebuggerServiceError:
+        except DEBUG_SESSION_ERRORS:
+            # Editor §DebugGUI-3: mirrors the identical fix in
+            # `collect_local_variables` -- `read_variable` can raise
+            # any of `DEBUG_SESSION_ERRORS`, not just
+            # `DebuggerServiceError`, before falling back to a raw GDB
+            # expression evaluation below.
             pass
 
         try:
@@ -166,6 +176,22 @@ def create_debug_start_handler(
                     editor.document_id,
                 )
             )
+
+            # Editor §DebugGUI-5: `save_active_document()` can fail
+            # (e.g. a read-only file) and only reports that failure via
+            # its own `QMessageBox.critical`, leaving the document
+            # still modified -- proceeding regardless used to silently
+            # compile and debug whatever was already on disk, which
+            # can differ from what the editor shows, with no further
+            # warning once that dialog is dismissed.
+            if workspace_document.document.is_modified:
+                QMessageBox.warning(
+                    parent_widget,
+                    "Start Debugging",
+                    "The active file could not be saved -- fix the "
+                    "save error and try again.",
+                )
+                return
 
         source_path = workspace_document.document.path
 

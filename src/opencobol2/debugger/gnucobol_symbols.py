@@ -10,6 +10,26 @@ a `/* WS-A */` comment on the buffer's own declaration line, in the
 when built with `-g`. This module parses those comments to recover the
 mapping -- verified against real `cobc`-generated headers, not a
 guessed format.
+
+Editor §DebuggerLogic-1/3: a top-level elementary item gets its own
+dedicated `cob_u8_t` buffer, matched by `_BUFFER_DECLARATION_PATTERN`
+below -- but an elementary item *nested inside a group* (or a
+REDEFINES view of another item) instead gets a `cob_field` struct
+literal pointing into the group's own buffer, optionally with a
+constant byte offset (`{size, buffer + offset, &attr}`), matched by
+`_FIELD_DECLARATION_PATTERN`. Verified against real `cobc 3.2.0`
+output across one, two, and three levels of group nesting: every
+level's offset is always flattened back to the single outermost
+buffer directly (never through an intermediate group's own symbol),
+so matching this one pattern recovers a nested item regardless of how
+deeply it's nested. This only recovers items GnuCOBOL actually chose
+to give a `cob_field` for in the first place -- confirmed by real
+compiles, a plain alphanumeric (`PIC X`) item nested in a group gets
+neither a buffer nor a `cob_field` at all, and an OCCURS table
+element's per-occurrence offset is computed inline at every use site
+in the generated C with no static symbol whatsoever, for any usage
+type -- both are a genuine absence in `cobc`'s own debug output, not
+a gap in this parser, and there is nothing here to recover.
 """
 
 from __future__ import annotations
@@ -21,6 +41,15 @@ from dataclasses import dataclass
 _BUFFER_DECLARATION_PATTERN = re.compile(
     r"static\s+cob_u8_t\s+(?P<variable>b_\d+)"
     r"\s*\[\s*(?P<size>\d+)\s*\]"
+    r"[^/\n]*/\*\s*(?P<name>[^*]+?)\s*\*/",
+)
+
+_FIELD_DECLARATION_PATTERN = re.compile(
+    r"static\s+cob_field\s+\w+\s*=\s*\{\s*"
+    r"(?P<size>\d+)\s*,\s*"
+    r"(?P<base>b_\d+)"
+    r"(?:\s*\+\s*(?P<offset>\d+))?"
+    r"\s*,\s*&\w+\s*\}"
     r"[^/\n]*/\*\s*(?P<name>[^*]+?)\s*\*/",
 )
 
@@ -74,6 +103,54 @@ def parse_generated_symbol_map(
                     buffer_variable=match.group(
                         "variable",
                     ),
+                    byte_length=int(
+                        match.group(
+                            "size",
+                        ),
+                    ),
+                )
+            )
+
+        for match in (
+            _FIELD_DECLARATION_PATTERN.finditer(
+                header_text,
+            )
+        ):
+            cobol_name = (
+                match.group(
+                    "name",
+                )
+                .strip()
+                .upper()
+            )
+
+            if not cobol_name:
+                continue
+
+            base = match.group(
+                "base",
+            )
+            offset = match.group(
+                "offset",
+            )
+            # GDB's own expression evaluator understands this exact
+            # pointer-arithmetic shape (`buffer+N`), matching how
+            # `cobc`'s generated C itself computes the field's base
+            # address -- passed straight through as the address
+            # argument to a later `-data-read-memory-bytes` command,
+            # no separate offset field needed on this dataclass. No
+            # space around `+`: MI commands are whitespace-delimited,
+            # so a space here would split this into two arguments.
+            buffer_expression = (
+                base
+                if offset is None
+                else f"{base}+{offset}"
+            )
+
+            symbols[cobol_name] = (
+                GeneratedFieldSymbol(
+                    cobol_name=cobol_name,
+                    buffer_variable=buffer_expression,
                     byte_length=int(
                         match.group(
                             "size",

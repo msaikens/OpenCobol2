@@ -368,7 +368,24 @@ class CompilerProfilesDialog(QDialog):
         self,
         row: int,
     ) -> None:
-        self._commit_current_profile_from_form()
+        if not self._commit_current_profile_from_form():
+            # Move the visible selection back to the row whose form
+            # data just failed to commit -- without touching the form
+            # itself, which still holds the user's unsaved, invalid
+            # text so they can see and fix it.
+            self._profile_list.blockSignals(
+                True,
+            )
+            self._profile_list.setCurrentRow(
+                self._active_row
+                if self._active_row is not None
+                else -1,
+            )
+            self._profile_list.blockSignals(
+                False,
+            )
+            return
+
         self._active_row = (
             row if row >= 0 else None
         )
@@ -446,13 +463,27 @@ class CompilerProfilesDialog(QDialog):
 
     def _commit_current_profile_from_form(
         self,
-    ) -> None:
+    ) -> bool:
+        """Write the form's current field values back into `_profiles`.
+
+        Editor §Dialogs-1: a malformed field (or any other parse
+        error) used to raise straight out of this method, uncaught by
+        any of its four callers -- inside `_on_selection_changed` that
+        left the widget's visible selection and `_active_row` out of
+        sync with each other for every edit afterward, and inside
+        `_apply_and_accept` it meant clicking OK silently did nothing.
+        Errors are now caught here, shown once via a critical dialog,
+        and reported to the caller via the return value instead, so
+        every caller can abort its own action cleanly without
+        touching `_active_row` or the form.
+        """
+
         row = self._active_row
 
         if row is None or not (
             0 <= row < len(self._profiles)
         ):
-            return
+            return True
 
         profile = self._profiles[row]
         provider = self._provider_registry.get(
@@ -461,39 +492,53 @@ class CompilerProfilesDialog(QDialog):
 
         configuration = {}
 
-        for field in provider.configuration_fields:
-            widget = self._field_widgets.get(
-                field.key,
+        try:
+            for field in provider.configuration_fields:
+                widget = self._field_widgets.get(
+                    field.key,
+                )
+
+                if widget is None:
+                    continue
+
+                value = _read_field_value(
+                    field,
+                    widget,
+                )
+
+                if value is not None:
+                    configuration[
+                        field.key
+                    ] = value
+
+            display_name = (
+                self._display_name_edit.text().strip()
+                or profile.display_name
             )
 
-            if widget is None:
-                continue
-
-            value = _read_field_value(
-                field,
-                widget,
+            self._profiles[row] = replace(
+                profile,
+                display_name=display_name,
+                configuration=configuration,
             )
+        except (
+            TypeError,
+            ValueError,
+        ) as error:
+            QMessageBox.critical(
+                self,
+                "Compiler Profiles",
+                f"{profile.display_name}: {error}",
+            )
+            return False
 
-            if value is not None:
-                configuration[
-                    field.key
-                ] = value
-
-        display_name = (
-            self._display_name_edit.text().strip()
-            or profile.display_name
-        )
-
-        self._profiles[row] = replace(
-            profile,
-            display_name=display_name,
-            configuration=configuration,
-        )
+        return True
 
     def _add_profile(
         self,
     ) -> None:
-        self._commit_current_profile_from_form()
+        if not self._commit_current_profile_from_form():
+            return
 
         providers = self._provider_registry.providers
         names = [
@@ -585,7 +630,9 @@ class CompilerProfilesDialog(QDialog):
         ):
             return
 
-        self._commit_current_profile_from_form()
+        if not self._commit_current_profile_from_form():
+            return
+
         self._default_profile_id = (
             self._profiles[row].profile_id
         )
@@ -597,7 +644,8 @@ class CompilerProfilesDialog(QDialog):
     def _apply_and_accept(
         self,
     ) -> None:
-        self._commit_current_profile_from_form()
+        if not self._commit_current_profile_from_form():
+            return
 
         for profile in self._profiles:
             try:
@@ -821,7 +869,31 @@ def _read_field_value(
             key, _, item_value = stripped.partition(
                 "=",
             )
-            mapping[key.strip()] = item_value.strip()
+            normalized_key = key.strip()
+
+            # Editor §Dialogs-1/2: an empty key used to sail through
+            # here cleanly and only blow up two calls later inside
+            # `dataclasses.replace`'s own re-validation, with a
+            # message that doesn't point back at this field or line
+            # at all; a duplicate key used to silently overwrite the
+            # earlier value with no rejection and no warning,
+            # discarding it before any downstream layer could ever
+            # detect it happened.
+            if not normalized_key:
+                raise ValueError(
+                    f"{field.title} has an entry with no key: "
+                    f"{stripped!r}."
+                )
+
+            if normalized_key in mapping:
+                raise ValueError(
+                    f"{field.title} has a duplicate key: "
+                    f"{normalized_key!r}."
+                )
+
+            mapping[normalized_key] = (
+                item_value.strip()
+            )
 
         return mapping or None
 

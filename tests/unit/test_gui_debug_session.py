@@ -184,6 +184,41 @@ def test_pass_through_methods_require_an_active_session(qapp) -> None:
         controller.add_breakpoint(1)
 
 
+def test_sync_breakpoints_is_a_no_op_with_no_active_session(qapp) -> None:
+    # Editor §DebugGUI-4: a "reconcile" operation's natural behavior
+    # for "no active session to reconcile against" is a no-op, not a
+    # raised error -- this used to raise `DebugSessionError` via
+    # `add_breakpoint`'s own active-session requirement instead.
+    controller = DebugSessionController()
+
+    controller.sync_breakpoints((10, 20))
+
+
+def test_stop_emits_session_ended(qapp) -> None:
+    # Editor §DebugGUI-1: `stop()` is the one place every
+    # session-ending path funnels through -- a listener (the
+    # application's own debug-panel-clearing logic) relies on this
+    # signal firing every time `stop()` runs.
+    controller = DebugSessionController()
+    controller.start(
+        _FakeDebuggerService(),
+        source_path=Path("demo.cbl"),
+        document_id=uuid4(),
+    )
+
+    received_count = 0
+
+    def _increment() -> None:
+        nonlocal received_count
+        received_count += 1
+
+    controller.session_ended.connect(_increment)
+
+    controller.stop()
+
+    assert received_count == 1
+
+
 def test_stopped_signal_forwards_the_service_callback(qapp) -> None:
     controller = DebugSessionController()
     service = _FakeDebuggerService()

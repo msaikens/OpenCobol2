@@ -11,6 +11,7 @@ from opencobol2.commands import (
     CommandContribution,
     CommandContributionRegistry,
     CommandRegistry,
+    CommandState,
     CommandSurfaceKind,
 )
 from opencobol2.gui.main_window import MainWindow
@@ -143,6 +144,106 @@ def test_main_window_builds_menus_toolbars_and_docks(
         window.windowTitle()
         == "OpenCobol2"
     )
+
+
+def test_toolbar_refresh_timer_only_runs_when_toolbars_exist(
+    qapp,
+) -> None:
+    (
+        contribution_service,
+        tool_window_service,
+        theme_service,
+    ) = _build_services()
+
+    window_with_toolbar = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+        toolbar_surface_ids=(
+            "main",
+        ),
+    )
+    window_without_toolbar = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+    )
+
+    assert (
+        window_with_toolbar._toolbar_refresh_timer.isActive()
+        is True
+    )
+    assert (
+        window_without_toolbar._toolbar_refresh_timer.isActive()
+        is False
+    )
+
+
+def test_refresh_toolbars_reflects_live_command_state(
+    qapp,
+) -> None:
+    # Editor §UIShell-3: `build_toolbar()` used to run exactly once, at
+    # construction time -- a command's `enabled` state flipping at
+    # runtime never reached an already-built toolbar action, unlike the
+    # equivalent menu action (which always rebuilds fresh on its next
+    # real `aboutToShow`).
+    enabled = True
+    command_registry = CommandRegistry()
+    command_registry.register(
+        Command(
+            command_id="test.new",
+            title="New",
+            handler=lambda context: "new",
+            state_provider=(
+                lambda context: CommandState(
+                    enabled=enabled,
+                )
+            ),
+        )
+    )
+
+    contribution_registry = CommandContributionRegistry()
+    contribution_registry.register(
+        CommandContribution(
+            contribution_id="toolbar.main.new",
+            command_id="test.new",
+            surface_kind=CommandSurfaceKind.TOOLBAR,
+            surface_id="main",
+        )
+    )
+
+    contribution_service = CommandContributionService(
+        command_service=CommandService(
+            registry=command_registry,
+        ),
+        contribution_registry=contribution_registry,
+    )
+    tool_window_service = ToolWindowService(
+        registry=ToolWindowRegistry(),
+    )
+    theme_service = ThemeService(
+        registry=create_builtin_theme_registry(),
+        initial_theme_id=DARK_THEME_ID,
+    )
+
+    window = MainWindow(
+        contribution_service=contribution_service,
+        tool_window_service=tool_window_service,
+        theme_service=theme_service,
+        top_level_menus=(),
+        toolbar_surface_ids=(
+            "main",
+        ),
+    )
+    toolbar = window.toolbars["main"]
+    assert toolbar.actions()[0].isEnabled() is True
+
+    enabled = False
+    window.refresh_toolbars()
+
+    assert toolbar.actions()[0].isEnabled() is False
 
 
 def test_main_window_applies_active_theme(

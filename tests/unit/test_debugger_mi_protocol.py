@@ -276,3 +276,66 @@ def test_trailing_garbage_raises_mi_parse_error() -> None:
         parse_mi_line(
             '^done,a="1"trailing',
         )
+
+
+def test_deeply_nested_mi_value_raises_mi_parse_error_not_recursion_error() -> (
+    None
+):
+    # Editor §DebuggerCore-2: a pathologically deep MI value used to
+    # raise an uncaught `RecursionError` instead of `MIParseError`,
+    # which would have escaped the adapter's own exception guard and
+    # killed its background reader thread.
+    nesting_depth = 300
+    deeply_nested = (
+        '^done,a='
+        + "{x=" * nesting_depth
+        + '"1"'
+        + "}" * nesting_depth
+    )
+
+    with pytest.raises(
+        MIParseError,
+    ):
+        parse_mi_line(
+            deeply_nested,
+        )
+
+
+def test_moderately_nested_mi_value_still_parses() -> None:
+    nesting_depth = 50
+    moderately_nested = (
+        '^done,a='
+        + "{x=" * nesting_depth
+        + '"1"'
+        + "}" * nesting_depth
+    )
+
+    record = parse_mi_line(
+        moderately_nested,
+    )
+
+    assert record is not None
+    assert record.klass == "done"
+
+
+def test_parses_an_octal_escape_in_a_c_string() -> None:
+    # Editor §DebuggerCore-9: GDB emits a real octal escape (1-3 octal
+    # digits) for a non-printable byte inside an evaluated string --
+    # e.g. a COBOL field containing control characters. The escaped
+    # digits must decode to the one control byte they represent, not
+    # be kept as literal digit characters.
+    record = parse_mi_line(
+        r'~"a\001b"',
+    )
+
+    assert record is not None
+    assert record.text == "a\x01b"
+
+
+def test_parses_a_three_digit_octal_escape_in_a_c_string() -> None:
+    record = parse_mi_line(
+        r'~"\377"',
+    )
+
+    assert record is not None
+    assert record.text == "\xff"

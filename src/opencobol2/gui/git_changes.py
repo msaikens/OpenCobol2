@@ -25,7 +25,9 @@ from opencobol2.git import (
 )
 from opencobol2.services.git import (
     GitCommandFailedError,
+    GitCommandTimedOutError,
     GitCommitMessageError,
+    GitExecutableUnavailableError,
     GitNothingToCommitError,
     GitRepositoryNotFoundError,
     GitService,
@@ -44,6 +46,18 @@ _STATUS_LABELS = {
 }
 
 _PATH_DATA_ROLE = Qt.ItemDataRole.UserRole
+
+# Editor §GitPanels-3: `_stage_paths`/`_unstage_paths`/`_stage_all`/
+# `_unstage_all` had zero exception handling at all, unlike `_commit` in
+# this same file -- any real Git failure during them (a path deleted out
+# from under a stale list, a vanished repository directory, a timeout)
+# propagated completely uncaught.
+_COMMON_GIT_ERRORS = (
+    GitRepositoryNotFoundError,
+    GitExecutableUnavailableError,
+    GitCommandFailedError,
+    GitCommandTimedOutError,
+)
 
 
 class GitChangesWidget(QWidget):
@@ -214,7 +228,17 @@ class GitChangesWidget(QWidget):
             status = self._git_service.get_status(
                 self._repository_path,
             )
-        except GitRepositoryNotFoundError:
+        except (
+            GitRepositoryNotFoundError,
+            GitExecutableUnavailableError,
+        ):
+            # Editor §GitPanels-2: only `GitRepositoryNotFoundError`
+            # was caught here -- if the repository's directory itself
+            # (not just `.git`) vanishes out from under a still-open
+            # panel, the missing-executable-shaped
+            # `GitExecutableUnavailableError` propagated uncaught on
+            # the very next refresh instead of falling back to this
+            # same empty state.
             self._stack.setCurrentWidget(
                 self._empty_label,
             )
@@ -303,10 +327,21 @@ class GitChangesWidget(QWidget):
         if self._repository_path is None:
             return
 
-        self._git_service.stage_paths(
-            self._repository_path,
-            paths,
-        )
+        try:
+            self._git_service.stage_paths(
+                self._repository_path,
+                paths,
+            )
+        except _COMMON_GIT_ERRORS as error:
+            QMessageBox.critical(
+                self,
+                "Stage Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
         self.refresh()
 
     def _unstage_paths(
@@ -318,10 +353,21 @@ class GitChangesWidget(QWidget):
         if self._repository_path is None:
             return
 
-        self._git_service.unstage_paths(
-            self._repository_path,
-            paths,
-        )
+        try:
+            self._git_service.unstage_paths(
+                self._repository_path,
+                paths,
+            )
+        except _COMMON_GIT_ERRORS as error:
+            QMessageBox.critical(
+                self,
+                "Unstage Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
         self.refresh()
 
     def _stage_all(
@@ -332,9 +378,20 @@ class GitChangesWidget(QWidget):
         if self._repository_path is None:
             return
 
-        self._git_service.stage_all(
-            self._repository_path,
-        )
+        try:
+            self._git_service.stage_all(
+                self._repository_path,
+            )
+        except _COMMON_GIT_ERRORS as error:
+            QMessageBox.critical(
+                self,
+                "Stage Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
         self.refresh()
 
     def _unstage_all(
@@ -345,9 +402,20 @@ class GitChangesWidget(QWidget):
         if self._repository_path is None:
             return
 
-        self._git_service.unstage_all(
-            self._repository_path,
-        )
+        try:
+            self._git_service.unstage_all(
+                self._repository_path,
+            )
+        except _COMMON_GIT_ERRORS as error:
+            QMessageBox.critical(
+                self,
+                "Unstage Failed",
+                str(
+                    error,
+                ),
+            )
+            return
+
         self.refresh()
 
     def _commit(

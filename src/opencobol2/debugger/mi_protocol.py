@@ -116,6 +116,20 @@ _C_STRING_ESCAPES = {
     "\\": "\\",
 }
 
+_OCTAL_DIGITS = frozenset(
+    "01234567",
+)
+
+# Editor §DebuggerCore-2: bounds `_MIValueParser`'s recursion so a
+# pathologically deep MI value (whether from real GDB output or a
+# malformed line) raises a clean `MIParseError` instead of an uncaught
+# `RecursionError` -- the latter isn't a `MIParseError`, so it would
+# escape `_read_loop`'s exception guard entirely and kill the
+# background reader thread. Comfortably below Python's default
+# recursion limit (~3 stack frames are spent per MI nesting level) and
+# far beyond any realistic COBOL data hierarchy's nesting depth.
+_MAX_MI_VALUE_DEPTH = 200
+
 
 def parse_mi_line(
     line: str,
@@ -208,6 +222,7 @@ class _MIValueParser:
     ) -> None:
         self._text = text
         self._pos = 0
+        self._depth = 0
 
     def _peek(
         self,
@@ -279,21 +294,33 @@ class _MIValueParser:
     def parse_value(
         self,
     ) -> MIValue:
-        char = self._peek()
+        self._depth += 1
 
-        if char == '"':
-            return self.parse_c_string()
+        try:
+            if self._depth > _MAX_MI_VALUE_DEPTH:
+                raise MIParseError(
+                    "MI value nesting exceeds the maximum "
+                    f"supported depth ({_MAX_MI_VALUE_DEPTH}) "
+                    f"in {self._text!r}"
+                )
 
-        if char == "{":
-            return self.parse_tuple()
+            char = self._peek()
 
-        if char == "[":
-            return self.parse_list()
+            if char == '"':
+                return self.parse_c_string()
 
-        raise MIParseError(
-            f"Unexpected character {char!r} "
-            f"at position {self._pos} in {self._text!r}"
-        )
+            if char == "{":
+                return self.parse_tuple()
+
+            if char == "[":
+                return self.parse_list()
+
+            raise MIParseError(
+                f"Unexpected character {char!r} "
+                f"at position {self._pos} in {self._text!r}"
+            )
+        finally:
+            self._depth -= 1
 
     def parse_tuple(
         self,
@@ -432,6 +459,42 @@ class _MIValueParser:
                     )
 
                 escaped = self._text[self._pos]
+
+                # Editor §DebuggerCore-9: GDB emits a real octal escape
+                # (1-3 octal digits) for any non-printable byte inside
+                # an evaluated string/array value -- e.g. a COBOL field
+                # containing control characters. The previous
+                # single-character fallback kept each digit literally
+                # (`\001` -> `"001"`, 3 characters) instead of decoding
+                # the full sequence into the one control byte it
+                # actually represents (`\x01`, 1 character).
+                if escaped in _OCTAL_DIGITS:
+                    octal_start = self._pos
+                    octal_end = min(
+                        octal_start + 3,
+                        len(self._text),
+                    )
+
+                    while (
+                        self._pos < octal_end
+                        and self._text[self._pos]
+                        in _OCTAL_DIGITS
+                    ):
+                        self._pos += 1
+
+                    octal_digits = self._text[
+                        octal_start : self._pos
+                    ]
+                    characters.append(
+                        chr(
+                            int(
+                                octal_digits,
+                                8,
+                            ),
+                        ),
+                    )
+                    continue
+
                 characters.append(
                     _C_STRING_ESCAPES.get(
                         escaped,

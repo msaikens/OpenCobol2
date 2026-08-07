@@ -2826,6 +2826,124 @@ class EditorTabsWidget(QTabWidget):
 
         return editor.format_document()
 
+    def undo_active_tab(
+        self,
+    ) -> None:
+        """Undo the active tab's last edit, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.undo()
+
+    def redo_active_tab(
+        self,
+    ) -> None:
+        """Redo the active tab's last undone edit, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.redo()
+
+    def cut_active_tab(
+        self,
+    ) -> None:
+        """Cut the active tab's selection to the clipboard, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.cut()
+
+    def copy_active_tab(
+        self,
+    ) -> None:
+        """Copy the active tab's selection to the clipboard, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.copy()
+
+    def paste_active_tab(
+        self,
+    ) -> None:
+        """Paste the clipboard into the active tab, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.paste()
+
+    def delete_selection_on_active_tab(
+        self,
+    ) -> None:
+        """Delete the active tab's selection (or the next character), if open."""
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return
+
+        cursor = editor.textCursor()
+
+        if not cursor.hasSelection():
+            cursor.deleteChar()
+        else:
+            cursor.removeSelectedText()
+
+        editor.setTextCursor(
+            cursor,
+        )
+
+    def select_all_on_active_tab(
+        self,
+    ) -> None:
+        """Select the active tab's entire contents, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.selectAll()
+
+    def go_to_line_on_active_tab(
+        self,
+        line_number: int,
+    ) -> None:
+        """Move the active tab's cursor to a 1-based line, if one is open."""
+
+        editor = self.currentWidget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.go_to_line(
+                line_number,
+            )
+
     def find_references_for_active_tab(
         self,
     ) -> tuple[FindResult, ...]:

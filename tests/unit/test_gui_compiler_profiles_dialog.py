@@ -11,9 +11,13 @@ from PySide6.QtWidgets import QMessageBox
 from opencobol2.compiler.providers import (
     CompilerConfigurationField,
     CompilerConfigurationFieldKind,
+    CompilerExecutionKind,
     CompilerProviderRegistry,
     CustomLocalCompilerProvider,
     GnuCobolCompilerProvider,
+)
+from opencobol2.compiler.providers.builtins import (
+    _DeclarativeCompilerProvider,
 )
 from opencobol2.gui.compiler_profiles_dialog import (
     CompilerProfilesDialog,
@@ -33,6 +37,41 @@ def _build_registry() -> CompilerProviderRegistry:
     registry = CompilerProviderRegistry()
     registry.register(GnuCobolCompilerProvider())
     registry.register(CustomLocalCompilerProvider())
+    return registry
+
+
+_STRING_MAP_PROVIDER_ID = "test.string-map-provider"
+
+
+def _build_string_map_registry() -> CompilerProviderRegistry:
+    """Build a registry with a synthetic STRING_MAP-field provider.
+
+    None of the real built-in providers happen to have a STRING_MAP
+    field, so Dialogs-1/2's repros (which are specifically about that
+    field kind) need one built for the purpose, same as the original
+    audit did.
+    """
+
+    registry = CompilerProviderRegistry()
+    registry.register(
+        _DeclarativeCompilerProvider(
+            provider_id=_STRING_MAP_PROVIDER_ID,
+            display_name="String Map Test Provider",
+            execution_kind=(
+                CompilerExecutionKind.LOCAL_PROCESS
+            ),
+            configuration_fields=(
+                CompilerConfigurationField(
+                    key="mapping",
+                    title="Mapping",
+                    kind=(
+                        CompilerConfigurationFieldKind
+                        .STRING_MAP
+                    ),
+                ),
+            ),
+        )
+    )
     return registry
 
 
@@ -253,6 +292,70 @@ def test_editing_fields_and_switching_selection_commits_changes(
     )
 
 
+def test_malformed_string_map_on_row_switch_shows_error_and_keeps_selection(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §Dialogs-1: a malformed field value used to raise
+    # straight out of `_commit_current_profile_from_form`, uncaught,
+    # inside `_on_selection_changed` -- leaving the widget's visible
+    # selection and `_active_row` out of sync with each other, so any
+    # further edit silently landed in the wrong profile.
+    service = _build_service(
+        tmp_path,
+    )
+    # Start from zero profiles -- the default seeded GnuCOBOL profile
+    # isn't resolvable against this test's synthetic-only registry.
+    service.update_compilers(
+        CompilerSettings(
+            default_profile_id=None,
+            profiles=(),
+        )
+    )
+    dialog = CompilerProfilesDialog(
+        settings_service=service,
+        provider_registry=(
+            _build_string_map_registry()
+        ),
+    )
+
+    with patch(
+        "opencobol2.gui.compiler_profiles_dialog."
+        "QInputDialog.getItem",
+        return_value=(
+            "String Map Test Provider",
+            True,
+        ),
+    ):
+        dialog._add_profile()
+        dialog._add_profile()
+
+    assert dialog._active_row == 1
+    dialog._field_widgets[
+        "mapping"
+    ].setPlainText(
+        "=bad-no-key",
+    )
+
+    with patch(
+        "opencobol2.gui.compiler_profiles_dialog."
+        "QMessageBox.critical",
+    ) as mock_critical:
+        dialog._profile_list.setCurrentRow(
+            0,
+        )
+
+    mock_critical.assert_called_once()
+    assert dialog._profile_list.currentRow() == 1
+    assert dialog._active_row == 1
+    assert (
+        dialog._field_widgets[
+            "mapping"
+        ].toPlainText()
+        == "=bad-no-key"
+    )
+
+
 def test_remove_profile_prompts_and_respects_decline(
     qapp,
     tmp_path: Path,
@@ -427,6 +530,56 @@ def test_apply_and_accept_blocks_on_missing_required_field(
     assert len(
         reloaded.current.compilers.profiles,
     ) == 1
+
+
+def test_malformed_integer_list_blocks_apply_and_accept_with_an_error(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §Dialogs-1: this was the unguarded first line of
+    # `_apply_and_accept`, entirely outside its own
+    # `try`/`except (TypeError, ValueError)` around persistence -- the
+    # dialog never called `accept()` and clicking OK silently did
+    # nothing, with no error and no explanation.
+    service = _build_service(
+        tmp_path,
+    )
+    dialog = CompilerProfilesDialog(
+        settings_service=service,
+        provider_registry=_build_registry(),
+    )
+
+    with patch(
+        "opencobol2.gui.compiler_profiles_dialog."
+        "QInputDialog.getItem",
+        return_value=(
+            "Custom local COBOL compiler",
+            True,
+        ),
+    ):
+        dialog._add_profile()
+
+    dialog._field_widgets[
+        "executable_path"
+    ].setText(
+        str(
+            tmp_path / "compiler.exe",
+        )
+    )
+    dialog._field_widgets[
+        "success_return_codes"
+    ].setText(
+        "not-a-number",
+    )
+
+    with patch(
+        "opencobol2.gui.compiler_profiles_dialog."
+        "QMessageBox.critical",
+    ) as mock_critical:
+        dialog._apply_and_accept()
+
+    mock_critical.assert_called_once()
+    assert dialog.result() == 0
 
 
 def test_apply_and_accept_persists_profiles(
@@ -688,3 +841,61 @@ def test_string_map_field_returns_none_when_blank(
         )
         is None
     )
+
+
+def test_string_map_field_rejects_a_duplicate_key(
+    qapp,
+) -> None:
+    # Editor §Dialogs-2: a second `KEY=...` line used to simply
+    # overwrite the first with no rejection and no warning -- the
+    # duplicate's earlier value was already gone before any
+    # downstream validation layer could ever detect it happened.
+    field = CompilerConfigurationField(
+        key="mapping",
+        title="Mapping",
+        kind=CompilerConfigurationFieldKind.STRING_MAP,
+    )
+    widget = _build_field_widget(
+        field,
+    )
+    widget.setPlainText(
+        "DEBUG=1\nDEBUG=0\nRELEASE=1",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="duplicate key",
+    ):
+        _read_field_value(
+            field,
+            widget,
+        )
+
+
+def test_string_map_field_rejects_an_entry_with_no_key(
+    qapp,
+) -> None:
+    # Editor §Dialogs-1: an empty key used to sail through here
+    # cleanly and only blow up two calls later inside
+    # `dataclasses.replace`'s own re-validation, with a message that
+    # doesn't point back at this field or line at all.
+    field = CompilerConfigurationField(
+        key="mapping",
+        title="Mapping",
+        kind=CompilerConfigurationFieldKind.STRING_MAP,
+    )
+    widget = _build_field_widget(
+        field,
+    )
+    widget.setPlainText(
+        "=bad-no-key",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no key",
+    ):
+        _read_field_value(
+            field,
+            widget,
+        )

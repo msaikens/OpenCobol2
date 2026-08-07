@@ -165,3 +165,176 @@ def test_debugger_reads_a_real_cobol_variable_end_to_end(
         assert decoded_value == "0030"
     finally:
         adapter.terminate()
+
+
+_GROUP_SOURCE = """\
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. GROUPDEMO.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 CUSTOMER-REC.
+          05 CUST-AMOUNT PIC 9(4) VALUE 10.
+          05 CUST-BALANCE PIC 9(4) VALUE 20.
+       01 WS-REDEF-BASE PIC 9(4) VALUE 99.
+       01 WS-REDEF-VIEW REDEFINES WS-REDEF-BASE PIC 9(4).
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY CUST-AMOUNT.
+           DISPLAY CUST-BALANCE.
+           DISPLAY WS-REDEF-VIEW.
+           STOP RUN.
+"""
+
+
+def test_debugger_reads_a_group_nested_field_and_a_redefines_view(
+    tmp_path: Path,
+) -> None:
+    # Editor §DebuggerLogic-1/3: a WORKING-STORAGE item nested inside a
+    # group record (`CUST-AMOUNT`/`CUST-BALANCE`, both under
+    # `CUSTOMER-REC`) or a REDEFINES view (`WS-REDEF-VIEW`) used to
+    # have no known memory location at all, since
+    # `parse_generated_symbol_map` only recognized a top-level item's
+    # own dedicated buffer declaration, never the `cob_field` struct a
+    # nested/redefining item gets instead.
+    toolchain = discover_gnucobol()
+    gdb_path = shutil.which(
+        "gdb",
+    )
+
+    if toolchain is None or gdb_path is None:
+        pytest.skip(
+            "GnuCOBOL and/or gdb are not installed; skipping "
+            "real COBOL debugging integration test."
+        )
+
+    source_path = tmp_path / "groupdemo.cbl"
+    source_path.write_text(
+        _GROUP_SOURCE,
+    )
+    executable_path = tmp_path / "groupdemo.exe"
+
+    compile_env = toolchain.process_environment(
+        os.environ,
+    )
+    compile_result = subprocess.run(
+        [
+            str(
+                toolchain.compiler_path,
+            ),
+            "-x",
+            "-g",
+            "-debug",
+            "-o",
+            str(
+                executable_path,
+            ),
+            str(
+                source_path,
+            ),
+        ],
+        cwd=tmp_path,
+        env=compile_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert compile_result.returncode == 0, (
+        "Real GnuCOBOL compilation failed.\n"
+        f"STDOUT:\n{compile_result.stdout}\n"
+        f"STDERR:\n{compile_result.stderr}"
+    )
+
+    local_header_path = (
+        tmp_path / "groupdemo.c.l.h"
+    )
+    global_header_path = (
+        tmp_path / "groupdemo.c.h"
+    )
+
+    symbol_map = parse_generated_symbol_map(
+        local_header_path.read_text(),
+        global_header_path.read_text()
+        if global_header_path.is_file()
+        else "",
+    )
+
+    assert "CUST-AMOUNT" in symbol_map
+    assert "CUST-BALANCE" in symbol_map
+    assert "WS-REDEF-VIEW" in symbol_map
+
+    # The second group member must resolve to a real byte-offset
+    # expression into the group's shared buffer, not the group's own
+    # base address -- otherwise it would silently read the same bytes
+    # as the first member.
+    assert (
+        symbol_map["CUST-AMOUNT"].buffer_variable
+        != symbol_map["CUST-BALANCE"].buffer_variable
+    )
+
+    adapter = GdbAdapter(
+        gdb_executable=gdb_path,
+    )
+    stopped = threading.Event()
+    adapter.on_stopped(
+        lambda _record: stopped.set(),
+    )
+
+    def read_decoded(
+        symbol,
+    ) -> str:
+        memory_result = adapter.send_command(
+            "-data-read-memory-bytes "
+            f"{symbol.buffer_variable} "
+            f"{symbol.byte_length}",
+        )
+        raw_bytes = bytes.fromhex(
+            memory_result.get(
+                "memory",
+            )[0]["contents"],
+        )
+
+        return decode_field_value(
+            raw_bytes,
+            picture=parse_picture_spec(
+                "PIC 9(4)",
+            ),
+            usage=DataUsage.DISPLAY,
+        )
+
+    try:
+        adapter.start(
+            executable_path,
+            environment=compile_env,
+        )
+
+        adapter.send_command(
+            "-break-insert groupdemo.cbl:15",
+        )
+        adapter.send_command(
+            "-exec-run",
+        )
+        assert stopped.wait(
+            15,
+        ), "Breakpoint on STOP RUN was never hit."
+
+        assert (
+            read_decoded(
+                symbol_map["CUST-AMOUNT"],
+            )
+            == "0010"
+        )
+        assert (
+            read_decoded(
+                symbol_map["CUST-BALANCE"],
+            )
+            == "0020"
+        )
+        assert (
+            read_decoded(
+                symbol_map["WS-REDEF-VIEW"],
+            )
+            == "0099"
+        )
+    finally:
+        adapter.terminate()

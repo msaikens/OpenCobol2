@@ -42,9 +42,16 @@ class TerminalWidget(QWidget):
         self,
         *,
         working_directory: Path | None = None,
+        command_timeout_seconds: float = (
+            _COMMAND_TIMEOUT_SECONDS
+        ),
         parent: QWidget | None = None,
     ) -> None:
-        """Build an empty terminal panel rooted at a working directory."""
+        """Build an empty terminal panel rooted at a working directory.
+
+        Editor §ProjectPanels-6: the timeout was previously a hardcoded
+        module constant with no override anywhere in the codebase.
+        """
 
         super().__init__(
             parent,
@@ -54,6 +61,9 @@ class TerminalWidget(QWidget):
             working_directory
             if working_directory is not None
             else Path.cwd()
+        )
+        self._command_timeout_seconds = (
+            command_timeout_seconds
         )
 
         layout = QVBoxLayout(
@@ -155,12 +165,12 @@ class TerminalWidget(QWidget):
                 cwd=self._working_directory,
                 capture_output=True,
                 text=True,
-                timeout=_COMMAND_TIMEOUT_SECONDS,
+                timeout=self._command_timeout_seconds,
             )
         except subprocess.TimeoutExpired:
             self.append_line(
                 "error: command timed out after "
-                f"{_COMMAND_TIMEOUT_SECONDS}s",
+                f"{self._command_timeout_seconds}s",
             )
             return
         except OSError as error:

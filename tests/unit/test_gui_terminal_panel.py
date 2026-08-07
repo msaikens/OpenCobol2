@@ -114,6 +114,33 @@ def test_run_command_logs_stderr(
     )
 
 
+def test_command_timeout_seconds_override_actually_bounds_the_command(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    # Editor §ProjectPanels-6: `_COMMAND_TIMEOUT_SECONDS` used to be a
+    # hardcoded module constant with no override anywhere in the
+    # codebase -- there was no way to shrink (or grow) the timeout
+    # window per instance.
+    terminal = TerminalWidget(
+        command_timeout_seconds=0.2,
+    )
+    script_path = _write_script(
+        tmp_path,
+        "import time\ntime.sleep(5)\n",
+    )
+
+    _run_script(
+        terminal,
+        script_path,
+    )
+
+    assert (
+        "error: command timed out after 0.2s"
+        in terminal._output_log.toPlainText()
+    )
+
+
 def test_run_command_uses_the_configured_working_directory(
     qapp,
     tmp_path: Path,

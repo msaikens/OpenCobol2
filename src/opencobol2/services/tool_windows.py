@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
 from opencobol2.tool_windows import (
@@ -50,6 +51,27 @@ class ToolWindowService:
             str,
             ToolWindowState,
         ] = {}
+        self._listeners: list[
+            Callable[[ToolWindowState], None]
+        ] = []
+
+    def add_listener(
+        self,
+        callback: Callable[[ToolWindowState], None],
+    ) -> None:
+        """Register a callback invoked with the new state after every change.
+
+        Editor §UIShell-1: this is what lets a real Qt dock widget stay in
+        sync with `activate()`/`show()`/`hide()` calls that don't originate
+        from the dock widget itself (e.g. a View-menu command) -- until
+        this existed, nothing synced domain-state changes back onto the
+        real `QDockWidget` at all, only the reverse direction (dock ->
+        service, via `visibilityChanged`).
+        """
+
+        self._listeners.append(
+            callback,
+        )
 
     @property
     def registry(
@@ -389,7 +411,7 @@ class ToolWindowService:
         self,
         state: ToolWindowState,
     ) -> ToolWindowState:
-        """Store and return one validated tool-window state."""
+        """Store one validated tool-window state and notify listeners."""
 
         self._registry.get(
             state.tool_window_id,
@@ -398,6 +420,14 @@ class ToolWindowService:
         self._states[
             state.tool_window_id
         ] = state
+
+        for listener in self._listeners:
+            try:
+                listener(
+                    state,
+                )
+            except Exception:
+                pass
 
         return state
 

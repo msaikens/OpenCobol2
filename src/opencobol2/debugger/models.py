@@ -88,6 +88,14 @@ class Breakpoint:
                 "Breakpoint hit count must not be negative."
             )
 
+        # Editor §DebuggerCore-8: an empty/blank source path used to
+        # silently normalize to `Path('.')` via `Path("")`, misrepresenting
+        # an unknown/missing source location as a real, resolvable path.
+        if not str(self.source_path).strip():
+            raise ValueError(
+                "Breakpoint source path must not be empty."
+            )
+
         object.__setattr__(
             self,
             "source_path",
@@ -115,12 +123,27 @@ class StackFrame:
                 "Stack frame level must not be negative."
             )
 
+        # Editor §DebuggerCore-6: `function_name` is a required field,
+        # but nothing previously rejected a blank one -- unlike the
+        # structurally identical `Variable.name`/`RegisterValue.name`.
+        if not self.function_name.strip():
+            raise ValueError(
+                "Stack frame function name must not be empty."
+            )
+
         if self.line is not None and self.line <= 0:
             raise ValueError(
                 "Stack frame line must be positive."
             )
 
         if self.source_path is not None:
+            # Editor §DebuggerCore-8: an empty/blank source path used
+            # to silently normalize to `Path('.')` via `Path("")`.
+            if not str(self.source_path).strip():
+                raise ValueError(
+                    "Stack frame source path must not be empty."
+                )
+
             object.__setattr__(
                 self,
                 "source_path",
@@ -140,12 +163,24 @@ class Variable:
     type_name: str | None = None
 
     def __post_init__(self) -> None:
-        """Require a non-empty variable name."""
+        """Require and normalize a non-empty variable name."""
 
-        if not self.name.strip():
+        normalized_name = self.name.strip()
+
+        if not normalized_name:
             raise ValueError(
                 "Variable name must not be empty."
             )
+
+        # Editor §DebuggerCore-7: mirrors `WatchExpression.expression`,
+        # which already re-assigns its stripped value -- this used to
+        # validate non-emptiness via `.strip()` but never store the
+        # normalized result back, leaving padding on the instance.
+        object.__setattr__(
+            self,
+            "name",
+            normalized_name,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -157,11 +192,18 @@ class ThreadInfo:
     frame: StackFrame | None = None
 
     def __post_init__(self) -> None:
-        """Require a positive thread ID."""
+        """Require a positive thread ID and a non-empty state."""
 
         if self.thread_id <= 0:
             raise ValueError(
                 "Thread ID must be positive."
+            )
+
+        # Editor §DebuggerCore-6: `state` is a required field, but
+        # nothing previously rejected a blank one.
+        if not self.state.strip():
+            raise ValueError(
+                "Thread state must not be empty."
             )
 
 
@@ -173,12 +215,21 @@ class RegisterValue:
     value: str
 
     def __post_init__(self) -> None:
-        """Require a non-empty register name."""
+        """Require and normalize a non-empty register name."""
 
-        if not self.name.strip():
+        normalized_name = self.name.strip()
+
+        if not normalized_name:
             raise ValueError(
                 "Register name must not be empty."
             )
+
+        # Editor §DebuggerCore-7: see the identical fix on `Variable`.
+        object.__setattr__(
+            self,
+            "name",
+            normalized_name,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -232,3 +283,16 @@ class StoppedEvent:
     thread_id: int | None = None
     frame: StackFrame | None = None
     exit_code: int | None = None
+
+    def __post_init__(self) -> None:
+        """Require a positive thread ID when one is given.
+
+        Editor §DebuggerCore-5: `thread_id` describes the identical
+        "a GDB thread ID" concept as `ThreadInfo.thread_id`, which
+        already requires a positive value.
+        """
+
+        if self.thread_id is not None and self.thread_id <= 0:
+            raise ValueError(
+                "Stopped event thread ID must be positive."
+            )

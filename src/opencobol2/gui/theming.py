@@ -72,6 +72,21 @@ def build_palette(
             QPalette.ColorRole.ToolTipText,
             colors.foreground,
         ),
+        (
+            # Editor §UIShell-4: never set before, so every widget that
+            # relies on `setPlaceholderText()` (Terminal, Watch, Memory,
+            # Git Changes, Command Palette, Compiler Profiles dialog)
+            # rendered a fresh `QPalette()`'s built-in default -- pure
+            # black regardless of theme -- rather than anything sourced
+            # from this theme at all. `syntax_comment` is already tuned
+            # by every built-in theme to be legible-but-secondary
+            # against `editor_background` (the same color `Base` uses
+            # here), which is exactly the contrast placeholder text
+            # needs; computed WCAG contrast against `editor_background`
+            # is 5.0-11.5:1 across all four built-in themes.
+            QPalette.ColorRole.PlaceholderText,
+            colors.syntax_comment,
+        ),
     )
 
     for role, hex_color in role_colors:
