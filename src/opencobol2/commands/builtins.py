@@ -76,6 +76,7 @@ class BuiltInCommandIds:
     EDIT_FIND_ALL_REFERENCES = "edit.find-all-references"
     EDIT_RENAME = "edit.rename"
     EDIT_FORMAT_DOCUMENT = "edit.format-document"
+    EDIT_TRIGGER_SUGGEST = "edit.trigger-suggest"
 
     VIEW_COMMAND_PALETTE = "view.command-palette"
     VIEW_PROJECT_EXPLORER = "view.project-explorer"
@@ -101,6 +102,7 @@ class BuiltInCommandIds:
     BUILD_CLEAN_PROJECT = "build.clean-project"
     BUILD_RUN = "build.run"
     BUILD_STOP = "build.stop"
+    BUILD_VIEW_LISTING_FILE = "build.view-listing-file"
 
     DEBUG_START = "debug.start"
     DEBUG_STOP = "debug.stop"
@@ -548,6 +550,15 @@ _EXTERNAL_COMMANDS = (
         default_shortcuts=("Shift+Alt+F",),
     ),
     _CommandMetadata(
+        command_id=BuiltInCommandIds.EDIT_TRIGGER_SUGGEST,
+        title="Trigger Suggest",
+        description=(
+            "Show completion candidates for the cursor's position."
+        ),
+        category="Edit",
+        default_shortcuts=("Ctrl+Space",),
+    ),
+    _CommandMetadata(
         command_id=BuiltInCommandIds.VIEW_COMMAND_PALETTE,
         title="Command Palette",
         description="Search and execute application commands.",
@@ -586,6 +597,15 @@ _EXTERNAL_COMMANDS = (
         description="Stop the active build or running program.",
         category="Build",
         default_shortcuts=("Shift+F5",),
+    ),
+    _CommandMetadata(
+        command_id=BuiltInCommandIds.BUILD_VIEW_LISTING_FILE,
+        title="View Listing File",
+        description=(
+            "Compile the active file with a GnuCOBOL program listing "
+            "and open it."
+        ),
+        category="Build",
     ),
     _CommandMetadata(
         command_id=BuiltInCommandIds.DEBUG_START,
@@ -1326,6 +1346,15 @@ def _register_edit_surface(
         40,
         20,
     )
+    _register_command_contribution(
+        registry,
+        "core.menu.edit.trigger-suggest",
+        BuiltInCommandIds.EDIT_TRIGGER_SUGGEST,
+        BuiltInCommandSurfaceIds.EDIT,
+        "refactor",
+        40,
+        30,
+    )
 
 
 def _register_view_surface(
@@ -1484,6 +1513,16 @@ def _register_build_surface(
         "execution",
         20,
         20,
+    )
+    _register_command_contribution(
+        registry,
+        "core.menu.build.view-listing-file",
+        BuiltInCommandIds.BUILD_VIEW_LISTING_FILE,
+        BuiltInCommandSurfaceIds.BUILD,
+        "execution",
+        20,
+        30,
+        separator_before=True,
     )
 
 

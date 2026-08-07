@@ -20,6 +20,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QContextMenuEvent,
+    QFocusEvent,
     QFont,
     QFontDatabase,
     QKeyEvent,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
@@ -65,6 +67,7 @@ from opencobol2.gui.find_results_panel import FindResult
 from opencobol2.gui.syntax_highlighter import CobolSyntaxHighlighter
 from opencobol2.gui.welcome_page import WelcomePageWidget
 from opencobol2.language import (
+    compute_completions,
     compute_fold_ranges,
     compute_hover,
     compute_outline,
@@ -72,6 +75,9 @@ from opencobol2.language import (
     compute_signature_help,
     find_definition,
     find_references,
+    parse_snippet_body,
+    CompletionItem,
+    CompletionItemKind,
     FoldRange,
     HoverInfo,
     LexDiagnostic,
@@ -99,6 +105,29 @@ _COBOL_SOURCE_EXTENSIONS = (
     ".cbl",
     ".cob",
 )
+
+
+_COMPLETION_DEBOUNCE_MILLISECONDS = 150
+_COMPLETION_POPUP_WIDTH = 320
+_COMPLETION_POPUP_HEIGHT = 160
+
+# Hyphen-inclusive, the same word-boundary convention
+# `rename_symbol_at_cursor` and `opencobol2.language.completion` both
+# already use, since COBOL names legally contain hyphens.
+_IDENTIFIER_CHARACTERS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789-"
+)
+
+
+def _is_identifier_character(
+    text: str,
+) -> bool:
+    """Return whether a `QKeyEvent.text()` value is one COBOL identifier character."""
+
+    return (
+        len(text) == 1
+        and text in _IDENTIFIER_CHARACTERS
+    )
 
 
 def _is_cobol_source(
@@ -405,6 +434,122 @@ class _FindReplaceBar(QWidget):
         )
 
 
+class _CompletionPopup(QWidget):
+    """A floating overlay listing completion candidates for one editor.
+
+    The same "floating overlay child widget positioned relative to the
+    editor's viewport" pattern `_FindReplaceBar` already establishes,
+    just triggered by typing instead of a menu command.
+    """
+
+    def __init__(
+        self,
+        editor: SourceEditorWidget,
+    ) -> None:
+        super().__init__(
+            editor,
+        )
+
+        self._editor = editor
+        self.setAutoFillBackground(
+            True,
+        )
+        self.setFocusPolicy(
+            Qt.FocusPolicy.NoFocus,
+        )
+
+        layout = QVBoxLayout(
+            self,
+        )
+        layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        self.list_widget = QListWidget()
+        self.list_widget.setFocusPolicy(
+            Qt.FocusPolicy.NoFocus,
+        )
+        self.list_widget.itemDoubleClicked.connect(
+            self._handle_item_double_clicked,
+        )
+        layout.addWidget(
+            self.list_widget,
+        )
+
+        self._items: tuple[
+            CompletionItem,
+            ...,
+        ] = ()
+
+    def set_items(
+        self,
+        items: tuple[CompletionItem, ...],
+    ) -> None:
+        """Replace the candidate list and select the first entry."""
+
+        self._items = items
+        self.list_widget.clear()
+
+        for item in items:
+            self.list_widget.addItem(
+                item.label
+                if item.detail is None
+                else f"{item.label}  —  {item.detail}"
+            )
+
+        if items:
+            self.list_widget.setCurrentRow(
+                0,
+            )
+
+    def selected_item(
+        self,
+    ) -> CompletionItem | None:
+        """Return the currently highlighted candidate, if any."""
+
+        row = self.list_widget.currentRow()
+
+        if 0 <= row < len(self._items):
+            return self._items[row]
+
+        return None
+
+    def select_next(
+        self,
+    ) -> None:
+        """Move the highlight to the next candidate, wrapping around."""
+
+        if not self._items:
+            return
+
+        row = self.list_widget.currentRow()
+        self.list_widget.setCurrentRow(
+            (row + 1) % len(self._items),
+        )
+
+    def select_previous(
+        self,
+    ) -> None:
+        """Move the highlight to the previous candidate, wrapping around."""
+
+        if not self._items:
+            return
+
+        row = self.list_widget.currentRow()
+        self.list_widget.setCurrentRow(
+            (row - 1) % len(self._items),
+        )
+
+    def _handle_item_double_clicked(
+        self,
+        _list_item,
+    ) -> None:
+        self._editor.accept_selected_completion()
+
+
 class SourceEditorWidget(QPlainTextEdit):
     """A plain-text editor for exactly one open document."""
 
@@ -510,6 +655,28 @@ class SourceEditorWidget(QPlainTextEdit):
             60,
             60,
         )
+
+        self._completion_popup = _CompletionPopup(
+            self,
+        )
+        self._completion_popup.hide()
+        self._completion_prefix_start: int | None = None
+        self._completion_debounce_timer = QTimer(
+            self,
+        )
+        self._completion_debounce_timer.setSingleShot(
+            True,
+        )
+        self._completion_debounce_timer.setInterval(
+            _COMPLETION_DEBOUNCE_MILLISECONDS,
+        )
+        self._completion_debounce_timer.timeout.connect(
+            self._refresh_completions,
+        )
+        self._active_snippet_stops: list[
+            QTextCursor,
+        ] | None = None
+        self._active_snippet_index = 0
 
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
@@ -897,6 +1064,30 @@ class SourceEditorWidget(QPlainTextEdit):
         """
 
         if (
+            self._active_snippet_stops is not None
+            and self._handle_snippet_session_key(
+                event,
+            )
+        ):
+            return
+
+        if (
+            self._completion_popup.isVisible()
+            and self._handle_completion_popup_key(
+                event,
+            )
+        ):
+            return
+
+        if (
+            event.key() == Qt.Key.Key_Space
+            and event.modifiers()
+            == Qt.KeyboardModifier.ControlModifier
+        ):
+            self.trigger_suggest()
+            return
+
+        if (
             event.key() == Qt.Key.Key_Tab
             and self._editor_settings.insert_spaces
             and not self.textCursor().hasSelection()
@@ -913,6 +1104,67 @@ class SourceEditorWidget(QPlainTextEdit):
         super().keyPressEvent(
             event,
         )
+
+        if not self.is_cobol_source:
+            return
+
+        if _is_identifier_character(
+            event.text(),
+        ) or event.key() == Qt.Key.Key_Backspace:
+            self._completion_debounce_timer.start()
+        else:
+            self._close_completion_popup()
+
+    def _handle_snippet_session_key(
+        self,
+        event: QKeyEvent,
+    ) -> bool:
+        """Handle a keypress while a snippet tab-stop session is active.
+
+        Only Tab (advance) and Escape (cancel) are intercepted --
+        every other key, including ordinary typing, falls through to
+        normal editing, which replaces a stop's selected default text
+        via Qt's own selection-replace semantics with no special
+        handling needed here.
+        """
+
+        if event.key() == Qt.Key.Key_Tab:
+            self._advance_snippet_stop()
+            return True
+
+        if event.key() == Qt.Key.Key_Escape:
+            self._end_snippet_session()
+            return True
+
+        return False
+
+    def _handle_completion_popup_key(
+        self,
+        event: QKeyEvent,
+    ) -> bool:
+        """Handle a keypress while the completion popup is visible."""
+
+        if event.key() == Qt.Key.Key_Escape:
+            self._close_completion_popup()
+            return True
+
+        if event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Tab,
+        ):
+            self.accept_selected_completion()
+            return True
+
+        if event.key() == Qt.Key.Key_Up:
+            self._completion_popup.select_previous()
+            return True
+
+        if event.key() == Qt.Key.Key_Down:
+            self._completion_popup.select_next()
+            return True
+
+        return False
 
     def resizeEvent(
         self,
@@ -933,6 +1185,28 @@ class SourceEditorWidget(QPlainTextEdit):
         )
         self._position_minimap_area()
         self._position_find_bar()
+
+    def mousePressEvent(
+        self,
+        event: QMouseEvent,
+    ) -> None:
+        """Dismiss the completion popup before any click repositions the cursor."""
+
+        self._close_completion_popup()
+        super().mousePressEvent(
+            event,
+        )
+
+    def focusOutEvent(
+        self,
+        event: QFocusEvent,
+    ) -> None:
+        """Dismiss the completion popup when focus leaves this editor."""
+
+        self._close_completion_popup()
+        super().focusOutEvent(
+            event,
+        )
 
     def _position_minimap_area(
         self,
@@ -1723,6 +1997,266 @@ class SourceEditorWidget(QPlainTextEdit):
         self._find_bar.move(
             self.width() - bar_width - 4,
             4,
+        )
+
+    def trigger_suggest(
+        self,
+    ) -> None:
+        """Show completion candidates for the cursor's position now.
+
+        Bypasses the debounce timer that otherwise paces candidate
+        refreshes while typing -- an explicit request (Ctrl+Space, or
+        the Edit > Trigger Suggest command) should respond immediately.
+        """
+
+        self._completion_debounce_timer.stop()
+        self._refresh_completions()
+
+    def accept_selected_completion(
+        self,
+    ) -> None:
+        """Insert the highlighted completion candidate at the cursor.
+
+        Replaces the prefix that was typed to trigger the popup, then
+        either inserts the candidate's text directly or, for a
+        snippet, starts a tab-stop session via `insert_snippet`.
+        """
+
+        item = self._completion_popup.selected_item()
+        prefix_start = self._completion_prefix_start
+        self._close_completion_popup()
+
+        if item is None or prefix_start is None:
+            return
+
+        cursor = self.textCursor()
+        cursor.setPosition(
+            prefix_start,
+        )
+        cursor.setPosition(
+            self.textCursor().position(),
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+
+        if (
+            item.kind is CompletionItemKind.SNIPPET
+            and item.snippet_body is not None
+        ):
+            cursor.endEditBlock()
+            self.setTextCursor(
+                cursor,
+            )
+            self.insert_snippet(
+                item.snippet_body,
+            )
+        else:
+            cursor.insertText(
+                item.insert_text,
+            )
+            cursor.endEditBlock()
+            self.setTextCursor(
+                cursor,
+            )
+
+    def insert_snippet(
+        self,
+        body: str,
+    ) -> None:
+        """Insert a snippet's expansion at the cursor, selecting its
+        first tab stop.
+
+        Tab (while the session is active) advances to the next stop;
+        Escape cancels it. Typing while a stop is selected replaces
+        its default text via Qt's own selection-replace semantics --
+        no special-casing needed.
+
+        Each stop's start/end is tracked as plain integer offsets
+        while inserting, not as a live `QTextCursor` created mid-loop:
+        Qt auto-adjusts every live cursor on a document when text is
+        inserted elsewhere, including growing a cursor's selection
+        forward when a later segment happens to be inserted exactly at
+        its current end -- which every later segment in this same
+        snippet always is, since they're all inserted back-to-back
+        through one advancing cursor. Building each stop's real
+        `QTextCursor` only after every segment has already been
+        inserted sidesteps that entirely: there's nothing left to
+        insert, and therefore nothing left to shift it.
+        """
+
+        segments = parse_snippet_body(
+            body,
+        )
+        cursor = self.textCursor()
+        base_position = cursor.position()
+        cursor.beginEditBlock()
+        offset = 0
+        indexed_ranges: list[
+            tuple[int, int, int]
+        ] = []
+
+        try:
+            for segment in segments:
+                cursor.insertText(
+                    segment.text,
+                )
+                start = base_position + offset
+                offset += len(
+                    segment.text,
+                )
+                end = base_position + offset
+
+                if segment.is_placeholder:
+                    indexed_ranges.append(
+                        (segment.stop_index, start, end),
+                    )
+        finally:
+            cursor.endEditBlock()
+
+        if not indexed_ranges:
+            self.setTextCursor(
+                cursor,
+            )
+            return
+
+        indexed_ranges.sort(
+            key=lambda triple: triple[0],
+        )
+        stops: list[QTextCursor] = []
+
+        for _, start, end in indexed_ranges:
+            stop_cursor = QTextCursor(
+                self.document(),
+            )
+            stop_cursor.setPosition(
+                start,
+            )
+            stop_cursor.setPosition(
+                end,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            stops.append(
+                stop_cursor,
+            )
+
+        self._active_snippet_stops = stops
+        self._active_snippet_index = 0
+        self.setTextCursor(
+            self._active_snippet_stops[0],
+        )
+
+    def _advance_snippet_stop(
+        self,
+    ) -> None:
+        stops = self._active_snippet_stops
+
+        if stops is None:
+            return
+
+        self._active_snippet_index += 1
+
+        if self._active_snippet_index >= len(
+            stops,
+        ):
+            self._end_snippet_session()
+            return
+
+        self.setTextCursor(
+            stops[self._active_snippet_index],
+        )
+
+    def _end_snippet_session(
+        self,
+    ) -> None:
+        self._active_snippet_stops = None
+        self._active_snippet_index = 0
+
+    def _refresh_completions(
+        self,
+    ) -> None:
+        if not self.is_cobol_source:
+            return
+
+        cursor = self.textCursor()
+        line = cursor.blockNumber() + 1
+        column = cursor.positionInBlock() + 1
+
+        items = compute_completions(
+            self.toPlainText(),
+            line=line,
+            column=column,
+        )
+
+        if not items:
+            self._close_completion_popup()
+            return
+
+        self._completion_prefix_start = (
+            self._prefix_start_position(
+                cursor,
+            )
+        )
+        self._completion_popup.set_items(
+            items,
+        )
+        self._position_completion_popup()
+        self._completion_popup.show()
+        self._completion_popup.raise_()
+
+    def _close_completion_popup(
+        self,
+    ) -> None:
+        self._completion_debounce_timer.stop()
+        self._completion_prefix_start = None
+        self._completion_popup.hide()
+
+    def _prefix_start_position(
+        self,
+        cursor: QTextCursor,
+    ) -> int:
+        """Return the document position where the word ending at a
+        cursor's position starts, scanning left over identifier
+        characters within the same block."""
+
+        block_text = cursor.block().text()
+        start = cursor.positionInBlock()
+
+        while (
+            start > 0
+            and block_text[start - 1] in _IDENTIFIER_CHARACTERS
+        ):
+            start -= 1
+
+        return cursor.block().position() + start
+
+    def _position_completion_popup(
+        self,
+    ) -> None:
+        cursor_rect = self.cursorRect()
+        self._completion_popup.setFixedSize(
+            _COMPLETION_POPUP_WIDTH,
+            _COMPLETION_POPUP_HEIGHT,
+        )
+        x = max(
+            0,
+            min(
+                cursor_rect.left(),
+                self.viewport().width()
+                - _COMPLETION_POPUP_WIDTH,
+            ),
+        )
+        y = max(
+            0,
+            min(
+                cursor_rect.bottom() + 2,
+                self.viewport().height()
+                - _COMPLETION_POPUP_HEIGHT,
+            ),
+        )
+        self._completion_popup.move(
+            x,
+            y,
         )
 
     def _update_line_number_area_width(
@@ -2825,6 +3359,22 @@ class EditorTabsWidget(QTabWidget):
             return False
 
         return editor.format_document()
+
+    def trigger_suggest_on_active_tab(
+        self,
+    ) -> bool:
+        """Show completion candidates for the active tab, if one is open."""
+
+        editor = self.currentWidget()
+
+        if not isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            return False
+
+        editor.trigger_suggest()
+        return True
 
     def undo_active_tab(
         self,

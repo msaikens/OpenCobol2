@@ -19,7 +19,7 @@ import shutil
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from opencobol2.commands import CommandContext, CommandHandler
-from opencobol2.compiler import CompileRequest, GnuCobolCompiler
+from opencobol2.compiler import EXECUTABLE_SUFFIX, CompileRequest, GnuCobolCompiler
 from opencobol2.compiler.providers import GNUCOBOL_PROVIDER_ID
 from opencobol2.debugger.gdb_adapter import GdbAdapterError, GdbNotRunningError
 from opencobol2.debugger.models import Variable, WatchExpression
@@ -40,7 +40,6 @@ from opencobol2.services.toolchains import GnuCobolToolchainService
 
 
 _COBOL_SOURCE_EXTENSIONS = (".cbl", ".cob")
-_EXECUTABLE_SUFFIX = ".exe" if os.name == "nt" else ""
 
 DEBUG_SESSION_ERRORS = (
     DebuggerServiceError,
@@ -265,7 +264,7 @@ def create_debug_start_handler(
         # with no other dot in it, is what makes this path prediction
         # reliable rather than guessing at cobc's renaming behavior.
         executable_path = output_directory / (
-            f"{source_path.stem}_debug{_EXECUTABLE_SUFFIX}"
+            f"{source_path.stem}_debug{EXECUTABLE_SUFFIX}"
         )
 
         request = CompileRequest(

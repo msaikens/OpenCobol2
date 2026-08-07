@@ -21,6 +21,11 @@ from opencobol2.language.ast_nodes import (
     ProcedureSectionNode,
     StopRunStatement,
 )
+from opencobol2.language.completion import (
+    CompletionItem,
+    CompletionItemKind,
+    compute_completions,
+)
 from opencobol2.language.diagnostics import (
     LexDiagnostic,
     ParseDiagnostic,
@@ -79,6 +84,12 @@ from opencobol2.language.signature_help import (
     compute_signature_help,
     SignatureHelp,
 )
+from opencobol2.language.snippets import (
+    parse_snippet_body,
+    BUILTIN_SNIPPETS,
+    Snippet,
+    SnippetSegment,
+)
 from opencobol2.language.source_diagnostics import (
     compute_source_diagnostics,
 )
@@ -102,9 +113,12 @@ from opencobol2.language.tokens import (
 
 __all__ = [
     "RESERVED_WORDS",
+    "BUILTIN_SNIPPETS",
     "CobolLexer",
     "CobolParser",
     "CompilationUnitNode",
+    "CompletionItem",
+    "CompletionItemKind",
     "DataDescriptionClause",
     "DataDivisionNode",
     "DataItemNode",
@@ -144,6 +158,8 @@ __all__ = [
     "QuickFix",
     "SemanticAnalysisResult",
     "SignatureHelp",
+    "Snippet",
+    "SnippetSegment",
     "SourceLocation",
     "SourcePosition",
     "SourceSpan",
@@ -153,6 +169,7 @@ __all__ = [
     "Token",
     "TokenKind",
     "analyze_compilation_unit",
+    "compute_completions",
     "compute_fold_ranges",
     "compute_hover",
     "compute_outline",
@@ -165,6 +182,7 @@ __all__ = [
     "identifier_at",
     "is_reserved_word",
     "parse_cobol_tokens",
+    "parse_snippet_body",
     "render_clause_tokens",
     "tokenize_cobol_source",
 ]

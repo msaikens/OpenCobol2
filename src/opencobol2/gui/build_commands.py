@@ -24,16 +24,20 @@ from opencobol2.commands import (
     CommandHandler,
 )
 from opencobol2.compiler import (
+    EXECUTABLE_SUFFIX,
     CompileRequest,
     CompilerOutputKind,
+    GnuCobolCompiler,
 )
 from opencobol2.compiler.providers import (
+    GNUCOBOL_PROVIDER_ID,
     CompilerProviderNotFoundError,
 )
 from opencobol2.compiler.runtimes import (
     CompilerRuntimeFactoryNotFoundError,
     GnuCobolRuntimeUnavailableError,
 )
+from opencobol2.gui.editor import EditorTabsWidget, SourceEditorWidget
 from opencobol2.gui.output_panel import OutputWidget
 from opencobol2.gui.problems_panel import ProblemsWidget
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
@@ -44,6 +48,8 @@ from opencobol2.services import (
     CompilerRuntimeActivationService,
     DefaultCompilerProfileNotConfiguredError,
 )
+from opencobol2.services.compilers import CompilerProfileService
+from opencobol2.services.toolchains import GnuCobolToolchainService
 
 
 _COBOL_SOURCE_EXTENSIONS = (
@@ -127,6 +133,30 @@ def _scan_directory(
             )
 
 
+def _is_up_to_date(
+    source_file: Path,
+    output_path: Path,
+) -> bool:
+    """Return whether a compiled output is at least as new as its source.
+
+    Build Project skips recompiling in this case. A skipped file's
+    diagnostics from its last actual compile are deliberately not
+    carried forward -- Problems reflects only what this run actually
+    compiled, not a persisted, potentially-stale cache. Rebuild
+    Project (clean, then build) is the existing escape hatch: an
+    emptied output directory means nothing is ever "up to date", so
+    every file gets a full recompile with fresh diagnostics.
+    """
+
+    if not output_path.exists():
+        return False
+
+    return (
+        output_path.stat().st_mtime
+        >= source_file.stat().st_mtime
+    )
+
+
 def create_build_project_handler(
     *,
     project_explorer: ProjectExplorerWidget,
@@ -202,13 +232,12 @@ def create_build_project_handler(
             exist_ok=True,
         )
         all_diagnostics = []
+        compiled_count = 0
+        skipped_count = 0
 
         for source_file in source_files:
             relative_path = source_file.relative_to(
                 project.root_path,
-            )
-            output_widget.append_line(
-                f"Compiling {relative_path}...",
             )
 
             # Editor §CompilerProcess-1: deriving the output path from
@@ -219,9 +248,29 @@ def create_build_project_handler(
             # directory structure under `output_directory` keeps every
             # compiled output unique, exactly as it already is on disk
             # for the sources themselves.
+            #
+            # The requested name carries the real EXECUTABLE_SUFFIX up
+            # front rather than relying on cobc's own extension
+            # handling: on Windows, cobc always forces `-x` output to
+            # end in ".exe", replacing any other extension the
+            # requested name has rather than appending to it, so a
+            # bare, suffix-less request would silently point the
+            # up-to-date check below at a file cobc never actually
+            # writes.
             output_path = (
                 output_directory
-                / relative_path.with_suffix("")
+                / relative_path.with_suffix(EXECUTABLE_SUFFIX)
+            )
+
+            if _is_up_to_date(source_file, output_path):
+                output_widget.append_line(
+                    f"{relative_path}: up to date, skipping",
+                )
+                skipped_count += 1
+                continue
+
+            output_widget.append_line(
+                f"Compiling {relative_path}...",
             )
             output_path.parent.mkdir(
                 parents=True,
@@ -265,10 +314,11 @@ def create_build_project_handler(
             all_diagnostics.extend(
                 compilation.diagnostics,
             )
+            compiled_count += 1
 
         output_widget.append_line(
-            f"Build complete: {len(source_files)} "
-            "file(s) compiled.",
+            f"Build complete: {compiled_count} file(s) compiled, "
+            f"{skipped_count} up to date.",
         )
         problems_widget.set_diagnostics(
             tuple(
@@ -378,3 +428,164 @@ def create_rebuild_project_handler(
         )
 
     return handle_rebuild_project
+
+
+def create_view_listing_handler(
+    *,
+    editor_tabs_widget: EditorTabsWidget,
+    project_explorer: ProjectExplorerWidget,
+    compiler_profile_service: CompilerProfileService,
+    toolchain_service: GnuCobolToolchainService,
+    output_widget: OutputWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> CommandHandler:
+    """Create a handler that compiles the active file with a GnuCOBOL
+    program listing and opens the resulting `.lst` file.
+
+    Listing generation (`-t`) is a GnuCOBOL `cobc`-specific flag, not
+    modeled by the provider-agnostic `CompilerRuntimeActivationService`
+    abstraction Build Project otherwise uses, so this resolves a
+    GnuCOBOL toolchain directly and scopes to the active editor tab --
+    the same boundary `debug_commands.create_debug_start_handler`
+    already draws, for the same reason.
+    """
+
+    def handle_view_listing(
+        context: CommandContext,
+    ) -> None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+        editor = editor_tabs_widget.currentWidget()
+
+        if not isinstance(editor, SourceEditorWidget):
+            QMessageBox.information(
+                parent_widget,
+                "View Listing File",
+                "Open a COBOL file first.",
+            )
+            return
+
+        workspace_document = (
+            editor_tabs_widget.document_service.workspace.get_document(
+                editor.document_id,
+            )
+        )
+        source_path = workspace_document.document.path
+
+        if (
+            source_path is None
+            or source_path.suffix.lower()
+            not in _COBOL_SOURCE_EXTENSIONS
+        ):
+            QMessageBox.information(
+                parent_widget,
+                "View Listing File",
+                "The active file is not a saved .cbl/.cob source file.",
+            )
+            return
+
+        project = project_explorer.project
+
+        try:
+            project_profile_id = (
+                project.properties.default_compiler_profile_id
+                if project is not None
+                else None
+            )
+            resolution = (
+                compiler_profile_service.resolve(
+                    project_profile_id,
+                )
+                if project_profile_id is not None
+                else compiler_profile_service.resolve_default()
+            )
+        except LookupError as error:
+            QMessageBox.warning(
+                parent_widget,
+                "View Listing File",
+                str(error),
+            )
+            return
+
+        if resolution.profile.provider_id != GNUCOBOL_PROVIDER_ID:
+            QMessageBox.warning(
+                parent_widget,
+                "View Listing File",
+                "Listing generation requires a GnuCOBOL compiler "
+                "profile as the default -- configure one in Tools > "
+                "Compiler Profiles.",
+            )
+            return
+
+        toolchain = toolchain_service.discover(
+            resolution.profile,
+        )
+
+        if toolchain is None:
+            QMessageBox.warning(
+                parent_widget,
+                "View Listing File",
+                "Unable to discover a usable GnuCOBOL toolchain.",
+            )
+            return
+
+        output_directory = (
+            (
+                project.root_path
+                / project.properties.output_directory
+            )
+            if project is not None
+            else source_path.parent
+        )
+        output_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        listing_path = (
+            output_directory / f"{source_path.stem}.lst"
+        )
+        object_path = output_directory / (
+            f"{source_path.stem}{EXECUTABLE_SUFFIX}"
+        )
+
+        request = CompileRequest(
+            source_path=source_path,
+            output_path=object_path,
+            working_directory=output_directory,
+            listing_path=listing_path,
+        )
+        compilation = GnuCobolCompiler(
+            toolchain=toolchain,
+        ).compile(
+            request,
+        )
+        result = compilation.process_result
+
+        if result.stdout:
+            output_widget.append_line(
+                result.stdout,
+            )
+
+        if result.stderr:
+            output_widget.append_line(
+                result.stderr,
+            )
+
+        if not listing_path.is_file():
+            QMessageBox.warning(
+                parent_widget,
+                "View Listing File",
+                "The compiler did not produce a listing file.",
+            )
+            return
+
+        editor_tabs_widget.open_path(
+            listing_path,
+        )
+
+    return handle_view_listing

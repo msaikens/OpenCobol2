@@ -238,6 +238,45 @@ def test_omits_debug_symbols_flags_by_default() -> None:
     assert "-debug" not in command
 
 
+def test_adds_listing_flag_right_after_output_path() -> None:
+    toolchain = _toolchain()
+    request = CompileRequest(
+        source_path=Path("demo.cbl"),
+        output_path=Path("demo"),
+        listing_path=Path("demo.lst"),
+    )
+
+    command = build_gnucobol_command(
+        toolchain,
+        request,
+    )
+
+    assert command == (
+        str(toolchain.compiler_path),
+        "-x",
+        "-o",
+        "demo",
+        "-t",
+        "demo.lst",
+        "demo.cbl",
+    )
+
+
+def test_omits_listing_flag_by_default() -> None:
+    toolchain = _toolchain()
+    request = CompileRequest(
+        source_path=Path("demo.cbl"),
+        output_path=Path("demo"),
+    )
+
+    command = build_gnucobol_command(
+        toolchain,
+        request,
+    )
+
+    assert "-t" not in command
+
+
 def test_paths_with_spaces_remain_single_arguments() -> None:
     toolchain = _toolchain()
     source_path = (

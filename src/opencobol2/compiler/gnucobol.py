@@ -203,6 +203,14 @@ def build_gnucobol_command(
         )
     )
 
+    if request.listing_path is not None:
+        command.extend(
+            (
+                "-t",
+                str(request.listing_path),
+            )
+        )
+
     if request.standard is not None:
         command.append(f"-std={request.standard}")
 

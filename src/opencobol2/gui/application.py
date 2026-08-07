@@ -31,6 +31,7 @@ from opencobol2.gui.build_commands import (
     create_build_project_handler,
     create_clean_project_handler,
     create_rebuild_project_handler,
+    create_view_listing_handler,
 )
 from opencobol2.gui.call_stack_panel import CallStackWidget
 from opencobol2.gui.command_palette import (
@@ -790,6 +791,11 @@ def create_main_window(
                             editor_tabs_widget.format_active_tab()
                         )
                     ),
+                    BuiltInCommandIds.EDIT_TRIGGER_SUGGEST: (
+                        lambda context: (
+                            editor_tabs_widget.trigger_suggest_on_active_tab()
+                        )
+                    ),
                     BuiltInCommandIds.PROJECT_OPEN: (
                         create_project_open_handler(
                             project_explorer=project_explorer,
@@ -1067,6 +1073,22 @@ def create_main_window(
                             "Running a compiled program outside the "
                             "debugger isn't implemented yet -- use "
                             "Debug > Stop Debugging.",
+                            parent_widget_provider=(
+                                lambda: main_window_holder[0]
+                            ),
+                        )
+                    ),
+                    BuiltInCommandIds.BUILD_VIEW_LISTING_FILE: (
+                        create_view_listing_handler(
+                            editor_tabs_widget=editor_tabs_widget,
+                            project_explorer=project_explorer,
+                            compiler_profile_service=(
+                                compiler_profile_service
+                            ),
+                            toolchain_service=(
+                                gnucobol_toolchain_service
+                            ),
+                            output_widget=output_widget,
                             parent_widget_provider=(
                                 lambda: main_window_holder[0]
                             ),

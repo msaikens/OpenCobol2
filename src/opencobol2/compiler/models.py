@@ -4,7 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import os
 from pathlib import Path
+
+
+EXECUTABLE_SUFFIX: str = ".exe" if os.name == "nt" else ""
+"""The native executable filename suffix cobc's `-x` output actually uses.
+
+On Windows, cobc always forces its `-x` output to end in this suffix,
+*replacing* any other extension the requested `-o` name already has
+rather than appending to it (a requested `demo.debug` compiles to
+`demo.exe`, not `demo.debug.exe`). Any code that needs to predict the
+real file cobc will write -- rather than just pass a path straight
+through to `-o` -- must build the requested output path with this
+suffix already in place, not guess at cobc's renaming behavior.
+"""
 
 
 class CompilerOutputKind(StrEnum):
@@ -40,6 +54,7 @@ class CompileRequest:
     standard: str | None = None
     source_format: CobolSourceFormat | None = None
     debug_symbols: bool = False
+    listing_path: Path | None = None
     copy_directories: tuple[Path, ...] = ()
     library_directories: tuple[Path, ...] = ()
     libraries: tuple[str, ...] = ()
@@ -64,6 +79,13 @@ class CompileRequest:
                 self,
                 "working_directory",
                 Path(self.working_directory),
+            )
+
+        if self.listing_path is not None:
+            object.__setattr__(
+                self,
+                "listing_path",
+                Path(self.listing_path),
             )
 
         object.__setattr__(
