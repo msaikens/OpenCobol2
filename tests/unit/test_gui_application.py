@@ -11,7 +11,7 @@ from PySide6.QtGui import QPalette, QTextCursor
 from PySide6.QtPrintSupport import QPrintDialog
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
-from opencobol2.compiler import CompilerDiagnostic
+from opencobol2.compiler import CompilerDiagnostic, EXECUTABLE_SUFFIX
 from opencobol2.compiler.diagnostics import DiagnosticSeverity
 from opencobol2.compiler.providers import (
     CompilerProfile,
@@ -2293,7 +2293,7 @@ def test_build_project_menu_action_compiles_project_end_to_end(
     assert (
         tmp_path
         / project.properties.output_directory
-        / "main"
+        / f"main{EXECUTABLE_SUFFIX}"
     ).is_file()
 
 
@@ -4475,7 +4475,7 @@ def test_rebuild_project_menu_action_cleans_then_builds(
         output_directory / "stale.txt"
     ).exists()
     assert (
-        output_directory / "main"
+        output_directory / f"main{EXECUTABLE_SUFFIX}"
     ).is_file()
 
 
