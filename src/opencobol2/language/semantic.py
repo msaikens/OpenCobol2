@@ -19,7 +19,7 @@ references throughout the procedure division:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from opencobol2.compiler.diagnostics import (
@@ -81,6 +81,81 @@ class SymbolTable:
 
     data_symbols: tuple[DataSymbol, ...]
     procedure_symbols: tuple[ProcedureSymbol, ...]
+    _data_symbols_by_name: dict[
+        str,
+        tuple[DataSymbol, ...],
+    ] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _procedure_symbols_by_name: dict[
+        str,
+        tuple[ProcedureSymbol, ...],
+    ] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def _ensure_indexed(
+        self,
+    ) -> None:
+        """Build the name -> symbols indexes once, lazily, and cache them.
+
+        `find_data_symbols`/`find_procedure_symbols` are called once per
+        name *reference* during analysis (every MOVE target, DISPLAY
+        operand, and so on) against the same `SymbolTable` instance --
+        resolving them via a linear scan over every symbol made
+        analysis cost O(references x symbols), which is fine for a
+        typical small program but becomes seconds of GUI-thread-blocking
+        work on a file with thousands of data items and references
+        (measured: ~800ms of semantic analysis alone on a ~9,600-line
+        synthetic file, re-run on every keystroke since live diagnostics
+        analyze on every edit). Indexing once and reusing it drops that
+        to O(references + symbols).
+        """
+
+        if self._data_symbols_by_name is not None:
+            return
+
+        data_index: dict[
+            str,
+            list[DataSymbol],
+        ] = {}
+
+        for symbol in self.data_symbols:
+            data_index.setdefault(
+                symbol.name.upper(),
+                [],
+            ).append(
+                symbol,
+            )
+
+        self._data_symbols_by_name = {
+            name: tuple(symbols)
+            for name, symbols in data_index.items()
+        }
+
+        procedure_index: dict[
+            str,
+            list[ProcedureSymbol],
+        ] = {}
+
+        for symbol in self.procedure_symbols:
+            procedure_index.setdefault(
+                symbol.name.upper(),
+                [],
+            ).append(
+                symbol,
+            )
+
+        self._procedure_symbols_by_name = {
+            name: tuple(symbols)
+            for name, symbols in procedure_index.items()
+        }
 
     def find_data_symbols(
         self,
@@ -88,12 +163,11 @@ class SymbolTable:
     ) -> tuple[DataSymbol, ...]:
         """Return every data symbol matching a name, case-insensitively."""
 
-        normalized = name.upper()
+        self._ensure_indexed()
 
-        return tuple(
-            symbol
-            for symbol in self.data_symbols
-            if symbol.name.upper() == normalized
+        return self._data_symbols_by_name.get(
+            name.upper(),
+            (),
         )
 
     def find_procedure_symbols(
@@ -102,12 +176,11 @@ class SymbolTable:
     ) -> tuple[ProcedureSymbol, ...]:
         """Return every procedure symbol matching a name, case-insensitively."""
 
-        normalized = name.upper()
+        self._ensure_indexed()
 
-        return tuple(
-            symbol
-            for symbol in self.procedure_symbols
-            if symbol.name.upper() == normalized
+        return self._procedure_symbols_by_name.get(
+            name.upper(),
+            (),
         )
 
     def find_procedure_symbol(

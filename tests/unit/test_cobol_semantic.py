@@ -1006,3 +1006,152 @@ def test_real_legacy_file_analyzes_without_crashing(
     )
 
     assert result.symbol_table is not None
+
+
+# --- SymbolTable lookup indexing (correctness + scale) -----------------
+
+
+def test_find_data_symbols_is_case_insensitive() -> None:
+    result = _analyze(
+        _PROGRAM_HEADER
+        + "       DATA DIVISION.\n"
+        + "       WORKING-STORAGE SECTION.\n"
+        + "       01 WS-COUNT PIC 9(5).\n"
+    )
+
+    assert (
+        len(
+            result.symbol_table.find_data_symbols(
+                "ws-count",
+            )
+        )
+        == 1
+    )
+    assert (
+        result.symbol_table.find_data_symbols(
+            "ws-count",
+        )[0].name
+        == "WS-COUNT"
+    )
+
+
+def test_find_data_symbols_returns_every_duplicate_name() -> None:
+    """Two data items sharing a name (legal in different groups) must
+    both come back, exactly as the pre-indexing linear scan did --
+    ambiguous-reference detection in `_resolve_data_names` depends on
+    getting more than one match here."""
+
+    result = _analyze(
+        _PROGRAM_HEADER
+        + "       DATA DIVISION.\n"
+        + "       WORKING-STORAGE SECTION.\n"
+        + "       01 GROUP-ONE.\n"
+        + "           05 WS-FIELD PIC 9(5).\n"
+        + "       01 GROUP-TWO.\n"
+        + "           05 WS-FIELD PIC 9(5).\n"
+    )
+
+    assert (
+        len(
+            result.symbol_table.find_data_symbols(
+                "WS-FIELD",
+            )
+        )
+        == 2
+    )
+
+
+def test_find_data_symbols_returns_empty_for_an_unknown_name() -> None:
+    result = _analyze(
+        _PROGRAM_HEADER
+        + "       DATA DIVISION.\n"
+        + "       WORKING-STORAGE SECTION.\n"
+        + "       01 WS-COUNT PIC 9(5).\n"
+    )
+
+    assert (
+        result.symbol_table.find_data_symbols(
+            "NO-SUCH-NAME",
+        )
+        == ()
+    )
+
+
+def test_find_procedure_symbols_is_case_insensitive() -> None:
+    result = _analyze(
+        _PROGRAM_HEADER
+        + "       PROCEDURE DIVISION.\n"
+        + "       MAIN-PARA.\n"
+        + "           STOP RUN.\n"
+    )
+
+    assert (
+        result.symbol_table.find_procedure_symbol(
+            "main-para",
+        )
+        is not None
+    )
+
+
+def test_semantic_analysis_scales_to_many_data_items_and_references() -> (
+    None
+):
+    """Regression guard for a real perf bug: `find_data_symbols`/
+    `find_procedure_symbols` used to do a linear scan over every
+    symbol on every call, and `_resolve_data_names`/
+    `_resolve_identifier_tokens` call one of them once per name
+    *reference* -- O(references x symbols), which measured ~800ms of
+    GUI-thread-blocking work alone on a ~9,600-line synthetic file
+    with 4,800 data items and 4,800 references, re-run on every
+    keystroke since live diagnostics analyze on every edit (that's
+    what a user reported as the editor "hanging" while backspacing).
+    Indexing symbols by name once turned this into a lookup, not a
+    scan. The generous 3-second ceiling here is about catching an
+    accidental return to O(n^2), not asserting a specific speed.
+    """
+
+    import time
+
+    lines = [
+        "       IDENTIFICATION DIVISION.",
+        "       PROGRAM-ID. SCALETEST.",
+        "       DATA DIVISION.",
+        "       WORKING-STORAGE SECTION.",
+    ]
+
+    for index in range(2000):
+        lines.append(
+            f"       01 WS-FIELD-{index} PIC 9(5).",
+        )
+
+    lines.append(
+        "       PROCEDURE DIVISION.",
+    )
+
+    for index in range(2000):
+        lines.append(
+            f"       DISPLAY WS-FIELD-{index}.",
+        )
+
+    lines.append(
+        "       STOP RUN.",
+    )
+    source = "\n".join(
+        lines,
+    ) + "\n"
+
+    lex_result = tokenize_cobol_source(
+        source,
+    )
+    parse_result = parse_cobol_tokens(
+        lex_result,
+    )
+
+    start = time.perf_counter()
+    result = analyze_compilation_unit(
+        parse_result.unit,
+    )
+    elapsed = time.perf_counter() - start
+
+    assert len(result.symbol_table.data_symbols) == 2000
+    assert elapsed < 3.0

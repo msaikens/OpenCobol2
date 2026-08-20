@@ -157,6 +157,25 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
         self._cached_text = None
         self.rehighlight()
 
+    def apply_source_format(
+        self,
+        source_format: CobolSourceFormat,
+    ) -> None:
+        """Change the assumed column convention and rehighlight.
+
+        Fixed enforces the traditional sequence-area/indicator-column/
+        Area-A column positions; Free does not, treating every column as
+        ordinary code. Retokenizing against the wrong assumption is
+        exactly what mangles a line that doesn't conform to the one
+        currently in effect (its first several characters silently
+        swallowed as if they were the sequence area), so switching
+        formats needs a real retokenize, not just a repaint.
+        """
+
+        self._source_format = source_format
+        self._cached_text = None
+        self.rehighlight()
+
     def highlightBlock(
         self,
         text: str,
@@ -321,6 +340,7 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
         for diagnostic in compute_source_diagnostics(
             full_text,
             source_format=self._source_format,
+            lex_result=result,
         ):
             line_number = diagnostic.position.line - 1
             diagnostics_by_line.setdefault(

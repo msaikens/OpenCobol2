@@ -11,7 +11,11 @@ from PySide6.QtGui import QPalette, QTextCursor
 from PySide6.QtPrintSupport import QPrintDialog
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
-from opencobol2.compiler import CompilerDiagnostic, EXECUTABLE_SUFFIX
+from opencobol2.compiler import (
+    CobolSourceFormat,
+    CompilerDiagnostic,
+    EXECUTABLE_SUFFIX,
+)
 from opencobol2.compiler.diagnostics import DiagnosticSeverity
 from opencobol2.compiler.providers import (
     CompilerProfile,
@@ -1107,6 +1111,76 @@ def test_settings_menu_action_applies_font_and_guides_to_open_editor_tabs(
     )
 
 
+def test_settings_menu_action_applies_source_format_to_open_editor_tabs(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    """The Settings dialog's Source Format combo (Fixed/Free) persisted
+    correctly already, but nothing downstream ever read it -- Fixed
+    format's traditional sequence-area/indicator-column stripping ran
+    unconditionally regardless of what the user picked. Verifies the
+    fix end to end: picking Free through the real dialog actually
+    changes what the running editor reports for source that doesn't
+    conform to the fixed-format column convention."""
+
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "IDENTIFICATION DIVISION.\n"
+        "PROGRAM-ID. DEMO.\n"
+    )
+    assert len(editor.diagnostics) > 0
+
+    tools_menu = window.menus["tools"]
+    tools_menu.aboutToShow.emit()
+    settings_action = _find_action(
+        tools_menu,
+        "Settings",
+    )
+
+    def fake_exec(
+        dialog_self,
+    ):
+        free_index = (
+            dialog_self._source_format_combo.findData(
+                CobolSourceFormat.FREE,
+            )
+        )
+        dialog_self._source_format_combo.setCurrentIndex(
+            free_index,
+        )
+        dialog_self._apply_and_accept()
+        return 1
+
+    with patch.object(
+        SettingsDialog,
+        "exec",
+        fake_exec,
+    ):
+        settings_action.trigger()
+
+    assert editor.diagnostics == ()
+
+    editor_tabs.new_file()
+    new_editor = editor_tabs.widget(
+        editor_tabs.count() - 1,
+    )
+    assert (
+        new_editor._source_format
+        == CobolSourceFormat.FREE
+    )
+
+
 def test_settings_menu_action_toggles_code_folding_on_open_editor_tabs(
     qapp,
     tmp_path: Path,
@@ -1130,6 +1204,12 @@ def test_settings_menu_action_toggles_code_folding_on_open_editor_tabs(
         "       MAIN-PARA.\n"
         '           DISPLAY "HI".\n',
     )
+    # Fold-range recompute is debounced (see
+    # `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`) -- simulate it elapsing
+    # without a real wait, the same way the completion debounce tests
+    # already do.
+    editor._fold_range_debounce_timer.stop()
+    editor._update_fold_ranges()
 
     assert editor._folding_enabled is True
     assert len(editor._fold_ranges) > 0

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from opencobol2.compiler import CobolSourceFormat
 from opencobol2.language.diagnostics import LexDiagnostic, ParseDiagnostic
-from opencobol2.language.lexer import tokenize_cobol_source
+from opencobol2.language.lexer import LexResult, tokenize_cobol_source
 from opencobol2.language.parser import parse_cobol_tokens
 from opencobol2.language.semantic import analyze_compilation_unit
 
@@ -23,6 +23,7 @@ def compute_source_diagnostics(
     source_format: CobolSourceFormat = (
         CobolSourceFormat.FIXED
     ),
+    lex_result: LexResult | None = None,
 ) -> tuple[LexDiagnostic | ParseDiagnostic, ...]:
     """Lex, parse, and semantically analyze source text, merging diagnostics.
 
@@ -30,15 +31,24 @@ def compute_source_diagnostics(
     there rather than breaking the editor. Parsing only runs if lexing
     didn't raise; semantic analysis only runs if parsing produced a
     compilation unit.
+
+    `lex_result` lets a caller that already tokenized this exact
+    `source_text` (the syntax highlighter, which needs its own token
+    list for coloring regardless of diagnostics) skip a second,
+    redundant lex pass over the same source -- purely a performance
+    shortcut, identical in outcome to leaving it unset. Passing a
+    `LexResult` for *different* text than `source_text` is a caller
+    bug this function has no way to detect.
     """
 
-    try:
-        lex_result = tokenize_cobol_source(
-            source_text,
-            source_format=source_format,
-        )
-    except Exception:
-        return ()
+    if lex_result is None:
+        try:
+            lex_result = tokenize_cobol_source(
+                source_text,
+                source_format=source_format,
+            )
+        except Exception:
+            return ()
 
     diagnostics: list[
         LexDiagnostic | ParseDiagnostic

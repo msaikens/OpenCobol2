@@ -17,6 +17,7 @@ from PySide6.QtGui import (
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
+from opencobol2.compiler import CobolSourceFormat
 from opencobol2.documents import DocumentService
 from opencobol2.gui.editor import (
     _BREAKPOINT_MARKER_WIDTH,
@@ -3185,6 +3186,12 @@ def _build_foldable_tab_with_a_collapsed_fold(tabs) -> None:
         "           END-IF\n"
         "           STOP RUN.\n"
     )
+    # Fold-range recompute is debounced (see
+    # `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`) -- simulate it elapsing
+    # without a real wait, the same way the completion debounce tests
+    # already do.
+    editor._fold_range_debounce_timer.stop()
+    editor._update_fold_ranges()
     editor.toggle_fold(
         5,
     )
@@ -4589,4 +4596,164 @@ def test_column_selection_with_a_range_replaces_selected_text(
     assert (
         editor.toPlainText()
         == "Zaa\nZbb\n"
+    )
+
+
+# --- Source format (Fixed vs. Free column convention) -----------------
+
+
+_NOT_COLUMN_CONFORMING_SOURCE = (
+    "IDENTIFICATION DIVISION.\n"
+    "PROGRAM-ID. DEMO.\n"
+    "PROCEDURE DIVISION.\n"
+    "STOP RUN.\n"
+)
+
+
+def test_fixed_format_default_reports_spurious_column_diagnostics(
+    qapp,
+) -> None:
+    """Documents the exact bug being fixed: Fixed format (the
+    unconditional default before `apply_source_format` existed) treats
+    columns 1-6 of every line as the sequence area and column 7 as the
+    indicator column, so source that doesn't start its code at column 8
+    gets its first several characters silently swallowed -- mangling
+    `IDENTIFICATION` into `ICATION` here and raising a bogus "Expected
+    IDENTIFICATION DIVISION" error despite the line being entirely
+    correct COBOL."""
+
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=_NOT_COLUMN_CONFORMING_SOURCE,
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+
+    assert len(editor.diagnostics) > 0
+
+
+def test_free_format_reports_no_spurious_column_diagnostics(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=_NOT_COLUMN_CONFORMING_SOURCE,
+        theme=_build_theme(),
+        source_format=CobolSourceFormat.FREE,
+    )
+    editor.resize(600, 400)
+    editor.show()
+
+    assert editor.diagnostics == ()
+
+
+def test_free_format_highlights_the_first_word_on_a_line(
+    qapp,
+) -> None:
+    """Fixed format's sequence-area stripping is also why `IDENTIFICATION`
+    doesn't get colored while `DIVISION` does on the same line when the
+    source isn't column-conforming -- Free format doesn't strip anything."""
+
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=_NOT_COLUMN_CONFORMING_SOURCE,
+        theme=_build_theme(),
+        source_format=CobolSourceFormat.FREE,
+    )
+    editor.resize(600, 400)
+    editor.show()
+
+    highlighted = {
+        token.text
+        for tokens in editor._highlighter._tokens_by_line.values()
+        for token in tokens
+    }
+    assert "IDENTIFICATION" in highlighted
+    assert "DIVISION" in highlighted
+
+
+def test_apply_source_format_updates_diagnostics_live(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text=_NOT_COLUMN_CONFORMING_SOURCE,
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    assert len(editor.diagnostics) > 0
+
+    editor.apply_source_format(
+        CobolSourceFormat.FREE,
+    )
+
+    assert editor.diagnostics == ()
+
+
+def test_split_secondary_view_inherits_the_primary_source_format(
+    qapp,
+) -> None:
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+        source_format=CobolSourceFormat.FREE,
+    )
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+
+    pane = tabs.widget(0)
+    assert (
+        pane.secondary_editor._source_format
+        == CobolSourceFormat.FREE
+    )
+
+
+def test_editor_tabs_apply_source_format_updates_every_open_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        _NOT_COLUMN_CONFORMING_SOURCE,
+    )
+    assert len(editor.diagnostics) > 0
+
+    tabs.apply_source_format(
+        CobolSourceFormat.FREE,
+    )
+
+    assert editor.diagnostics == ()
+
+
+def test_editor_tabs_apply_source_format_updates_both_split_views(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+    pane = tabs.widget(0)
+
+    tabs.apply_source_format(
+        CobolSourceFormat.FREE,
+    )
+
+    assert (
+        pane.primary_editor._source_format
+        == CobolSourceFormat.FREE
+    )
+    assert (
+        pane.secondary_editor._source_format
+        == CobolSourceFormat.FREE
     )

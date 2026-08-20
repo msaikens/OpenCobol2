@@ -55,7 +55,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from opencobol2.compiler import CompilerDiagnostic
+from opencobol2.compiler import CobolSourceFormat, CompilerDiagnostic
 from opencobol2.documents import (
     DocumentAlreadyOpenError,
     DocumentDecodeError,
@@ -113,6 +113,20 @@ _COBOL_SOURCE_EXTENSIONS = (
 _COMPLETION_DEBOUNCE_MILLISECONDS = 150
 _COMPLETION_POPUP_WIDTH = 320
 _COMPLETION_POPUP_HEIGHT = 160
+
+# Fold ranges come from a full lex+parse of the whole document (see
+# `compute_fold_ranges`) -- on a large file that's real, measured work
+# (roughly a second on a ~10,000-line file), and it was previously
+# re-run synchronously on every single keystroke via `textChanged`, on
+# top of the highlighter's own equally-expensive lex+parse+semantic
+# pass for diagnostics. Held-key auto-repeat (e.g. backspacing quickly)
+# queues keystrokes faster than that can keep up, which is exactly what
+# reads as "the editor stopped responding" -- it's real, growing,
+# unbounded work piling up on the GUI thread, not a hang or a bug in
+# any one keystroke. Debouncing it the same way completion already is
+# means a burst of edits collapses into one recompute after they
+# settle, rather than one full recompute per keystroke.
+_FOLD_RANGE_DEBOUNCE_MILLISECONDS = 150
 
 # Hyphen-inclusive, the same word-boundary convention
 # `rename_symbol_at_cursor` and `opencobol2.language.completion` both
@@ -630,6 +644,9 @@ class SourceEditorWidget(QPlainTextEdit):
         theme: Theme,
         editor_settings: EditorSettings | None = None,
         guide_settings: CobolGuideSettings | None = None,
+        source_format: CobolSourceFormat = (
+            CobolSourceFormat.FIXED
+        ),
         path: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -638,6 +655,8 @@ class SourceEditorWidget(QPlainTextEdit):
         super().__init__(
             parent,
         )
+
+        self._source_format = source_format
 
         # Coding-area column guides (and printing) are painted from
         # "one visual row == one logical line starting at column 1" --
@@ -699,6 +718,7 @@ class SourceEditorWidget(QPlainTextEdit):
             CobolSyntaxHighlighter(
                 self.document(),
                 theme=theme,
+                source_format=self._source_format,
             )
             if self.is_cobol_source
             else None
@@ -750,6 +770,19 @@ class SourceEditorWidget(QPlainTextEdit):
         ] | None = None
         self._active_snippet_index = 0
 
+        self._fold_range_debounce_timer = QTimer(
+            self,
+        )
+        self._fold_range_debounce_timer.setSingleShot(
+            True,
+        )
+        self._fold_range_debounce_timer.setInterval(
+            _FOLD_RANGE_DEBOUNCE_MILLISECONDS,
+        )
+        self._fold_range_debounce_timer.timeout.connect(
+            self._update_fold_ranges,
+        )
+
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
         )
@@ -759,9 +792,12 @@ class SourceEditorWidget(QPlainTextEdit):
         # changes which lines should fold, but never fires
         # blockCountChanged -- leaving toggle_fold() working off a
         # now-stale range for a fold-start line that may not even be a
-        # fold-start anymore.
+        # fold-start anymore. Debounced (see
+        # `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`'s comment above) so a
+        # burst of edits recomputes once after they settle rather than
+        # once per keystroke.
         self.textChanged.connect(
-            self._update_fold_ranges,
+            self._schedule_fold_range_update,
         )
         self.updateRequest.connect(
             self._update_line_number_area,
@@ -856,6 +892,7 @@ class SourceEditorWidget(QPlainTextEdit):
             self._highlighter = CobolSyntaxHighlighter(
                 self.document(),
                 theme=theme,
+                source_format=self._source_format,
             )
 
         # Folding is gated on `self._highlighter is not None`;
@@ -894,12 +931,38 @@ class SourceEditorWidget(QPlainTextEdit):
             primary.document(),
         )
         self.is_cobol_source = primary.is_cobol_source
+        self._source_format = primary._source_format
 
         # Folding is gated on `self._highlighter is not None`, which
         # `is_cobol_source` alone doesn't update.
         self.apply_editor_settings(
             self._editor_settings,
         )
+
+    def apply_source_format(
+        self,
+        source_format: CobolSourceFormat,
+    ) -> None:
+        """Change which COBOL column convention this editor assumes.
+
+        Fixed enforces the traditional sequence-area (columns 1-6),
+        indicator column (7), and Area A (8-11) positions; Free treats
+        every column as ordinary code. Affects highlighting, folding,
+        and every on-demand language service this editor calls
+        (completion, hover, signature help, go to definition, find
+        references, quick fixes) -- all of them default to Fixed
+        unless told otherwise, so this is the one place that has to
+        keep them all in sync with each other.
+        """
+
+        self._source_format = source_format
+
+        if self._highlighter is not None:
+            self._highlighter.apply_source_format(
+                source_format,
+            )
+
+        self._update_fold_ranges()
 
     def _apply_minimap_colors(
         self,
@@ -2148,6 +2211,7 @@ class SourceEditorWidget(QPlainTextEdit):
             fix = compute_quick_fix(
                 text,
                 diagnostic,
+                source_format=self._source_format,
             )
 
             if fix is not None:
@@ -2565,6 +2629,7 @@ class SourceEditorWidget(QPlainTextEdit):
             self.toPlainText(),
             line=cursor.blockNumber() + 1,
             column=cursor.columnNumber() + 1,
+            source_format=self._source_format,
         )
 
         if location is None:
@@ -2588,6 +2653,7 @@ class SourceEditorWidget(QPlainTextEdit):
             self.toPlainText(),
             line=cursor.blockNumber() + 1,
             column=cursor.columnNumber() + 1,
+            source_format=self._source_format,
         )
 
     def rename_symbol_at_cursor(
@@ -2746,6 +2812,7 @@ class SourceEditorWidget(QPlainTextEdit):
             text,
             line=line,
             column=column,
+            source_format=self._source_format,
         )
 
         if signature_help is not None:
@@ -2759,6 +2826,7 @@ class SourceEditorWidget(QPlainTextEdit):
             text,
             line=line,
             column=column,
+            source_format=self._source_format,
         )
 
     def _reveal_find_bar(
@@ -2986,6 +3054,7 @@ class SourceEditorWidget(QPlainTextEdit):
             self.toPlainText(),
             line=line,
             column=column,
+            source_format=self._source_format,
         )
 
         if not items:
@@ -3596,6 +3665,22 @@ class SourceEditorWidget(QPlainTextEdit):
             document.characterCount(),
         )
 
+    def _schedule_fold_range_update(
+        self,
+    ) -> None:
+        """Debounce a fold-range recompute (see the module-level comment
+        on `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`).
+
+        `QTimer.start()` on an already-running single-shot timer just
+        resets its remaining time rather than queueing a second firing,
+        so a burst of keystrokes (in particular Backspace's own
+        auto-repeat) collapses into one recompute after they stop,
+        exactly like `CobolSyntaxHighlighter._schedule_full_rehighlight`
+        already does for the same reason.
+        """
+
+        self._fold_range_debounce_timer.start()
+
     def _update_fold_ranges(
         self,
         _new_block_count: int = 0,
@@ -3606,6 +3691,7 @@ class SourceEditorWidget(QPlainTextEdit):
 
         self._fold_ranges = compute_fold_ranges(
             self.toPlainText(),
+            source_format=self._source_format,
         )
         valid_start_lines = {
             fold_range.start_line
@@ -3775,6 +3861,9 @@ class EditorTabsWidget(QTabWidget):
         theme: Theme,
         editor_settings: EditorSettings | None = None,
         guide_settings: CobolGuideSettings | None = None,
+        source_format: CobolSourceFormat = (
+            CobolSourceFormat.FIXED
+        ),
         parent: QWidget | None = None,
     ) -> None:
         """Build an empty editor tab area backed by a document service."""
@@ -3811,6 +3900,7 @@ class EditorTabsWidget(QTabWidget):
             if guide_settings is not None
             else CobolGuideSettings()
         )
+        self._source_format = source_format
 
         self.setTabsClosable(
             True,
@@ -3985,6 +4075,22 @@ class EditorTabsWidget(QTabWidget):
             ):
                 editor.apply_guide_settings(
                     guide_settings,
+                )
+
+    def apply_source_format(
+        self,
+        source_format: CobolSourceFormat,
+    ) -> None:
+        """Change every open tab's assumed COBOL column convention."""
+
+        self._source_format = source_format
+
+        for index in range(self.count()):
+            for editor in self._all_editors_at(
+                index,
+            ):
+                editor.apply_source_format(
+                    source_format,
                 )
 
     def open_path(
@@ -4178,6 +4284,7 @@ class EditorTabsWidget(QTabWidget):
             theme=self._theme,
             editor_settings=self._editor_settings,
             guide_settings=self._guide_settings,
+            source_format=self._source_format,
             path=workspace_document.document.path,
         )
         document_id = workspace_document.document_id
@@ -4270,6 +4377,7 @@ class EditorTabsWidget(QTabWidget):
         ):
             return compute_outline(
                 editor.toPlainText(),
+                source_format=editor._source_format,
             )
 
         return ()

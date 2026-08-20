@@ -392,6 +392,12 @@ def create_main_window(
             .cobol
             .guides
         ),
+        source_format=(
+            resolved_settings_service
+            .current
+            .cobol
+            .default_source_format
+        ),
     )
     project_explorer.file_double_clicked.connect(
         editor_tabs_widget.open_path,
@@ -683,6 +689,9 @@ def create_main_window(
         )
         editor_tabs_widget.apply_guide_settings(
             settings.cobol.guides,
+        )
+        editor_tabs_widget.apply_source_format(
+            settings.cobol.default_source_format,
         )
 
         git_service.set_executable_path(

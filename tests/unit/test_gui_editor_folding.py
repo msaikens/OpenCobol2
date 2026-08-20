@@ -304,6 +304,13 @@ def test_in_place_edit_with_no_line_count_change_refreshes_fold_ranges(
         "           DISPLAY 1",
     )
 
+    # Fold-range recompute is debounced (see
+    # `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`) -- simulate it elapsing
+    # without a real wait, the same way the completion debounce tests
+    # already do.
+    editor._fold_range_debounce_timer.stop()
+    editor._update_fold_ranges()
+
     starts_after = {
         fold_range.start_line
         for fold_range in editor._fold_ranges
@@ -336,6 +343,13 @@ def test_editing_that_shifts_fold_lines_expands_everything_safely(
         "       NEW-PARA.\n"
         '           DISPLAY "NEW".\n',
     )
+
+    # Fold-range recompute is debounced (see
+    # `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`) -- simulate it elapsing
+    # without a real wait, the same way the completion debounce tests
+    # already do.
+    editor._fold_range_debounce_timer.stop()
+    editor._update_fold_ranges()
 
     assert editor._collapsed_start_lines == set()
     assert _visible_lines(

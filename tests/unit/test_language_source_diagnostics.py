@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from opencobol2.language import compute_source_diagnostics
+from opencobol2.language import (
+    compute_source_diagnostics,
+    tokenize_cobol_source,
+)
 
 
 def test_lex_diagnostic_is_surfaced() -> None:
@@ -134,3 +137,33 @@ def test_diagnostic_position_carries_line_and_column() -> None:
     assert diagnostics
     assert diagnostics[0].position.line == 1
     assert diagnostics[0].position.column > 0
+
+
+def test_passing_a_precomputed_lex_result_matches_computing_it_internally() -> (
+    None
+):
+    """`lex_result` is purely a performance shortcut for a caller (the
+    syntax highlighter) that already tokenized this exact text for its
+    own purposes -- passing one must produce byte-for-byte the same
+    diagnostics as leaving it unset and letting this function lex the
+    text itself."""
+
+    source = (
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01 WS-X PIC X VALUE 'UNCLOSED\n"
+    )
+
+    without_precomputed = compute_source_diagnostics(
+        source,
+    )
+
+    lex_result = tokenize_cobol_source(
+        source,
+    )
+    with_precomputed = compute_source_diagnostics(
+        source,
+        lex_result=lex_result,
+    )
+
+    assert with_precomputed == without_precomputed
