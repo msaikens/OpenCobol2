@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -27,6 +28,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPaintEvent,
+    QPalette,
     QResizeEvent,
     QTextBlock,
     QTextCursor,
@@ -45,6 +47,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QTabWidget,
     QTextEdit,
     QToolTip,
@@ -143,6 +146,56 @@ def _is_cobol_source(
         path is None
         or path.suffix.lower() in _COBOL_SOURCE_EXTENSIONS
     )
+
+
+# Column (box) selection extends with Alt+Shift+Arrow, the same
+# keybinding Visual Studio and Notepad++ both already use for it --
+# deliberately not a separate "mode toggle" command, since the modifier
+# combination itself is the trigger.
+_COLUMN_SELECTION_ARROW_KEYS = frozenset(
+    (
+        Qt.Key.Key_Up,
+        Qt.Key.Key_Down,
+        Qt.Key.Key_Left,
+        Qt.Key.Key_Right,
+    )
+)
+
+
+@dataclass
+class _ColumnSelectionState:
+    """A rectangular (box) selection spanning one or more lines.
+
+    `anchor_*` is where the box started; `active_*` is the corner last
+    moved by keyboard or mouse. Columns are plain character offsets
+    within each line's text, not display/tab-expanded columns -- the
+    same simplification the rest of this module already makes rather
+    than reconciling literal-tab columns against the lexer's own
+    tab-expanded ones (see `keyPressEvent`'s docstring).
+    """
+
+    anchor_line: int
+    anchor_column: int
+    active_line: int
+    active_column: int
+
+
+# Multi-cursor navigation replicates the primary cursor's own movement
+# at every secondary cursor so their relative positions stay aligned --
+# Home/End are deliberately excluded here since QTextCursor's
+# StartOfLine/EndOfLine operations already work identically regardless
+# of which cursor calls them.
+_MULTI_CURSOR_MOVEMENTS: dict[
+    Qt.Key,
+    QTextCursor.MoveOperation,
+] = {
+    Qt.Key.Key_Left: QTextCursor.MoveOperation.Left,
+    Qt.Key.Key_Right: QTextCursor.MoveOperation.Right,
+    Qt.Key.Key_Up: QTextCursor.MoveOperation.Up,
+    Qt.Key.Key_Down: QTextCursor.MoveOperation.Down,
+    Qt.Key.Key_Home: QTextCursor.MoveOperation.StartOfLine,
+    Qt.Key.Key_End: QTextCursor.MoveOperation.EndOfLine,
+}
 
 
 class _LineNumberArea(QWidget):
@@ -559,6 +612,16 @@ class SourceEditorWidget(QPlainTextEdit):
     breakpoints_changed = Signal()
     """Emitted whenever a breakpoint is toggled on or off."""
 
+    focused = Signal()
+    """Emitted when this editor gains keyboard focus.
+
+    A split tab's `_SplitEditorPane` listens for this on each of its
+    views to track which one is "active" -- the one every
+    active-tab-scoped operation (go to definition, format document, and
+    so on) should act on -- since a plain-QSplitter tab has no other
+    signal for "which of my two children does the user mean right now."
+    """
+
     def __init__(
         self,
         *,
@@ -594,6 +657,15 @@ class SourceEditorWidget(QPlainTextEdit):
         self._current_line_color = QColor(
             theme.colors.current_line_highlight,
         )
+        self._secondary_cursor_color = QColor(
+            theme.colors.editor_foreground,
+        )
+        self._secondary_cursors: list[
+            QTextCursor,
+        ] = []
+        self._column_selection: (
+            _ColumnSelectionState | None
+        ) = None
         self._line_number_area = _LineNumberArea(
             self,
         )
@@ -701,7 +773,7 @@ class SourceEditorWidget(QPlainTextEdit):
             self._update_minimap,
         )
         self.cursorPositionChanged.connect(
-            self._highlight_current_line,
+            self._refresh_extra_selections,
         )
 
         self.apply_editor_settings(
@@ -713,7 +785,7 @@ class SourceEditorWidget(QPlainTextEdit):
             initial_text,
         )
         self._update_line_number_area_width()
-        self._highlight_current_line()
+        self._refresh_extra_selections()
         self._update_fold_ranges()
 
     def apply_theme(
@@ -728,7 +800,10 @@ class SourceEditorWidget(QPlainTextEdit):
         self._current_line_color = QColor(
             theme.colors.current_line_highlight,
         )
-        self._highlight_current_line()
+        self._secondary_cursor_color = QColor(
+            theme.colors.editor_foreground,
+        )
+        self._refresh_extra_selections()
         self._line_number_area.update()
         self._apply_minimap_colors(
             theme,
@@ -786,6 +861,42 @@ class SourceEditorWidget(QPlainTextEdit):
         # Folding is gated on `self._highlighter is not None`;
         # re-running this recomputes _folding_enabled and expands any
         # folds if support was just lost.
+        self.apply_editor_settings(
+            self._editor_settings,
+        )
+
+    def become_split_view_of(
+        self,
+        primary: "SourceEditorWidget",
+    ) -> None:
+        """Turn this editor into a second view of another editor's document.
+
+        Used only when splitting a tab. This editor was constructed
+        normally against its own throwaway document (built its own
+        highlighter if COBOL-recognized, computed fold ranges for its
+        starting text, and so on) -- all of that is discarded here in
+        favor of sharing `primary`'s real `QTextDocument`, so highlighting
+        for this view comes from `primary`'s own highlighter running
+        against the document they now both point at, not a second one of
+        this editor's own. Fold ranges, bookmarks, and breakpoints are
+        NOT shared -- they're per-view state, so this view starts with
+        none regardless of what `primary` already has, and the two can
+        diverge from here as each is worked in independently.
+        """
+
+        if self._highlighter is not None:
+            self._highlighter.setDocument(
+                None,
+            )
+            self._highlighter = None
+
+        self.setDocument(
+            primary.document(),
+        )
+        self.is_cobol_source = primary.is_cobol_source
+
+        # Folding is gated on `self._highlighter is not None`, which
+        # `is_cobol_source` alone doesn't update.
         self.apply_editor_settings(
             self._editor_settings,
         )
@@ -1079,6 +1190,22 @@ class SourceEditorWidget(QPlainTextEdit):
         ):
             return
 
+        if self._handle_column_selection_key(
+            event,
+        ):
+            return
+
+        if (
+            self._secondary_cursors
+            and self._handle_multi_cursor_key(
+                event,
+            )
+        ):
+            self._maybe_trigger_completion_after_key(
+                event,
+            )
+            return
+
         if (
             event.key() == Qt.Key.Key_Space
             and event.modifiers()
@@ -1105,6 +1232,22 @@ class SourceEditorWidget(QPlainTextEdit):
             event,
         )
 
+        self._maybe_trigger_completion_after_key(
+            event,
+        )
+
+    def _maybe_trigger_completion_after_key(
+        self,
+        event: QKeyEvent,
+    ) -> None:
+        """Debounce-trigger or dismiss completion after a handled keypress.
+
+        Shared between ordinary single-cursor typing and multi-cursor
+        typing (`_handle_multi_cursor_key`), which bypasses
+        `super().keyPressEvent()` entirely and so needs this called
+        explicitly instead.
+        """
+
         if not self.is_cobol_source:
             return
 
@@ -1114,6 +1257,507 @@ class SourceEditorWidget(QPlainTextEdit):
             self._completion_debounce_timer.start()
         else:
             self._close_completion_popup()
+
+    def _handle_multi_cursor_key(
+        self,
+        event: QKeyEvent,
+    ) -> bool:
+        """Replicate an editing/navigation key across every secondary cursor.
+
+        Only reached when at least one secondary cursor exists (see
+        `add_cursor_above`/`add_cursor_below`/`mousePressEvent`).
+        Navigation keys move every cursor by the same operation so their
+        relative positions stay aligned; typing, Backspace, Delete,
+        Enter, and Tab (when `insert_spaces` is on) are replicated at
+        every cursor as one undo step. Anything else falls through to
+        ordinary single-cursor handling, which implicitly collapses back
+        to just the primary cursor -- a plain click does this too, via
+        `mousePressEvent`.
+        """
+
+        if event.key() == Qt.Key.Key_Escape:
+            self.clear_secondary_cursors()
+            return True
+
+        movement = _MULTI_CURSOR_MOVEMENTS.get(
+            event.key(),
+        )
+
+        if movement is not None:
+            mode = (
+                QTextCursor.MoveMode.KeepAnchor
+                if event.modifiers()
+                & Qt.KeyboardModifier.ShiftModifier
+                else QTextCursor.MoveMode.MoveAnchor
+            )
+            primary = self.textCursor()
+            primary.movePosition(
+                movement,
+                mode,
+            )
+            self.setTextCursor(
+                primary,
+            )
+
+            for cursor in self._secondary_cursors:
+                cursor.movePosition(
+                    movement,
+                    mode,
+                )
+
+            self._refresh_extra_selections()
+            self.ensureCursorVisible()
+            return True
+
+        if event.key() == Qt.Key.Key_Backspace:
+            self._apply_at_every_cursor(
+                lambda cursor: cursor.deletePreviousChar()
+            )
+            return True
+
+        if event.key() == Qt.Key.Key_Delete:
+            self._apply_at_every_cursor(
+                lambda cursor: cursor.deleteChar()
+            )
+            return True
+
+        if event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            self._apply_at_every_cursor(
+                lambda cursor: cursor.insertText(
+                    "\n",
+                )
+            )
+            return True
+
+        if (
+            event.key() == Qt.Key.Key_Tab
+            and self._editor_settings.insert_spaces
+            and not self.textCursor().hasSelection()
+            and not any(
+                cursor.hasSelection()
+                for cursor in self._secondary_cursors
+            )
+        ):
+            tab_width = self._editor_settings.tab_width
+
+            def insert_tab_spaces(
+                cursor: QTextCursor,
+            ) -> None:
+                column = cursor.positionInBlock()
+                spaces_needed = tab_width - (
+                    column % tab_width
+                )
+                cursor.insertText(
+                    " " * spaces_needed,
+                )
+
+            self._apply_at_every_cursor(
+                insert_tab_spaces,
+            )
+            return True
+
+        text = event.text()
+
+        if text and text.isprintable():
+            self._apply_at_every_cursor(
+                lambda cursor: cursor.insertText(
+                    text,
+                )
+            )
+            return True
+
+        return False
+
+    def _apply_at_every_cursor(
+        self,
+        edit,
+    ) -> None:
+        """Apply `edit(cursor)` at the primary cursor and every secondary
+        one, as a single undo step.
+
+        Each `QTextCursor` involved is already registered with this
+        editor's `QTextDocument`, so Qt keeps every OTHER cursor's
+        position correctly adjusted as each edit runs in turn --
+        iteration order doesn't matter, the same "live cursor" behavior
+        `SourceEditorWidget.toggle_bookmark_at_cursor` already relies on
+        for tracking a bookmarked line across edits elsewhere.
+        """
+
+        primary = self.textCursor()
+        primary.beginEditBlock()
+        edit(
+            primary,
+        )
+
+        for cursor in self._secondary_cursors:
+            edit(
+                cursor,
+            )
+
+        primary.endEditBlock()
+        self.setTextCursor(
+            primary,
+        )
+        self._refresh_extra_selections()
+
+    def add_cursor_above(
+        self,
+    ) -> None:
+        """Add a secondary cursor directly above the last one, same column."""
+
+        self._add_cursor_relative(
+            -1,
+        )
+
+    def add_cursor_below(
+        self,
+    ) -> None:
+        """Add a secondary cursor directly below the last one, same column."""
+
+        self._add_cursor_relative(
+            1,
+        )
+
+    def _add_cursor_relative(
+        self,
+        direction: int,
+    ) -> None:
+        reference_cursor = (
+            self._secondary_cursors[-1]
+            if self._secondary_cursors
+            else self.textCursor()
+        )
+        reference_block = reference_cursor.block()
+        target_block = (
+            reference_block.next()
+            if direction > 0
+            else reference_block.previous()
+        )
+
+        if not target_block.isValid():
+            return
+
+        column = min(
+            reference_cursor.positionInBlock(),
+            max(
+                0,
+                target_block.length() - 1,
+            ),
+        )
+        new_cursor = QTextCursor(
+            target_block,
+        )
+        new_cursor.setPosition(
+            target_block.position() + column,
+        )
+        self._secondary_cursors.append(
+            new_cursor,
+        )
+        self._refresh_extra_selections()
+        self.viewport().update()
+
+    def clear_secondary_cursors(
+        self,
+    ) -> None:
+        """Collapse back to just the primary cursor."""
+
+        if not self._secondary_cursors:
+            return
+
+        self._secondary_cursors = []
+        self._refresh_extra_selections()
+        self.viewport().update()
+
+    @property
+    def has_secondary_cursors(
+        self,
+    ) -> bool:
+        """Return whether any secondary (multi-)cursor is active."""
+
+        return bool(
+            self._secondary_cursors,
+        )
+
+    def _handle_column_selection_key(
+        self,
+        event: QKeyEvent,
+    ) -> bool:
+        """Extend, edit through, or exit an active column (box) selection.
+
+        Alt+Shift+Arrow starts or extends the box, the same keybinding
+        Visual Studio and Notepad++ both already use for it. Any other
+        arrow key exits box mode and falls through to ordinary movement
+        (returns `False` after clearing the state) rather than staying
+        active underneath a now-unrelated cursor position.
+        """
+
+        modifiers = event.modifiers()
+        is_box_extend = (
+            modifiers
+            == (
+                Qt.KeyboardModifier.AltModifier
+                | Qt.KeyboardModifier.ShiftModifier
+            )
+            and event.key() in _COLUMN_SELECTION_ARROW_KEYS
+        )
+
+        if is_box_extend:
+            self._extend_column_selection_keyboard(
+                event.key(),
+            )
+            return True
+
+        if self._column_selection is None:
+            return False
+
+        if event.key() in _COLUMN_SELECTION_ARROW_KEYS:
+            self._clear_column_selection()
+            return False
+
+        if event.key() == Qt.Key.Key_Escape:
+            self._clear_column_selection()
+            return True
+
+        if event.key() == Qt.Key.Key_Backspace:
+            self._apply_column_edit(
+                self._column_backspace,
+            )
+            return True
+
+        if event.key() == Qt.Key.Key_Delete:
+            self._apply_column_edit(
+                self._column_delete,
+            )
+            return True
+
+        text = event.text()
+
+        if text and text.isprintable():
+            self._apply_column_edit(
+                lambda cursor: cursor.insertText(
+                    text,
+                )
+            )
+            return True
+
+        return False
+
+    @staticmethod
+    def _column_backspace(
+        cursor: QTextCursor,
+    ) -> None:
+        """Delete one character back, but never cross into the line above.
+
+        `cursor` is confined to one line's column range by
+        `_apply_column_edit`, but `QTextCursor.deletePreviousChar()`
+        doesn't know that -- called at column 0 it would delete the
+        newline before this line instead, silently merging it into the
+        line above. Column editing should never do that.
+        """
+
+        if cursor.hasSelection():
+            cursor.removeSelectedText()
+        elif cursor.positionInBlock() > 0:
+            cursor.deletePreviousChar()
+
+    @staticmethod
+    def _column_delete(
+        cursor: QTextCursor,
+    ) -> None:
+        """Delete one character forward, but never cross into the line below.
+
+        The mirror image of `_column_backspace`'s guard: at the last
+        column of a line, `QTextCursor.deleteChar()` would delete the
+        newline after it, merging the next line into this one.
+        """
+
+        if cursor.hasSelection():
+            cursor.removeSelectedText()
+        elif (
+            cursor.positionInBlock()
+            < cursor.block().length() - 1
+        ):
+            cursor.deleteChar()
+
+    def _apply_column_edit(
+        self,
+        edit,
+    ) -> None:
+        """Apply `edit(cursor)` to each line's column-selection span.
+
+        `cursor` is positioned as that line's column range: collapsed at
+        the column if the selection is zero-width (just a multi-line
+        caret), or spanning between the anchor/active columns as a real
+        selection otherwise. A line shorter than the range's start
+        column is skipped entirely -- there's no "virtual space" padding
+        past the end of a line, the same trade-off Notepad++'s box
+        selection makes.
+
+        Every processed line ends up at the same relative column after a
+        uniform edit, so the selection collapses to a zero-width caret
+        there afterward -- without this, a second keystroke would insert
+        at the SAME pre-edit column again on every line (since the state
+        was never told the first keystroke moved anything), landing
+        before the first character instead of after it and reversing the
+        apparent typing order one keystroke at a time.
+        """
+
+        state = self._column_selection
+
+        if state is None:
+            return
+
+        start_line = min(
+            state.anchor_line,
+            state.active_line,
+        )
+        end_line = max(
+            state.anchor_line,
+            state.active_line,
+        )
+        start_column = min(
+            state.anchor_column,
+            state.active_column,
+        )
+        end_column = max(
+            state.anchor_column,
+            state.active_column,
+        )
+
+        primary = self.textCursor()
+        primary.beginEditBlock()
+        new_column = start_column
+
+        for line in range(
+            start_line,
+            end_line + 1,
+        ):
+            block = self.document().findBlockByNumber(
+                line,
+            )
+            line_length = max(
+                0,
+                block.length() - 1,
+            )
+
+            if not block.isValid() or line_length < start_column:
+                continue
+
+            line_end_column = min(
+                end_column,
+                line_length,
+            )
+            cursor = QTextCursor(
+                block,
+            )
+            cursor.setPosition(
+                block.position() + start_column,
+            )
+
+            if line_end_column > start_column:
+                cursor.setPosition(
+                    block.position() + line_end_column,
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+
+            edit(
+                cursor,
+            )
+            new_column = cursor.positionInBlock()
+
+        primary.endEditBlock()
+        state.anchor_column = new_column
+        state.active_column = new_column
+        self._refresh_extra_selections()
+
+    def _begin_column_selection(
+        self,
+        pos: QPoint,
+    ) -> None:
+        cursor = self.cursorForPosition(
+            pos,
+        )
+        line = cursor.blockNumber()
+        column = cursor.positionInBlock()
+        self._column_selection = _ColumnSelectionState(
+            anchor_line=line,
+            anchor_column=column,
+            active_line=line,
+            active_column=column,
+        )
+        self._refresh_extra_selections()
+        self.viewport().update()
+
+    def _extend_column_selection_keyboard(
+        self,
+        key: Qt.Key,
+    ) -> None:
+        if self._column_selection is None:
+            primary = self.textCursor()
+            line = primary.blockNumber()
+            column = primary.positionInBlock()
+            self._column_selection = _ColumnSelectionState(
+                anchor_line=line,
+                anchor_column=column,
+                active_line=line,
+                active_column=column,
+            )
+
+        state = self._column_selection
+        block_count = self.document().blockCount()
+
+        if key == Qt.Key.Key_Up:
+            state.active_line = max(
+                0,
+                state.active_line - 1,
+            )
+        elif key == Qt.Key.Key_Down:
+            state.active_line = min(
+                block_count - 1,
+                state.active_line + 1,
+            )
+        elif key == Qt.Key.Key_Left:
+            state.active_column = max(
+                0,
+                state.active_column - 1,
+            )
+        elif key == Qt.Key.Key_Right:
+            state.active_column += 1
+
+        active_block = self.document().findBlockByNumber(
+            state.active_line,
+        )
+        clamped_column = min(
+            state.active_column,
+            max(
+                0,
+                active_block.length() - 1,
+            ),
+        )
+        cursor = QTextCursor(
+            active_block,
+        )
+        cursor.setPosition(
+            active_block.position() + clamped_column,
+        )
+        self.setTextCursor(
+            cursor,
+        )
+        self._refresh_extra_selections()
+        self.ensureCursorVisible()
+
+    def _clear_column_selection(
+        self,
+    ) -> None:
+        if self._column_selection is None:
+            return
+
+        self._column_selection = None
+        self._refresh_extra_selections()
+        self.viewport().update()
 
     def _handle_snippet_session_key(
         self,
@@ -1190,10 +1834,75 @@ class SourceEditorWidget(QPlainTextEdit):
         self,
         event: QMouseEvent,
     ) -> None:
-        """Dismiss the completion popup before any click repositions the cursor."""
+        """Dismiss the completion popup before any click repositions the cursor.
+
+        Ctrl+Alt+Click adds a secondary (multi-)cursor at the clicked
+        position. Alt+Click (without Ctrl) starts a column (box)
+        selection, extended on drag via `mouseMoveEvent`. Any other
+        click collapses both back to an ordinary single cursor before
+        falling through to normal click handling.
+        """
 
         self._close_completion_popup()
+
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers()
+            == (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.AltModifier
+            )
+        ):
+            self._secondary_cursors.append(
+                self.cursorForPosition(
+                    event.position().toPoint(),
+                )
+            )
+            self._refresh_extra_selections()
+            self.viewport().update()
+            return
+
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers()
+            == Qt.KeyboardModifier.AltModifier
+        ):
+            self.clear_secondary_cursors()
+            self._begin_column_selection(
+                event.position().toPoint(),
+            )
+            return
+
+        self.clear_secondary_cursors()
+        self._clear_column_selection()
         super().mousePressEvent(
+            event,
+        )
+
+    def mouseMoveEvent(
+        self,
+        event: QMouseEvent,
+    ) -> None:
+        """Extend an in-progress column (box) selection while dragging."""
+
+        if (
+            self._column_selection is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            cursor = self.cursorForPosition(
+                event.position().toPoint(),
+            )
+            self._column_selection.active_line = (
+                cursor.blockNumber()
+            )
+            self._column_selection.active_column = (
+                cursor.positionInBlock()
+            )
+            self._refresh_extra_selections()
+            self.viewport().update()
+            return
+
+        super().mouseMoveEvent(
             event,
         )
 
@@ -1207,6 +1916,17 @@ class SourceEditorWidget(QPlainTextEdit):
         super().focusOutEvent(
             event,
         )
+
+    def focusInEvent(
+        self,
+        event: QFocusEvent,
+    ) -> None:
+        """Announce focus so a split tab knows which view is active."""
+
+        super().focusInEvent(
+            event,
+        )
+        self.focused.emit()
 
     def _position_minimap_area(
         self,
@@ -1239,7 +1959,87 @@ class SourceEditorWidget(QPlainTextEdit):
         self._paint_fold_indicators(
             painter,
         )
+        self._paint_multi_caret_overlays(
+            painter,
+        )
         painter.end()
+
+    def _paint_multi_caret_overlays(
+        self,
+        painter: QPainter,
+    ) -> None:
+        """Draw every secondary cursor's caret, plus a column selection's.
+
+        Neither is an `ExtraSelection` (see `_refresh_extra_selections`):
+        a zero-width selection paints nothing, which is exactly the case
+        for a caret with no selected text, so both are drawn here as
+        plain thin vertical lines instead.
+        """
+
+        if (
+            not self._secondary_cursors
+            and self._column_selection is None
+        ):
+            return
+
+        painter.save()
+        painter.setPen(
+            self._secondary_cursor_color,
+        )
+
+        for cursor in self._secondary_cursors:
+            rect = self.cursorRect(
+                cursor,
+            )
+            painter.drawLine(
+                rect.topLeft(),
+                rect.bottomLeft(),
+            )
+
+        if self._column_selection is not None:
+            state = self._column_selection
+            start_line = min(
+                state.anchor_line,
+                state.active_line,
+            )
+            end_line = max(
+                state.anchor_line,
+                state.active_line,
+            )
+
+            for line in range(
+                start_line,
+                end_line + 1,
+            ):
+                block = self.document().findBlockByNumber(
+                    line,
+                )
+
+                if not block.isValid():
+                    continue
+
+                column = min(
+                    state.active_column,
+                    max(
+                        0,
+                        block.length() - 1,
+                    ),
+                )
+                cursor = QTextCursor(
+                    block,
+                )
+                cursor.setPosition(
+                    block.position() + column,
+                )
+                rect = self.cursorRect(
+                    cursor,
+                )
+                painter.drawLine(
+                    rect.topLeft(),
+                    rect.bottomLeft(),
+                )
+
+        painter.restore()
 
     def event(
         self,
@@ -2293,9 +3093,18 @@ class SourceEditorWidget(QPlainTextEdit):
         ):
             self._update_line_number_area_width()
 
-    def _highlight_current_line(
+    def _refresh_extra_selections(
         self,
     ) -> None:
+        """Rebuild every `ExtraSelection`: current-line highlight plus
+        any active column (box) selection.
+
+        Secondary multi-cursor carets are NOT extra selections -- a
+        zero-width `ExtraSelection` paints nothing, which is exactly
+        the case for a caret with no selected text. They're drawn
+        directly in `paintEvent` instead (`_paint_multi_caret_overlays`).
+        """
+
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(
             self._current_line_color,
@@ -2310,8 +3119,105 @@ class SourceEditorWidget(QPlainTextEdit):
         self.setExtraSelections(
             [
                 selection,
+                *self._column_selection_extra_selections(),
             ]
         )
+
+    def _column_selection_extra_selections(
+        self,
+    ) -> list[QTextEdit.ExtraSelection]:
+        """Highlight ranges for an active column selection, one per line.
+
+        Only lines where the selected column range is non-empty get a
+        highlight -- a zero-width column selection (just a multi-line
+        caret, no actual text spanned yet) has nothing to highlight here;
+        `_paint_multi_caret_overlays` draws its caret lines instead.
+        """
+
+        state = self._column_selection
+
+        if state is None:
+            return []
+
+        start_line = min(
+            state.anchor_line,
+            state.active_line,
+        )
+        end_line = max(
+            state.anchor_line,
+            state.active_line,
+        )
+        start_column = min(
+            state.anchor_column,
+            state.active_column,
+        )
+        end_column = max(
+            state.anchor_column,
+            state.active_column,
+        )
+
+        if start_column == end_column:
+            return []
+
+        highlight_color = self.palette().color(
+            QPalette.ColorRole.Highlight,
+        )
+        highlighted_text_color = self.palette().color(
+            QPalette.ColorRole.HighlightedText,
+        )
+        selections: list[QTextEdit.ExtraSelection] = []
+
+        for line in range(
+            start_line,
+            end_line + 1,
+        ):
+            block = self.document().findBlockByNumber(
+                line,
+            )
+
+            if not block.isValid():
+                continue
+
+            line_length = max(
+                0,
+                block.length() - 1,
+            )
+            selection_start = min(
+                start_column,
+                line_length,
+            )
+            selection_end = min(
+                end_column,
+                line_length,
+            )
+
+            if selection_end <= selection_start:
+                continue
+
+            cursor = QTextCursor(
+                block,
+            )
+            cursor.setPosition(
+                block.position() + selection_start,
+            )
+            cursor.setPosition(
+                block.position() + selection_end,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+
+            line_selection = QTextEdit.ExtraSelection()
+            line_selection.format.setBackground(
+                highlight_color,
+            )
+            line_selection.format.setForeground(
+                highlighted_text_color,
+            )
+            line_selection.cursor = cursor
+            selections.append(
+                line_selection,
+            )
+
+        return selections
 
     def handle_line_number_area_click(
         self,
@@ -2717,6 +3623,139 @@ class SourceEditorWidget(QPlainTextEdit):
         self._line_number_area.update()
 
 
+class _SplitEditorPane(QWidget):
+    """One tab page: one or two `SourceEditorWidget` views onto one document.
+
+    Every tab in `EditorTabsWidget` is one of these, even when it holds
+    only the single, un-split view most tabs will ever have -- keeping
+    that case uniform rather than special-cased is what lets every
+    "active tab" operation elsewhere in this module keep working
+    unchanged: they all resolve through `EditorTabsWidget._editor_at`/
+    `_active_editor_widget`, which unwrap this container, rather than
+    assuming a tab's page widget IS a `SourceEditorWidget` directly.
+
+    Splitting shares the underlying `QTextDocument` between both views
+    (see `SourceEditorWidget.become_split_view_of`), so edits in either
+    are visible in both immediately. Which view is "active" -- the one
+    active-tab operations act on -- is whichever last had keyboard focus.
+    """
+
+    def __init__(
+        self,
+        primary_editor: SourceEditorWidget,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(
+            parent,
+        )
+
+        self.primary_editor = primary_editor
+        self.secondary_editor: SourceEditorWidget | None = None
+        self._active_editor = primary_editor
+
+        self._splitter = QSplitter(
+            Qt.Orientation.Horizontal,
+            self,
+        )
+        self._splitter.addWidget(
+            primary_editor,
+        )
+
+        layout = QHBoxLayout(
+            self,
+        )
+        layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        layout.addWidget(
+            self._splitter,
+        )
+
+        primary_editor.focused.connect(
+            lambda: self.set_active_editor(
+                primary_editor,
+            )
+        )
+
+    @property
+    def is_split(
+        self,
+    ) -> bool:
+        """Return whether a second view is currently open."""
+
+        return self.secondary_editor is not None
+
+    def editors(
+        self,
+    ) -> tuple[SourceEditorWidget, ...]:
+        """Return every open view, primary first."""
+
+        if self.secondary_editor is None:
+            return (
+                self.primary_editor,
+            )
+
+        return (
+            self.primary_editor,
+            self.secondary_editor,
+        )
+
+    def active_editor(
+        self,
+    ) -> SourceEditorWidget:
+        """Return whichever view last had keyboard focus."""
+
+        return self._active_editor
+
+    def set_active_editor(
+        self,
+        editor: SourceEditorWidget,
+    ) -> None:
+        self._active_editor = editor
+
+    def add_secondary(
+        self,
+        editor: SourceEditorWidget,
+    ) -> None:
+        """Add a second view, focusing it immediately."""
+
+        self.secondary_editor = editor
+        self._splitter.addWidget(
+            editor,
+        )
+        editor.focused.connect(
+            lambda: self.set_active_editor(
+                editor,
+            )
+        )
+        self.set_active_editor(
+            editor,
+        )
+        editor.setFocus()
+
+    def remove_secondary(
+        self,
+    ) -> None:
+        """Close the second view, if one is open."""
+
+        if self.secondary_editor is None:
+            return
+
+        editor = self.secondary_editor
+        self.secondary_editor = None
+        self.set_active_editor(
+            self.primary_editor,
+        )
+        editor.setParent(
+            None,
+        )
+        editor.deleteLater()
+        self.primary_editor.setFocus()
+
+
 class EditorTabsWidget(QTabWidget):
     """Docks every open document from a `DocumentService` as its own tab."""
 
@@ -2856,11 +3895,12 @@ class EditorTabsWidget(QTabWidget):
         self._theme = theme
 
         for index in range(self.count()):
-            self._editor_at(
+            for editor in self._all_editors_at(
                 index,
-            ).apply_theme(
-                theme,
-            )
+            ):
+                editor.apply_theme(
+                    theme,
+                )
 
     def apply_editor_settings(
         self,
@@ -2871,11 +3911,12 @@ class EditorTabsWidget(QTabWidget):
         self._editor_settings = editor_settings
 
         for index in range(self.count()):
-            self._editor_at(
+            for editor in self._all_editors_at(
                 index,
-            ).apply_editor_settings(
-                editor_settings,
-            )
+            ):
+                editor.apply_editor_settings(
+                    editor_settings,
+                )
 
         self._configure_autosave_timer()
 
@@ -2939,11 +3980,12 @@ class EditorTabsWidget(QTabWidget):
         self._guide_settings = guide_settings
 
         for index in range(self.count()):
-            self._editor_at(
+            for editor in self._all_editors_at(
                 index,
-            ).apply_guide_settings(
-                guide_settings,
-            )
+            ):
+                editor.apply_guide_settings(
+                    guide_settings,
+                )
 
     def open_path(
         self,
@@ -2983,7 +4025,7 @@ class EditorTabsWidget(QTabWidget):
         self.open_path(
             path,
         )
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3099,7 +4141,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Show the find bar on the active tab, if any."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if editor is not None:
             editor.show_find_bar()
@@ -3109,7 +4151,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Show the find-and-replace bar on the active tab, if any."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if editor is not None:
             editor.show_replace_bar()
@@ -3204,9 +4246,12 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Re-announce the active document changing on a same-tab edit."""
 
-        if self._editor_for(
-            document_id,
-        ) is self.currentWidget():
+        if (
+            self._index_for(
+                document_id,
+            )
+            == self.currentIndex()
+        ):
             self.active_document_changed.emit()
 
     def current_outline(
@@ -3214,7 +4259,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> tuple[OutlineNode, ...]:
         """Return the active tab's COBOL outline, or `()` if none applies."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if (
             isinstance(
@@ -3238,7 +4283,7 @@ class EditorTabsWidget(QTabWidget):
         background tabs' diagnostics aren't tracked.
         """
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3269,7 +4314,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> bool:
         """Jump the active tab's cursor to whatever definition it's on."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3285,7 +4330,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> int:
         """Rename every reference to whatever the active tab's cursor is on."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3314,7 +4359,7 @@ class EditorTabsWidget(QTabWidget):
         and lets the user cancel instead.
         """
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3350,7 +4395,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> bool:
         """Format the active tab's document contents, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3365,7 +4410,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> bool:
         """Show completion candidates for the active tab, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3376,12 +4421,38 @@ class EditorTabsWidget(QTabWidget):
         editor.trigger_suggest()
         return True
 
+    def add_cursor_above_on_active_tab(
+        self,
+    ) -> None:
+        """Add a secondary cursor above the active tab's, if one is open."""
+
+        editor = self._active_editor_widget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.add_cursor_above()
+
+    def add_cursor_below_on_active_tab(
+        self,
+    ) -> None:
+        """Add a secondary cursor below the active tab's, if one is open."""
+
+        editor = self._active_editor_widget()
+
+        if isinstance(
+            editor,
+            SourceEditorWidget,
+        ):
+            editor.add_cursor_below()
+
     def undo_active_tab(
         self,
     ) -> None:
         """Undo the active tab's last edit, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3394,7 +4465,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Redo the active tab's last undone edit, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3407,7 +4478,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Cut the active tab's selection to the clipboard, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3420,7 +4491,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Copy the active tab's selection to the clipboard, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3433,7 +4504,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Paste the clipboard into the active tab, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3446,7 +4517,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Delete the active tab's selection (or the next character), if open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3470,7 +4541,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Select the active tab's entire contents, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3484,7 +4555,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Move the active tab's cursor to a 1-based line, if one is open."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3504,7 +4575,7 @@ class EditorTabsWidget(QTabWidget):
         back to, which an untitled document doesn't have.
         """
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if not isinstance(
             editor,
@@ -3543,7 +4614,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Move the active tab's cursor to a 1-based line/column."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3559,7 +4630,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Toggle a bookmark on the active tab's cursor line, if any."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3624,7 +4695,7 @@ class EditorTabsWidget(QTabWidget):
     ) -> None:
         """Toggle a breakpoint on the active tab's cursor line, if any."""
 
-        editor = self.currentWidget()
+        editor = self._active_editor_widget()
 
         if isinstance(
             editor,
@@ -3836,6 +4907,29 @@ class EditorTabsWidget(QTabWidget):
             ),
             self._theme,
         )
+
+        pane = self.widget(
+            index,
+        )
+        secondary = (
+            pane.secondary_editor
+            if isinstance(
+                pane,
+                _SplitEditorPane,
+            )
+            else None
+        )
+
+        if secondary is not None:
+            # The secondary view never has its own highlighter (see
+            # `become_split_view_of`) -- it just needs its own
+            # `is_cobol_source` flag and folding gate re-evaluated to
+            # match, not a fresh `refresh_cobol_support` call.
+            secondary.is_cobol_source = editor.is_cobol_source
+            secondary.apply_editor_settings(
+                self._editor_settings,
+            )
+
         self._refresh_tab_chrome(
             editor.document_id,
         )
@@ -3904,11 +4998,60 @@ class EditorTabsWidget(QTabWidget):
         self,
         index: int,
     ) -> SourceEditorWidget:
-        """Return the editor widget at a tab index."""
+        """Return a tab index's primary editor view.
 
-        return self.widget(
+        Most tabs' page widget IS their `SourceEditorWidget` directly --
+        only a split tab's page widget is a `_SplitEditorPane` wrapping
+        two of them (see `toggle_split_on_active_tab`), so unwrapping is
+        the exception here, not the rule.
+        """
+
+        widget = self.widget(
             index,
         )
+
+        if isinstance(
+            widget,
+            _SplitEditorPane,
+        ):
+            return widget.primary_editor
+
+        return widget
+
+    def _all_editors_at(
+        self,
+        index: int,
+    ) -> tuple[SourceEditorWidget, ...]:
+        """Return every open view at a tab index (both, if split)."""
+
+        widget = self.widget(
+            index,
+        )
+
+        if isinstance(
+            widget,
+            _SplitEditorPane,
+        ):
+            return widget.editors()
+
+        return (
+            widget,
+        )
+
+    def _active_editor_widget(
+        self,
+    ) -> SourceEditorWidget | None:
+        """Return whichever view last had focus in the active tab, if any."""
+
+        pane = self.currentWidget()
+
+        if isinstance(
+            pane,
+            _SplitEditorPane,
+        ):
+            return pane.active_editor()
+
+        return pane
 
     def _editor_for(
         self,
@@ -3939,7 +5082,16 @@ class EditorTabsWidget(QTabWidget):
                 index,
             )
 
-            if (
+            if isinstance(
+                widget,
+                _SplitEditorPane,
+            ):
+                if any(
+                    editor.document_id == document_id
+                    for editor in widget.editors()
+                ):
+                    return index
+            elif (
                 isinstance(
                     widget,
                     SourceEditorWidget,
@@ -3949,6 +5101,114 @@ class EditorTabsWidget(QTabWidget):
                 return index
 
         return -1
+
+    def toggle_split_on_active_tab(
+        self,
+    ) -> None:
+        """Split the active tab into two views of one document, or unsplit it.
+
+        Both views share one Qt `QTextDocument` (see
+        `SourceEditorWidget.become_split_view_of`), so edits in either are
+        visible in both immediately. The new view starts with none of the
+        first view's fold ranges, bookmarks, or breakpoints -- those are
+        each view's own state, and can diverge from here as each is
+        worked in independently.
+
+        Only a split tab's page widget is ever a `_SplitEditorPane` --
+        every other tab's page widget IS its `SourceEditorWidget`
+        directly, unchanged from before this feature existed, so
+        splitting/unsplitting replaces the tab's page widget in place
+        (remove, then reinsert at the same index) rather than always
+        paying for a wrapper only one tab in many will ever use.
+        """
+
+        index = self.currentIndex()
+
+        if index < 0:
+            return
+
+        widget = self.widget(
+            index,
+        )
+        title = self.tabText(
+            index,
+        )
+        tooltip = self.tabToolTip(
+            index,
+        )
+
+        if isinstance(
+            widget,
+            _SplitEditorPane,
+        ):
+            primary = widget.primary_editor
+            widget.remove_secondary()
+            self.removeTab(
+                index,
+            )
+            primary.setParent(
+                None,
+            )
+            self.insertTab(
+                index,
+                primary,
+                title,
+            )
+            self.setTabToolTip(
+                index,
+                tooltip,
+            )
+            self.setCurrentIndex(
+                index,
+            )
+            widget.deleteLater()
+            return
+
+        if not isinstance(
+            widget,
+            SourceEditorWidget,
+        ):
+            return
+
+        primary = widget
+        secondary = SourceEditorWidget(
+            document_id=primary.document_id,
+            initial_text="",
+            theme=self._theme,
+            editor_settings=self._editor_settings,
+            guide_settings=self._guide_settings,
+        )
+        secondary.become_split_view_of(
+            primary,
+        )
+        secondary.bookmarks_changed.connect(
+            self.bookmarks_changed.emit,
+        )
+        secondary.breakpoints_changed.connect(
+            self.breakpoints_changed.emit,
+        )
+
+        self.removeTab(
+            index,
+        )
+        pane = _SplitEditorPane(
+            primary,
+        )
+        pane.add_secondary(
+            secondary,
+        )
+        self.insertTab(
+            index,
+            pane,
+            title,
+        )
+        self.setTabToolTip(
+            index,
+            tooltip,
+        )
+        self.setCurrentIndex(
+            index,
+        )
 
 
 def _display_name(

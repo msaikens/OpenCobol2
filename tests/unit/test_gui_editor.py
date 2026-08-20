@@ -6,14 +6,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QHelpEvent, QKeyEvent, QTextCursor, QTextDocument
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import (
+    QHelpEvent,
+    QKeyEvent,
+    QMouseEvent,
+    QTextCursor,
+    QTextDocument,
+)
 from PySide6.QtPrintSupport import QPrinter
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from opencobol2.documents import DocumentService
 from opencobol2.gui.editor import (
     _BREAKPOINT_MARKER_WIDTH,
+    _SplitEditorPane,
     EditorTabsWidget,
     SourceEditorWidget,
 )
@@ -3839,4 +3846,747 @@ def test_build_context_menu_has_no_quick_fix_action_without_a_diagnostic(
     assert not any(
         "Insert missing closing" in text
         for text in action_texts
+    )
+
+
+# --- Split editors -----------------------------------------------------
+
+
+def test_toggle_split_wraps_the_tab_in_a_split_pane(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+
+    tabs.toggle_split_on_active_tab()
+
+    pane = tabs.widget(0)
+    assert isinstance(pane, _SplitEditorPane)
+    assert pane.is_split
+    assert len(pane.editors()) == 2
+
+
+def test_split_views_share_the_same_document(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+
+    pane = tabs.widget(0)
+    pane.primary_editor.setPlainText(
+        "shared text",
+    )
+
+    assert (
+        pane.secondary_editor.toPlainText()
+        == "shared text"
+    )
+
+
+def test_split_view_has_no_highlighter_of_its_own(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    """Highlighting for a split's second view comes from the primary
+    view's highlighter running against their shared document -- a
+    second highlighter attached to the same document would double up
+    and fight the first one over the same character formats."""
+
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "IDENTIFICATION DIVISION.\n",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+
+    tabs.toggle_split_on_active_tab()
+
+    pane = tabs.widget(0)
+    assert pane.primary_editor._highlighter is not None
+    assert pane.secondary_editor._highlighter is None
+
+
+def test_toggle_split_again_closes_the_split(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+
+    tabs.toggle_split_on_active_tab()
+
+    editor = tabs.widget(0)
+    assert isinstance(editor, SourceEditorWidget)
+    assert not isinstance(editor, _SplitEditorPane)
+
+
+def test_split_preserves_tab_title_and_tooltip(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
+        "x",
+    )
+    tabs = _build_tabs()
+    tabs.open_path(
+        file_path,
+    )
+    title_before = tabs.tabText(0)
+    tooltip_before = tabs.tabToolTip(0)
+
+    tabs.toggle_split_on_active_tab()
+
+    assert tabs.tabText(0) == title_before
+    assert tabs.tabToolTip(0) == tooltip_before
+
+
+def test_toggle_split_on_active_tab_does_nothing_without_an_open_tab(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+
+    tabs.toggle_split_on_active_tab()
+
+    assert tabs.count() == 0
+
+
+def test_active_editor_widget_tracks_focus_between_split_views(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+    pane = tabs.widget(0)
+
+    pane.secondary_editor.setFocus()
+    pane.secondary_editor.focused.emit()
+
+    assert tabs._active_editor_widget() is pane.secondary_editor
+
+    pane.primary_editor.setFocus()
+    pane.primary_editor.focused.emit()
+
+    assert tabs._active_editor_widget() is pane.primary_editor
+
+
+def test_apply_theme_recolors_both_split_views(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+    pane = tabs.widget(0)
+
+    tabs.apply_theme(
+        _build_theme(
+            LIGHT_THEME_ID,
+        )
+    )
+
+    assert (
+        pane.primary_editor._current_line_color
+        == pane.secondary_editor._current_line_color
+    )
+
+
+def test_apply_editor_settings_updates_both_split_views(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+    pane = tabs.widget(0)
+
+    tabs.apply_editor_settings(
+        EditorSettings(
+            font_family="Courier New",
+            font_size=20,
+        )
+    )
+
+    assert (
+        pane.primary_editor.font().family()
+        == "Courier New"
+    )
+    assert (
+        pane.secondary_editor.font().family()
+        == "Courier New"
+    )
+
+
+def test_edit_in_secondary_view_marks_the_document_modified(
+    qapp,
+) -> None:
+    """A same-document edit from either view must reach the domain
+    document model and refresh tab chrome, not just the primary view's
+    own `textChanged` connection made at tab-creation time."""
+
+    document_service = DocumentService()
+    tabs = EditorTabsWidget(
+        document_service=document_service,
+        theme=_build_theme(),
+    )
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+    pane = tabs.widget(0)
+
+    pane.secondary_editor.setPlainText(
+        "typed in the second view",
+    )
+
+    workspace_document = document_service.workspace.get_document(
+        pane.primary_editor.document_id,
+    )
+    assert workspace_document.document.is_modified
+    assert (
+        workspace_document.document.text
+        == "typed in the second view"
+    )
+    assert tabs.tabText(0).endswith("*")
+
+
+def test_save_as_syncs_cobol_support_to_the_secondary_view(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    tabs.toggle_split_on_active_tab()
+    pane = tabs.widget(0)
+    assert pane.secondary_editor.is_cobol_source
+
+    with patch.object(
+        QFileDialog,
+        "getSaveFileName",
+        return_value=(
+            str(
+                tmp_path / "plain.txt",
+            ),
+            "",
+        ),
+    ):
+        tabs.save_active_document_as()
+
+    assert not pane.primary_editor.is_cobol_source
+    assert not pane.secondary_editor.is_cobol_source
+
+
+# --- Multiple cursors ----------------------------------------------------
+
+
+def _press_key(
+    editor: SourceEditorWidget,
+    key: Qt.Key,
+    modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
+    text: str = "",
+) -> None:
+    """Simulate a keypress directly against one editor widget."""
+
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        key,
+        modifiers,
+        text,
+    )
+    editor.keyPressEvent(event)
+
+
+def test_add_cursor_below_adds_a_secondary_cursor(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+
+    editor.add_cursor_below()
+
+    assert editor.has_secondary_cursors
+    assert (
+        editor._secondary_cursors[0].blockNumber()
+        == 1
+    )
+    assert (
+        editor._secondary_cursors[0].positionInBlock()
+        == 2
+    )
+
+
+def test_add_cursor_above_adds_a_secondary_cursor(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(2, 3)
+
+    editor.add_cursor_above()
+
+    assert (
+        editor._secondary_cursors[0].blockNumber()
+        == 0
+    )
+
+
+def test_add_cursor_below_clamps_to_a_shorter_line(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="line one\nx\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 9)
+
+    editor.add_cursor_below()
+
+    assert (
+        editor._secondary_cursors[0].positionInBlock()
+        == 1
+    )
+
+
+def test_add_cursor_below_does_nothing_past_the_last_line(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(2)
+    editor.go_to_line(2, 1)
+
+    editor.add_cursor_below()
+
+    assert not editor.has_secondary_cursors
+
+
+def test_typing_replicates_at_every_cursor(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="line0\nline1\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 6)
+    editor.add_cursor_below()
+
+    _press_key(
+        editor,
+        Qt.Key.Key_X,
+        text="X",
+    )
+
+    assert (
+        editor.toPlainText()
+        == "line0X\nline1X\n"
+    )
+
+
+def test_typing_is_undoable_as_one_step(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="line0\nline1\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 6)
+    editor.add_cursor_below()
+
+    _press_key(
+        editor,
+        Qt.Key.Key_X,
+        text="X",
+    )
+    editor.undo()
+
+    assert editor.toPlainText() == "line0\nline1\n"
+
+
+def test_backspace_replicates_at_every_cursor(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="line0\nline1\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 6)
+    editor.add_cursor_below()
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Backspace,
+    )
+
+    assert (
+        editor.toPlainText()
+        == "line\nline\n"
+    )
+
+
+def test_escape_clears_secondary_cursors(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+    editor.add_cursor_below()
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Escape,
+    )
+
+    assert not editor.has_secondary_cursors
+
+
+def test_plain_click_clears_secondary_cursors(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+    editor.add_cursor_below()
+
+    click = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(1, 1),
+        QPointF(1, 1),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    editor.mousePressEvent(click)
+
+    assert not editor.has_secondary_cursors
+
+
+def test_alt_click_adds_a_secondary_cursor(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 1)
+    point = editor.cursorRect().center()
+    position = QPointF(
+        point,
+    )
+
+    click = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        position,
+        position,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.AltModifier
+        ),
+    )
+    editor.mousePressEvent(click)
+
+    assert editor.has_secondary_cursors
+
+
+def test_movement_key_moves_every_cursor(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+    editor.add_cursor_below()
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Right,
+    )
+
+    assert (
+        editor._secondary_cursors[0].positionInBlock()
+        == 3
+    )
+
+
+def test_add_cursor_above_on_active_tab_delegates_to_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.go_to_line(1, 1)
+    editor.setPlainText(
+        "line0\nline1\n",
+    )
+    editor.go_to_line(2, 1)
+
+    tabs.add_cursor_above_on_active_tab()
+
+    assert editor.has_secondary_cursors
+
+
+def test_add_cursor_below_on_active_tab_delegates_to_the_active_editor(
+    qapp,
+) -> None:
+    tabs = _build_tabs()
+    tabs.new_file()
+    editor = tabs.widget(0)
+    editor.setPlainText(
+        "line0\nline1\n",
+    )
+    editor.go_to_line(1, 1)
+
+    tabs.add_cursor_below_on_active_tab()
+
+    assert editor.has_secondary_cursors
+
+
+# --- Column (box) selection ------------------------------------------
+
+
+_ALT_SHIFT = (
+    Qt.KeyboardModifier.AltModifier
+    | Qt.KeyboardModifier.ShiftModifier
+)
+
+
+def test_alt_shift_down_starts_and_extends_a_column_selection(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Down,
+        _ALT_SHIFT,
+    )
+
+    assert editor._column_selection is not None
+    assert editor._column_selection.anchor_line == 0
+    assert editor._column_selection.active_line == 1
+
+
+def test_typing_inserts_at_every_line_in_the_column_selection(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nbbbb\ncccc\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 2)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_X,
+        text="X",
+    )
+
+    assert (
+        editor.toPlainText()
+        == "aXaaa\nbXbbb\ncXccc\n"
+    )
+
+
+def test_consecutive_typing_does_not_reverse_order(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nbbbb\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 2)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(editor, Qt.Key.Key_X, text="X")
+    _press_key(editor, Qt.Key.Key_Y, text="Y")
+
+    assert (
+        editor.toPlainText()
+        == "aXYaaa\nbXYbbb\n"
+    )
+
+
+def test_backspace_at_column_zero_does_not_merge_lines(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nbbbb\ncccc\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 1)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Backspace,
+    )
+
+    assert editor.toPlainText() == "aaaa\nbbbb\ncccc\n"
+    assert editor.document().blockCount() == 4
+
+
+def test_delete_at_end_of_line_does_not_merge_lines(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nbbbb\ncccc\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 5)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Delete,
+    )
+
+    assert editor.toPlainText() == "aaaa\nbbbb\ncccc\n"
+    assert editor.document().blockCount() == 4
+
+
+def test_backspace_within_a_line_deletes_one_character_per_line(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nbbbb\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 3)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Backspace,
+    )
+
+    assert (
+        editor.toPlainText()
+        == "aaa\nbbb\n"
+    )
+
+
+def test_column_selection_skips_lines_shorter_than_the_range(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nx\ncccc\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 3)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Z,
+        text="Z",
+    )
+
+    assert (
+        editor.toPlainText()
+        == "aaZaa\nx\nccZcc\n"
+    )
+
+
+def test_plain_arrow_exits_column_selection_mode(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Right,
+    )
+
+    assert editor._column_selection is None
+
+
+def test_escape_clears_column_selection(
+    qapp,
+) -> None:
+    editor = _build_editor_with_lines(3)
+    editor.go_to_line(1, 3)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Escape,
+    )
+
+    assert editor._column_selection is None
+
+
+def test_column_selection_with_a_range_replaces_selected_text(
+    qapp,
+) -> None:
+    from uuid import uuid4
+
+    editor = SourceEditorWidget(
+        document_id=uuid4(),
+        initial_text="aaaa\nbbbb\n",
+        theme=_build_theme(),
+    )
+    editor.resize(600, 400)
+    editor.show()
+    editor.go_to_line(1, 1)
+    _press_key(editor, Qt.Key.Key_Down, _ALT_SHIFT)
+    _press_key(editor, Qt.Key.Key_Right, _ALT_SHIFT)
+    _press_key(editor, Qt.Key.Key_Right, _ALT_SHIFT)
+
+    _press_key(
+        editor,
+        Qt.Key.Key_Z,
+        text="Z",
+    )
+
+    assert (
+        editor.toPlainText()
+        == "Zaa\nZbb\n"
     )

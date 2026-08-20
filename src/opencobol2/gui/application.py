@@ -796,6 +796,21 @@ def create_main_window(
                             editor_tabs_widget.trigger_suggest_on_active_tab()
                         )
                     ),
+                    BuiltInCommandIds.EDIT_ADD_CURSOR_ABOVE: (
+                        lambda context: (
+                            editor_tabs_widget.add_cursor_above_on_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.EDIT_ADD_CURSOR_BELOW: (
+                        lambda context: (
+                            editor_tabs_widget.add_cursor_below_on_active_tab()
+                        )
+                    ),
+                    BuiltInCommandIds.VIEW_TOGGLE_SPLIT_EDITOR: (
+                        lambda context: (
+                            editor_tabs_widget.toggle_split_on_active_tab()
+                        )
+                    ),
                     BuiltInCommandIds.PROJECT_OPEN: (
                         create_project_open_handler(
                             project_explorer=project_explorer,

@@ -77,8 +77,11 @@ class BuiltInCommandIds:
     EDIT_RENAME = "edit.rename"
     EDIT_FORMAT_DOCUMENT = "edit.format-document"
     EDIT_TRIGGER_SUGGEST = "edit.trigger-suggest"
+    EDIT_ADD_CURSOR_ABOVE = "edit.add-cursor-above"
+    EDIT_ADD_CURSOR_BELOW = "edit.add-cursor-below"
 
     VIEW_COMMAND_PALETTE = "view.command-palette"
+    VIEW_TOGGLE_SPLIT_EDITOR = "view.toggle-split-editor"
     VIEW_PROJECT_EXPLORER = "view.project-explorer"
     VIEW_OUTPUT = "view.output"
     VIEW_PROBLEMS = "view.problems"
@@ -559,11 +562,47 @@ _EXTERNAL_COMMANDS = (
         default_shortcuts=("Ctrl+Space",),
     ),
     _CommandMetadata(
+        command_id=(
+            BuiltInCommandIds.EDIT_ADD_CURSOR_ABOVE
+        ),
+        title="Add Cursor Above",
+        description=(
+            "Add an additional cursor on the line above, at the "
+            "same column."
+        ),
+        category="Edit",
+        default_shortcuts=("Ctrl+Alt+Up",),
+    ),
+    _CommandMetadata(
+        command_id=(
+            BuiltInCommandIds.EDIT_ADD_CURSOR_BELOW
+        ),
+        title="Add Cursor Below",
+        description=(
+            "Add an additional cursor on the line below, at the "
+            "same column."
+        ),
+        category="Edit",
+        default_shortcuts=("Ctrl+Alt+Down",),
+    ),
+    _CommandMetadata(
         command_id=BuiltInCommandIds.VIEW_COMMAND_PALETTE,
         title="Command Palette",
         description="Search and execute application commands.",
         category="View",
         default_shortcuts=("Ctrl+Shift+P",),
+    ),
+    _CommandMetadata(
+        command_id=(
+            BuiltInCommandIds.VIEW_TOGGLE_SPLIT_EDITOR
+        ),
+        title="Toggle Split Editor",
+        description=(
+            "Split the active editor tab into two views of the same "
+            "document, or close the split if one is open."
+        ),
+        category="View",
+        default_shortcuts=("Ctrl+\\",),
     ),
     _CommandMetadata(
         command_id=BuiltInCommandIds.BUILD_PROJECT,
@@ -1355,6 +1394,25 @@ def _register_edit_surface(
         40,
         30,
     )
+    _register_command_contribution(
+        registry,
+        "core.menu.edit.add-cursor-above",
+        BuiltInCommandIds.EDIT_ADD_CURSOR_ABOVE,
+        BuiltInCommandSurfaceIds.EDIT,
+        "multi-cursor",
+        50,
+        10,
+        separator_before=True,
+    )
+    _register_command_contribution(
+        registry,
+        "core.menu.edit.add-cursor-below",
+        BuiltInCommandIds.EDIT_ADD_CURSOR_BELOW,
+        BuiltInCommandSurfaceIds.EDIT,
+        "multi-cursor",
+        50,
+        20,
+    )
 
 
 def _register_view_surface(
@@ -1458,6 +1516,17 @@ def _register_view_surface(
             order * 10,
             separator_before=(order == 1),
         )
+
+    _register_command_contribution(
+        registry,
+        "core.menu.view.toggle-split-editor",
+        BuiltInCommandIds.VIEW_TOGGLE_SPLIT_EDITOR,
+        BuiltInCommandSurfaceIds.VIEW,
+        "layout",
+        30,
+        10,
+        separator_before=True,
+    )
 
 
 def _register_build_surface(

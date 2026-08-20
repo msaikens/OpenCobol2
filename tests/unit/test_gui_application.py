@@ -4853,3 +4853,95 @@ def test_close_project_menu_action_closes_open_editor_tabs(
         ).project
         is None
     )
+
+
+def test_add_cursor_below_menu_action_delegates_to_the_active_editor(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "line0\nline1\n",
+    )
+    editor.go_to_line(
+        1,
+        1,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Add Cursor Below",
+    ).trigger()
+
+    assert editor.has_secondary_cursors
+
+
+def test_add_cursor_above_menu_action_delegates_to_the_active_editor(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+    editor = editor_tabs.widget(0)
+    editor.setPlainText(
+        "line0\nline1\n",
+    )
+    editor.go_to_line(
+        2,
+        1,
+    )
+
+    edit_menu = window.menus["edit"]
+    edit_menu.aboutToShow.emit()
+    _find_action(
+        edit_menu,
+        "Add Cursor Above",
+    ).trigger()
+
+    assert editor.has_secondary_cursors
+
+
+def test_toggle_split_editor_menu_action_splits_the_active_tab(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = SettingsService(
+        SettingsStorage(
+            tmp_path / "settings.json",
+        )
+    )
+    window = create_main_window(
+        settings_service=settings_service,
+    )
+    editor_tabs = window.centralWidget()
+    editor_tabs.new_file()
+
+    view_menu = window.menus["view"]
+    view_menu.aboutToShow.emit()
+    _find_action(
+        view_menu,
+        "Toggle Split Editor",
+    ).trigger()
+
+    pane = editor_tabs.widget(0)
+    assert pane.is_split
