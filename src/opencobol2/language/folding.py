@@ -27,7 +27,13 @@ from opencobol2.language.parser import parse_cobol_tokens
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FoldRange:
-    """One foldable, 1-based, inclusive line range."""
+    """One foldable, 1-based, inclusive line range.
+
+    :ivar start_line: The first line of the foldable range, 1-based
+        and inclusive.
+    :ivar end_line: The last line of the foldable range, 1-based and
+        inclusive.
+    """
 
     start_line: int
     end_line: int
@@ -44,6 +50,13 @@ def compute_fold_ranges(
 
     Never raises: parsing errors or genuinely invalid mid-edit source just
     yield no fold ranges for this pass, rather than breaking the editor.
+
+    :param source_text: The complete COBOL source text to analyze.
+    :param source_format: Whether `source_text` is fixed-format or
+        free-format COBOL. Defaults to :attr:`CobolSourceFormat.FIXED`.
+    :returns: Every foldable range found, deduplicated and sorted by
+        start line. Empty if lexing or parsing raised, or if parsing
+        produced no compilation unit.
     """
 
     try:
@@ -105,6 +118,14 @@ def _collect_from_unit(
     unit: CompilationUnitNode,
     collected: list[FoldRange],
 ) -> None:
+    """Collect fold ranges for every division of a compilation unit.
+
+    :param unit: The parsed compilation unit to walk.
+    :param collected: The accumulator that every discovered
+        :class:`FoldRange` is appended to.
+    :returns: None. Ranges are appended to `collected` in place.
+    """
+
     _add(
         unit.identification,
         collected,
@@ -141,6 +162,14 @@ def _collect_from_data_division(
     data_division: DataDivisionNode,
     collected: list[FoldRange],
 ) -> None:
+    """Collect one fold range per data division section.
+
+    :param data_division: The parsed data division to walk.
+    :param collected: The accumulator that every discovered
+        :class:`FoldRange` is appended to.
+    :returns: None. Ranges are appended to `collected` in place.
+    """
+
     for section in data_division.sections:
         _add(
             section,
@@ -152,6 +181,15 @@ def _collect_from_procedure_division(
     procedure_division: ProcedureDivisionNode,
     collected: list[FoldRange],
 ) -> None:
+    """Collect fold ranges for every section and paragraph in a
+    procedure division, including paragraphs nested inside a section.
+
+    :param procedure_division: The parsed procedure division to walk.
+    :param collected: The accumulator that every discovered
+        :class:`FoldRange` is appended to.
+    :returns: None. Ranges are appended to `collected` in place.
+    """
+
     for paragraph in procedure_division.paragraphs:
         _collect_from_paragraph(
             paragraph,
@@ -175,6 +213,15 @@ def _collect_from_paragraph(
     paragraph: ParagraphNode,
     collected: list[FoldRange],
 ) -> None:
+    """Collect a fold range for one paragraph and for any foldable
+    statement inside its body.
+
+    :param paragraph: The parsed paragraph to walk.
+    :param collected: The accumulator that every discovered
+        :class:`FoldRange` is appended to.
+    :returns: None. Ranges are appended to `collected` in place.
+    """
+
     _add(
         paragraph,
         collected,
@@ -192,16 +239,29 @@ def _collect_from_statements(
     ],
     collected: list[FoldRange],
 ) -> None:
+    """Collect fold ranges for IF/PERFORM/EVALUATE statement bodies,
+    recursing into nested bodies so every foldable construct is found
+    regardless of nesting depth.
+
+    An IF branch, out-of-line PERFORM, or EVALUATE (or one of its WHEN
+    branches) with an empty body is deliberately skipped: a fold range
+    that would hide zero lines of content collapses nothing, so no
+    :class:`FoldRange` is produced for it. This keeps an IF with two
+    empty branches consistent with an equally-empty PERFORM, which
+    already received no fold range under the same reasoning.
+
+    :param statements: The statement list to scan, typically a
+        paragraph's or branch's body.
+    :param collected: The accumulator that every discovered
+        :class:`FoldRange` is appended to.
+    :returns: None. Ranges are appended to `collected` in place.
+    """
+
     for statement in statements:
         if isinstance(
             statement,
             IfStatement,
         ):
-            # Editor §Editor-Facing-5: made consistent with
-            # `PerformStatement`'s own "nothing to fold" guard below --
-            # an empty IF (both branches empty) hid zero lines of
-            # content while an equally-empty out-of-line PERFORM
-            # correctly got no fold range at all.
             if (
                 statement.then_statements
                 or statement.else_statements
@@ -262,6 +322,15 @@ def _add(
     node,
     collected: list[FoldRange],
 ) -> None:
+    """Append one AST node's source span as a :class:`FoldRange`.
+
+    :param node: Any parsed AST node exposing a `span` attribute with
+        `start.line`/`end.line` source positions.
+    :param collected: The accumulator to append the new
+        :class:`FoldRange` to.
+    :returns: None. The range is appended to `collected` in place.
+    """
+
     collected.append(
         FoldRange(
             start_line=node.span.start.line,

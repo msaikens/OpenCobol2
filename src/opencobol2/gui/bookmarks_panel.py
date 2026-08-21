@@ -1,4 +1,9 @@
-"""A table view of bookmarks across every open editor tab."""
+"""A table view of bookmarks across every open editor tab.
+
+Presents a flat, read-only table of every bookmark known to the
+application regardless of which tab it lives in, and emits a signal
+when the user double-clicks a row so the host window can jump to it.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +26,15 @@ class BookmarkEntry:
 
     Keyed by `document_id` rather than a filesystem path, since untitled
     (never-saved) documents can be bookmarked too.
+
+    :ivar document_id: The unique identifier of the document the
+        bookmark belongs to, used instead of a filesystem path so
+        never-saved documents can be bookmarked too.
+    :ivar display_name: The human-readable label to show for the
+        document in the "File" column.
+    :ivar line: The 1-based line number the bookmark points to.
+    :ivar text: The source text of the bookmarked line, shown in the
+        "Text" column.
     """
 
     document_id: UUID
@@ -37,7 +51,12 @@ _COLUMN_HEADERS = (
 
 
 class BookmarksWidget(QTableWidget):
-    """Lists every bookmark across open tabs; double-click jumps to one."""
+    """Lists every bookmark across open tabs; double-click jumps to one.
+
+    :ivar entry_activated: Qt signal emitted with a bookmark's
+        ``document_id`` and ``line`` when the user double-clicks its
+        row.
+    """
 
     entry_activated = Signal(
         UUID,
@@ -48,7 +67,14 @@ class BookmarksWidget(QTableWidget):
         self,
         parent: QWidget | None = None,
     ) -> None:
-        """Build an empty, read-only bookmarks table."""
+        """Build an empty, read-only bookmarks table.
+
+        :param parent: The optional parent widget, passed through to
+            :class:`QTableWidget`.
+        :returns: None. The table is initialized with its column
+            headers, read-only/row-selection behavior, and an empty
+            entry list.
+        """
 
         super().__init__(
             0,
@@ -83,7 +109,13 @@ class BookmarksWidget(QTableWidget):
         self,
         entries: Sequence[BookmarkEntry],
     ) -> None:
-        """Replace the table's contents with a new set of bookmarks."""
+        """Replace the table's contents with a new set of bookmarks.
+
+        :param entries: The complete new set of bookmarks to display,
+            replacing whatever was previously shown.
+        :returns: None. The table's rows are rebuilt from `entries`
+            and the stored entry list is replaced.
+        """
 
         self._entries = tuple(
             entries,
@@ -124,7 +156,11 @@ class BookmarksWidget(QTableWidget):
     def clear_bookmarks(
         self,
     ) -> None:
-        """Remove every entry from the bookmarks table."""
+        """Remove every entry from the bookmarks table.
+
+        :returns: None. The stored entry list and every table row are
+            cleared.
+        """
 
         self._entries = ()
         self.setRowCount(
@@ -136,6 +172,16 @@ class BookmarksWidget(QTableWidget):
         row: int,
         _column: int,
     ) -> None:
+        """Emit `entry_activated` for the bookmark on a double-clicked row.
+
+        :param row: The 0-based row index that was double-clicked.
+        :param _column: The 0-based column index that was
+            double-clicked; unused since every column in a row maps
+            to the same bookmark.
+        :returns: None. Emits `entry_activated` unless `row` is out
+            of range for the current entry list.
+        """
+
         if not (
             0
             <= row

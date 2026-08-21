@@ -171,7 +171,13 @@ _STRUCTURAL_TERMINATORS = frozenset(
 
 @dataclass(slots=True)
 class ParseResult:
-    """The AST and diagnostics produced by parsing one COBOL document."""
+    """The AST and diagnostics produced by parsing one COBOL document.
+
+    :ivar unit: The parsed compilation unit, or None if parsing could
+        not even establish an IDENTIFICATION DIVISION and gave up.
+    :ivar diagnostics: Every diagnostic recorded while parsing, in the
+        order encountered. Defaults to empty.
+    """
 
     unit: CompilationUnitNode | None
     diagnostics: tuple[ParseDiagnostic, ...] = ()
@@ -180,7 +186,12 @@ class ParseResult:
     def has_errors(
         self,
     ) -> bool:
-        """Return whether any diagnostic is an error."""
+        """Return whether any diagnostic is an error.
+
+        :returns: True if `diagnostics` contains at least one
+            diagnostic whose severity is
+            :attr:`DiagnosticSeverity.ERROR`, False otherwise.
+        """
 
         return any(
             diagnostic.severity is DiagnosticSeverity.ERROR
@@ -189,7 +200,16 @@ class ParseResult:
 
 
 class _Cursor:
-    """A position cursor over a fixed token sequence."""
+    """A position cursor over a fixed token sequence.
+
+    :ivar _tokens: The complete, immutable token sequence being
+        walked.
+    :ivar _index: The index into `_tokens` of the token under the
+        cursor.
+    :ivar last_end: The source position immediately after the last
+        token consumed by :meth:`advance`, used as the end position
+        of AST node spans.
+    """
 
     __slots__ = (
         "_tokens",
@@ -201,6 +221,13 @@ class _Cursor:
         self,
         tokens: tuple[Token, ...],
     ) -> None:
+        """Initialize the cursor at the start of `tokens`.
+
+        :param tokens: The complete token sequence to walk. Must be
+            non-empty.
+        :returns: None.
+        """
+
         self._tokens = tokens
         self._index = 0
         self.last_end: SourcePosition = tokens[0].span.start
@@ -208,7 +235,11 @@ class _Cursor:
     def current(
         self,
     ) -> Token:
-        """Return the token at the cursor."""
+        """Return the token at the cursor.
+
+        :returns: The token at the current cursor position, without
+            consuming it.
+        """
 
         return self._tokens[self._index]
 
@@ -216,7 +247,14 @@ class _Cursor:
         self,
         offset: int,
     ) -> Token:
-        """Return the token `offset` positions ahead of the cursor."""
+        """Return the token `offset` positions ahead of the cursor.
+
+        :param offset: How many tokens ahead of the cursor to look.
+        :returns: The token at `offset` positions ahead, without
+            consuming anything. Clamped to the final token (the
+            END_OF_FILE sentinel) if `offset` would run past the end
+            of the token sequence.
+        """
 
         index = min(
             self._index + offset,
@@ -231,14 +269,24 @@ class _Cursor:
     def at_end(
         self,
     ) -> bool:
-        """Return whether the cursor is at the end-of-file token."""
+        """Return whether the cursor is at the end-of-file token.
+
+        :returns: True if the current token is the END_OF_FILE
+            sentinel, False otherwise.
+        """
 
         return self.current().kind is TokenKind.END_OF_FILE
 
     def advance(
         self,
     ) -> Token:
-        """Consume and return the token at the cursor."""
+        """Consume and return the token at the cursor.
+
+        :returns: The token that was at the cursor before advancing.
+            Also updates `last_end` to that token's end position. The
+            cursor does not move past the END_OF_FILE sentinel, so
+            calling this repeatedly at end of file keeps returning it.
+        """
 
         token = self.current()
 
@@ -260,6 +308,10 @@ def _word(
     numbering convention) is recognized as a header by
     `_at_paragraph_header`/`_at_procedure_section_header` -- see Editor
     Phase 4 tracker findings Parser-2/Parser-10.
+
+    :param token: The token to inspect.
+    :returns: The token's upper-cased text if it is a reserved word,
+        identifier, or numeric literal; otherwise the empty string.
     """
 
     if token.kind in (
@@ -275,7 +327,13 @@ def _word(
 def _is_valid_level_number(
     value: int,
 ) -> bool:
-    """Return whether `value` is a legal COBOL data item level number."""
+    """Return whether `value` is a legal COBOL data item level number.
+
+    :param value: The numeric level number to validate.
+    :returns: True if `value` is 1 through 49, or is one of the
+        special level numbers 66 (RENAMES), 77 (independent item), or
+        88 (condition-name); False otherwise.
+    """
 
     return 1 <= value <= 49 or value in (
         66,
@@ -285,13 +343,32 @@ def _is_valid_level_number(
 
 
 class CobolParser:
-    """Parses a COBOL lexer result into an AST."""
+    """Parses a COBOL lexer result into an AST.
+
+    :ivar _cursor: The token cursor this parser advances through as it
+        recognizes grammar productions.
+    :ivar _diagnostics: Every diagnostic recorded so far, in the order
+        encountered.
+    :ivar _sentence_terminated: Whether the period just consumed ended
+        not just the current statement but also every statement list
+        enclosing it, per COBOL's implicit scope-termination rule (see
+        the module docstring).
+    """
 
     def __init__(
         self,
         lex_result: LexResult,
     ) -> None:
-        """Initialize the parser over one lexer result."""
+        """Initialize the parser over one lexer result.
+
+        :param lex_result: The lexer output to parse. Comment tokens
+            are filtered out before parsing begins.
+        :returns: None.
+        :raises TypeError: If `lex_result` is not a :class:`LexResult`.
+        :raises ValueError: If, after filtering out comments, the
+            remaining tokens are empty or do not end with an
+            END_OF_FILE token.
+        """
 
         if not isinstance(
             lex_result,
@@ -324,7 +401,16 @@ class CobolParser:
     def parse(
         self,
     ) -> ParseResult:
-        """Parse the token stream into one compilation unit."""
+        """Parse the token stream into one compilation unit.
+
+        :returns: A :class:`ParseResult` whose `unit` is None (with an
+            error diagnostic recorded) if the source does not even
+            open with an IDENTIFICATION DIVISION header; otherwise a
+            populated :class:`CompilationUnitNode` together with every
+            diagnostic recorded while parsing it, including one for
+            each unexpected token found after the PROCEDURE DIVISION
+            (or its optional `END PROGRAM` marker).
+        """
 
         start = self._cursor.current().span.start
 
@@ -399,14 +485,19 @@ class CobolParser:
             ),
         )
 
-    # --- shared helpers ----------------------------------------------
-
     def _error(
         self,
         message: str,
         token: Token,
     ) -> None:
-        """Record one parser diagnostic at a token's position."""
+        """Record one parser diagnostic at a token's position.
+
+        :param message: The human-readable diagnostic message.
+        :param token: The token whose start position the diagnostic is
+            attached to.
+        :returns: None. Appends a new error-severity
+            :class:`ParseDiagnostic` to `_diagnostics`.
+        """
 
         self._diagnostics.append(
             ParseDiagnostic(
@@ -420,7 +511,13 @@ class CobolParser:
         self,
         name: str,
     ) -> bool:
-        """Return whether the cursor is at `NAME DIVISION`."""
+        """Return whether the cursor is at `NAME DIVISION`.
+
+        :param name: The division name to test for, for example
+            `"PROCEDURE"`.
+        :returns: True if the current token is `name` and the next
+            token is the word `DIVISION`, False otherwise.
+        """
 
         return (
             _word(
@@ -438,7 +535,12 @@ class CobolParser:
     def _at_any_division_header(
         self,
     ) -> bool:
-        """Return whether the cursor is at any recognized division header."""
+        """Return whether the cursor is at any recognized division header.
+
+        :returns: True if the cursor is at one of the four COBOL
+            division headers (IDENTIFICATION, ENVIRONMENT, DATA,
+            PROCEDURE), False otherwise.
+        """
 
         return any(
             self._at_division_header(
@@ -450,7 +552,13 @@ class CobolParser:
     def _at_data_section_header(
         self,
     ) -> bool:
-        """Return whether the cursor is at `NAME SECTION` in the data division."""
+        """Return whether the cursor is at `NAME SECTION` in the data division.
+
+        :returns: True if the current token names a recognized data
+            division section (WORKING-STORAGE, LOCAL-STORAGE, LINKAGE,
+            FILE, SCREEN, or REPORT) and the next token is the word
+            `SECTION`, False otherwise.
+        """
 
         return (
             _word(
@@ -468,7 +576,12 @@ class CobolParser:
     def _at_procedure_section_header(
         self,
     ) -> bool:
-        """Return whether the cursor is at a procedure division section header."""
+        """Return whether the cursor is at a procedure division section header.
+
+        :returns: True if the current token is a word that is not a
+            statement verb and the next token is the word `SECTION`,
+            False otherwise.
+        """
 
         current_word = _word(
             self._cursor.current(),
@@ -490,7 +603,12 @@ class CobolParser:
     def _at_paragraph_header(
         self,
     ) -> bool:
-        """Return whether the cursor is at a procedure division paragraph name."""
+        """Return whether the cursor is at a procedure division paragraph name.
+
+        :returns: True if the current token is a word that is not a
+            statement verb and the next token is a period, False
+            otherwise.
+        """
 
         current_word = _word(
             self._cursor.current(),
@@ -510,7 +628,11 @@ class CobolParser:
     def _at_level_number(
         self,
     ) -> bool:
-        """Return whether the cursor is at a data item level number."""
+        """Return whether the cursor is at a data item level number.
+
+        :returns: True if the current token is a numeric literal with
+            an integer value, False otherwise.
+        """
 
         token = self._cursor.current()
 
@@ -533,6 +655,10 @@ class CobolParser:
         `_at_division_boundary_only` instead inside a loop that is
         consuming a statement's own trailing operand tokens, since
         those are almost always immediately followed by a period too.
+
+        :returns: True if the cursor is at end-of-file, any division
+            header, a procedure section header, a paragraph header, or
+            an `END PROGRAM` marker, False otherwise.
         """
 
         return (
@@ -547,7 +673,11 @@ class CobolParser:
         self,
     ) -> bool:
         """Return whether the cursor is at end-of-file, a division header,
-        or an `END PROGRAM` marker."""
+        or an `END PROGRAM` marker.
+
+        :returns: True if the cursor is at end-of-file, any division
+            header, or an `END PROGRAM` marker, False otherwise.
+        """
 
         return (
             self._cursor.at_end()
@@ -565,6 +695,9 @@ class CobolParser:
         programs). It is not modeled as an AST node yet, but every
         statement/operand loop must recognize and stop at it rather
         than silently absorbing the program name as an operand token.
+
+        :returns: True if the current token is the word `END` and the
+            next token is the word `PROGRAM`, False otherwise.
         """
 
         return (
@@ -589,6 +722,9 @@ class CobolParser:
         between them (for example `MOVE A TO B MOVE C TO D.`); operand
         token consumption for the current statement must stop as soon
         as the next statement's verb begins.
+
+        :returns: True if the current token is a reserved word listed
+            in `STATEMENT_VERBS`, False otherwise.
         """
 
         token = self._cursor.current()
@@ -607,6 +743,10 @@ class CobolParser:
         which scopes enclose them; without this check they would
         happily consume `END-IF`, `END-PERFORM`, `ELSE`, or `WHEN` as
         if it were an ordinary operand token.
+
+        :returns: True if the current token is a reserved word listed
+            in `_STRUCTURAL_TERMINATORS` (`ELSE`, `END-IF`,
+            `END-PERFORM`, `END-EVALUATE`, or `WHEN`), False otherwise.
         """
 
         token = self._cursor.current()
@@ -620,7 +760,13 @@ class CobolParser:
         self,
         *words: str,
     ) -> bool:
-        """Return whether the cursor's current token matches one of `words`."""
+        """Return whether the cursor's current token matches one of `words`.
+
+        :param words: The candidate upper-cased word texts to match
+            against.
+        :returns: True if the current token's word text (per `_word`)
+            is one of `words`, False otherwise.
+        """
 
         return _word(
             self._cursor.current(),
@@ -629,7 +775,12 @@ class CobolParser:
     def _expect_period(
         self,
     ) -> None:
-        """Consume a required period, recording a diagnostic if absent."""
+        """Consume a required period, recording a diagnostic if absent.
+
+        :returns: None. Advances past the period if present; otherwise
+            records an error diagnostic at the current token without
+            advancing.
+        """
 
         if self._cursor.current().kind is TokenKind.PERIOD:
             self._cursor.advance()
@@ -642,7 +793,12 @@ class CobolParser:
     def _consume_optional_period(
         self,
     ) -> None:
-        """Consume a trailing period if present, marking sentence end."""
+        """Consume a trailing period if present, marking sentence end.
+
+        :returns: None. If the current token is a period, advances
+            past it and sets `_sentence_terminated` to True; otherwise
+            does nothing.
+        """
 
         if self._cursor.current().kind is TokenKind.PERIOD:
             self._cursor.advance()
@@ -651,7 +807,12 @@ class CobolParser:
     def _skip_to_period_or_division(
         self,
     ) -> None:
-        """Advance past tokens until a period is consumed or a division starts."""
+        """Advance past tokens until a period is consumed or a division starts.
+
+        :returns: None. Used to recover from a malformed entry by
+            discarding tokens up to its terminating period, or up to
+            the next division header if no period is found first.
+        """
 
         while (
             not self._cursor.at_end()
@@ -662,12 +823,16 @@ class CobolParser:
             if token.kind is TokenKind.PERIOD:
                 return
 
-    # --- identification / environment divisions -----------------------
-
     def _parse_identification_division(
         self,
     ) -> IdentificationDivisionNode:
-        """Parse the identification division."""
+        """Parse the identification division.
+
+        :returns: The parsed :class:`IdentificationDivisionNode`. If
+            no `PROGRAM-ID` paragraph is found, records an error
+            diagnostic and substitutes the placeholder program name
+            `"UNKNOWN"`.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -723,7 +888,13 @@ class CobolParser:
     def _parse_environment_division(
         self,
     ) -> EnvironmentDivisionNode:
-        """Parse the environment division as an opaque block."""
+        """Parse the environment division as an opaque block.
+
+        :returns: The parsed :class:`EnvironmentDivisionNode`,
+            spanning from the `ENVIRONMENT DIVISION` header to the
+            start of the next division header (or end of file). Its
+            internal content is not structurally parsed.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -743,12 +914,16 @@ class CobolParser:
             ),
         )
 
-    # --- data division -------------------------------------------------
-
     def _parse_data_division(
         self,
     ) -> DataDivisionNode:
-        """Parse the data division."""
+        """Parse the data division.
+
+        :returns: The parsed :class:`DataDivisionNode` containing
+            every recognized section. A token that is neither a
+            division header nor a recognized data section header
+            records an error diagnostic and is skipped one at a time.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -787,7 +962,14 @@ class CobolParser:
     def _parse_data_section(
         self,
     ) -> DataSectionNode:
-        """Parse one data division section (WORKING-STORAGE, and so on)."""
+        """Parse one data division section (WORKING-STORAGE, and so on).
+
+        :returns: The parsed :class:`DataSectionNode` containing every
+            data item found before the next division header or data
+            section header. A token that is neither a level number nor
+            `FD`/`SD` records an error diagnostic and is recovered from
+            by skipping to the next period or division.
+        """
 
         start = self._cursor.current().span.start
         name_token = self._cursor.advance()
@@ -831,7 +1013,17 @@ class CobolParser:
     def _parse_data_item(
         self,
     ) -> DataItemNode:
-        """Parse one data description entry."""
+        """Parse one data description entry.
+
+        :returns: The parsed :class:`DataItemNode`, including its
+            level number, optional name (absent for `FILLER` or an
+            unnamed entry), and every data description clause found
+            before the terminating period. Records an error diagnostic
+            if the level number is numeric but not a legal COBOL level
+            number (see `_is_valid_level_number`), and delegates to
+            `_check_duplicate_data_clauses` for duplicate-clause
+            diagnostics.
+        """
 
         start = self._cursor.current().span.start
         level_token = self._cursor.advance()
@@ -912,6 +1104,12 @@ class CobolParser:
         parseable duplicate today, which is silently accepted with the
         last occurrence winning downstream (see the debugger's
         PICTURE/USAGE resolution).
+
+        :param clauses: The data item's already-parsed clauses to
+            scan for duplicates.
+        :returns: None. Records an error diagnostic for a second
+            `PIC`/`PICTURE` clause and, separately, for a second
+            `VALUE`/`VALUES` clause.
         """
 
         pic_seen = False
@@ -938,7 +1136,13 @@ class CobolParser:
     def _parse_data_clause(
         self,
     ) -> DataDescriptionClause:
-        """Parse one clause of a data description entry."""
+        """Parse one clause of a data description entry.
+
+        :returns: The parsed :class:`DataDescriptionClause`, capturing
+            its keyword and every raw token up to (but not including)
+            the terminating period, the next division/data-section
+            header, or the next recognized data clause keyword.
+        """
 
         start = self._cursor.current().span.start
         keyword_token = self._cursor.advance()
@@ -974,12 +1178,27 @@ class CobolParser:
             ),
         )
 
-    # --- procedure division ---------------------------------------------
-
     def _parse_procedure_division(
         self,
     ) -> ProcedureDivisionNode:
-        """Parse the procedure division."""
+        """Parse the procedure division.
+
+        Any statements found directly after the `PROCEDURE DIVISION`
+        header, before the first named paragraph or section, are
+        collected into a synthetic, unnamed leading
+        :class:`ParagraphNode`. That synthetic paragraph's span starts
+        at its own first statement rather than at the enclosing
+        `PROCEDURE DIVISION` header, so that an editor feature built
+        on paragraph spans -- "select this paragraph's text", or
+        code folding -- does not end up including the division header
+        itself.
+
+        :returns: The parsed :class:`ProcedureDivisionNode`, with
+            every top-level paragraph (including the synthetic leading
+            paragraph, if any) and every named section. A token that
+            is neither a section header nor a paragraph header records
+            an error diagnostic and is skipped one at a time.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -999,11 +1218,6 @@ class CobolParser:
                         leading_statements,
                     ),
                     span=SourceSpan(
-                        # Editor §Parser-6: start at the leading
-                        # paragraph's own first statement, not the
-                        # enclosing PROCEDURE DIVISION header -- a
-                        # "select this paragraph's text"/fold feature
-                        # must not include the division header itself.
                         start=leading_statements[
                             0
                         ].span.start,
@@ -1050,7 +1264,20 @@ class CobolParser:
     def _parse_procedure_section(
         self,
     ) -> ProcedureSectionNode:
-        """Parse one named section in the procedure division."""
+        """Parse one named section in the procedure division.
+
+        Mirrors `_parse_procedure_division`'s handling of a synthetic
+        leading paragraph: any statements found directly after the
+        section header, before its first named paragraph, are
+        collected into a synthetic, unnamed leading
+        :class:`ParagraphNode` whose span starts at its own first
+        statement rather than at the section header, for the same
+        editor-feature reason given there.
+
+        :returns: The parsed :class:`ProcedureSectionNode`, with every
+            paragraph nested under it (including the synthetic leading
+            paragraph, if any).
+        """
 
         start = self._cursor.current().span.start
         name_token = self._cursor.advance()
@@ -1068,8 +1295,6 @@ class CobolParser:
                         leading_statements,
                     ),
                     span=SourceSpan(
-                        # Editor §Parser-6, section-header mirror of the
-                        # same fix above.
                         start=leading_statements[
                             0
                         ].span.start,
@@ -1102,7 +1327,11 @@ class CobolParser:
     def _parse_paragraph(
         self,
     ) -> ParagraphNode:
-        """Parse one named paragraph in the procedure division."""
+        """Parse one named paragraph in the procedure division.
+
+        :returns: The parsed :class:`ParagraphNode`, with every
+            statement found in its body.
+        """
 
         start = self._cursor.current().span.start
         name_token = self._cursor.advance()
@@ -1126,7 +1355,20 @@ class CobolParser:
         *,
         terminators: frozenset[str] = frozenset(),
     ) -> list[object]:
-        """Parse a list of statements until a boundary or terminator."""
+        """Parse a list of statements until a boundary or terminator.
+
+        :param terminators: The reserved words (for example
+            `{"ELSE", "END-IF"}`) that end this statement list when
+            nested inside an enclosing construct. An empty frozenset
+            (the default) means this call is parsing a top-level
+            paragraph or section body rather than a nested statement
+            list, which changes how a period is handled: at top level
+            a period only ends the current sentence and parsing
+            continues, while in a nested list it also ends the list
+            itself, since a period closes every enclosing statement
+            scope at once per COBOL's implicit scope-termination rule.
+        :returns: Every statement parsed, in source order.
+        """
 
         is_nested = bool(
             terminators,
@@ -1173,7 +1415,15 @@ class CobolParser:
     def _parse_statement(
         self,
     ) -> object | None:
-        """Parse one procedure division statement."""
+        """Parse one procedure division statement.
+
+        :returns: The parsed statement node for a recognized verb
+            (EXIT, MOVE, DISPLAY, STOP, GOBACK, IF, PERFORM, EVALUATE)
+            or a :class:`GenericStatement` for any other reserved-word
+            verb. Returns None, after recording an error diagnostic
+            and advancing past the offending token, if the current
+            token is not a reserved word at all.
+        """
 
         token = self._cursor.current()
         word = _word(
@@ -1231,6 +1481,11 @@ class CobolParser:
         body rather than nested in an `IF`) letting that phantom
         PERFORM's own modifier scan consume the enclosing loop's real
         `END-PERFORM` as its own terminator.
+
+        :returns: The parsed :class:`GenericStatement` with verb
+            `"EXIT"`, including its optional
+            `PERFORM`/`PARAGRAPH`/`SECTION`/`PROGRAM` operand keyword
+            if present.
         """
 
         start = self._cursor.current().span.start
@@ -1265,7 +1520,15 @@ class CobolParser:
     def _parse_generic_statement(
         self,
     ) -> GenericStatement:
-        """Parse a statement whose verb is not given dedicated structure."""
+        """Parse a statement whose verb is not given dedicated structure.
+
+        :returns: The parsed :class:`GenericStatement`, capturing the
+            verb and every raw token up to (and including, where
+            present) a matching `END-<VERB>` scope terminator, or up
+            to (and including) a terminating period, or up to (but
+            excluding) the next division boundary, next statement
+            verb, or structural terminator -- whichever comes first.
+        """
 
         start = self._cursor.current().span.start
         verb_token = self._cursor.advance()
@@ -1317,7 +1580,19 @@ class CobolParser:
     def _parse_move(
         self,
     ) -> MoveStatement:
-        """Parse a MOVE statement."""
+        """Parse a MOVE statement.
+
+        While scanning `TO`-clause target names, a target's own
+        subscript (`WS-TABLE(I)`) is not itself another MOVE target --
+        only the qualifier keyword and its own subscript, if any, are
+        skipped; likewise, an `OF`/`IN` qualifier is not a second
+        target name, just a link to the enclosing group that the
+        preceding target is qualified by.
+
+        :returns: The parsed :class:`MoveStatement`, with the raw
+            source-side tokens and every target data-name found after
+            `TO`.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -1376,12 +1651,6 @@ class CobolParser:
                         "IN",
                     )
                 ):
-                    # A target's own subscript (`WS-TABLE(I)`) is not
-                    # itself another MOVE target -- only the qualifier
-                    # keyword and its own subscript, if any, are skipped
-                    # here; `OF`/`IN` qualifiers are likewise not a
-                    # second target name, just a link to the enclosing
-                    # group this target is qualified by.
                     target_names.append(
                         token.text,
                     )
@@ -1406,7 +1675,11 @@ class CobolParser:
     def _parse_display(
         self,
     ) -> DisplayStatement:
-        """Parse a DISPLAY statement."""
+        """Parse a DISPLAY statement.
+
+        :returns: The parsed :class:`DisplayStatement`, with every raw
+            operand token found before the statement ends.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -1438,7 +1711,17 @@ class CobolParser:
     def _parse_stop_run(
         self,
     ) -> StopRunStatement:
-        """Parse a STOP RUN statement."""
+        """Parse a STOP RUN statement.
+
+        The optional `RUN` keyword after `STOP` is consumed explicitly
+        here rather than left to the generic operand-boundary check
+        below: bare `RUN` is not itself a statement verb, so without
+        this explicit handling the boundary check would mistake
+        `RUN.` for a paragraph name and stop before consuming it.
+
+        :returns: The parsed :class:`StopRunStatement`, with every raw
+            operand token found after the optional `RUN` keyword.
+        """
 
         start = self._cursor.current().span.start
         self._cursor.advance()
@@ -1446,9 +1729,6 @@ class CobolParser:
         if self._is_word_current(
             "RUN",
         ):
-            # Handled explicitly: bare "RUN" is not itself a statement
-            # verb, so the generic boundary check below would mistake
-            # "RUN." for a paragraph name.
             self._cursor.advance()
 
         operand_tokens: list[Token] = []

@@ -1,4 +1,10 @@
-"""Compiler runtime factory registration and lookup."""
+"""Compiler runtime factory registration and lookup.
+
+Holds the set of known :class:`CompilerRuntimeFactory` implementations,
+keyed by the compiler provider identifier each one supports, so a
+runtime factory can be looked up for a given provider without the
+caller needing to know which factory implementation backs it.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +26,11 @@ class CompilerRuntimeFactoryNotFoundError(
 
 
 class CompilerRuntimeFactoryRegistry:
-    """Registers compiler runtime factories by provider identifier."""
+    """Registers compiler runtime factories by provider identifier.
+
+    :ivar _factories: Mapping of provider ID to registered
+        :class:`CompilerRuntimeFactory`, in registration order.
+    """
 
     __slots__ = (
         "_factories",
@@ -29,6 +39,10 @@ class CompilerRuntimeFactoryRegistry:
     def __init__(
         self,
     ) -> None:
+        """Initialize an empty registry with no factories registered.
+
+        :returns: None.
+        """
         self._factories: dict[
             str,
             CompilerRuntimeFactory,
@@ -38,7 +52,11 @@ class CompilerRuntimeFactoryRegistry:
     def factories(
         self,
     ) -> tuple[CompilerRuntimeFactory, ...]:
-        """Return runtime factories in registration order."""
+        """Return the registered runtime factories.
+
+        :returns: Every registered :class:`CompilerRuntimeFactory`, in
+            the order it was registered.
+        """
 
         return tuple(
             self._factories.values(),
@@ -48,7 +66,16 @@ class CompilerRuntimeFactoryRegistry:
         self,
         factory: CompilerRuntimeFactory,
     ) -> None:
-        """Register one compiler runtime factory."""
+        """Register one compiler runtime factory.
+
+        :param factory: The runtime factory to register, identified by
+            its ``provider_id``.
+        :returns: None. The factory is added to the registry.
+        :raises ValueError: If ``factory.provider_id`` is empty or
+            whitespace-only.
+        :raises CompilerRuntimeFactoryAlreadyRegisteredError: If a
+            factory for the same provider is already registered.
+        """
 
         provider_id = factory.provider_id.strip()
 
@@ -74,7 +101,14 @@ class CompilerRuntimeFactoryRegistry:
         self,
         provider_id: str,
     ) -> CompilerRuntimeFactory:
-        """Return the runtime factory for a provider."""
+        """Return the runtime factory for a provider.
+
+        :param provider_id: The compiler provider identifier the
+            factory was registered under.
+        :returns: The matching :class:`CompilerRuntimeFactory`.
+        :raises CompilerRuntimeFactoryNotFoundError: If no factory is
+            registered for ``provider_id``.
+        """
 
         try:
             return self._factories[

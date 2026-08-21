@@ -1,4 +1,12 @@
-"""Application command contracts and registries."""
+"""Application command contracts and registries.
+
+Re-exports the command and command-contribution domain models
+(:class:`Command`, :class:`CommandContribution`, and related types),
+the registries that track them (:class:`CommandRegistry`,
+:class:`CommandContributionRegistry`), and the built-in command
+handlers and factory functions that wire the application's own
+commands and menu contributions into those registries.
+"""
 
 from opencobol2.commands.builtins import (
     AccessibilityCommandService,

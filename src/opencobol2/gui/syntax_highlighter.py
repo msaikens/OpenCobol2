@@ -64,7 +64,28 @@ _DIAGNOSTIC_UNDERLINE_COLORS = {
 
 
 class CobolSyntaxHighlighter(QSyntaxHighlighter):
-    """Colors COBOL reserved words, literals, and comments in an editor."""
+    """Colors COBOL reserved words, literals, and comments in an editor.
+
+    Also underlines lex/parse/semantic diagnostics found on the same
+    tokenizing pass.
+
+    :ivar _source_format: The column convention (fixed or free format)
+        used the last time the document was tokenized.
+    :ivar _tokens_by_line: Highlightable tokens from the last
+        successful tokenize pass, keyed by 0-based line number.
+    :ivar _diagnostics_by_line: Lex/parse/semantic diagnostics from the
+        last successful tokenize-and-analyze pass, keyed by 0-based
+        line number.
+    :ivar _cached_text: The full document text the caches above were
+        built from, or ``None`` before the first pass. Used to detect
+        whether the document actually changed since the last
+        `highlightBlock` call.
+    :ivar _formats: The text format to apply for each highlighted
+        :class:`TokenKind`, rebuilt whenever the theme changes.
+    :ivar _rehighlight_timer: Single-shot, zero-interval timer used to
+        defer a full document rehighlight until after the current
+        `highlightBlock` call returns.
+    """
 
     def __init__(
         self,
@@ -75,7 +96,25 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
             CobolSourceFormat.FIXED
         ),
     ) -> None:
-        """Attach a highlighter to a document, colored from a theme."""
+        """Attach a highlighter to a document, colored from a theme.
+
+        The rehighlight timer is parented to `self` so Qt destroys it
+        (and cancels any pending timeout) if the highlighter itself is
+        destroyed first. A bare ``QTimer.singleShot(0, self.rehighlight)``
+        keeps no such link and can fire after `self`'s underlying C++
+        object is already gone.
+
+        :param document: The Qt text document to attach highlighting
+            to.
+        :param theme: The color theme to build the initial token
+            formats from.
+        :param source_format: Whether `document` holds fixed-format or
+            free-format COBOL source. Defaults to
+            :attr:`CobolSourceFormat.FIXED`.
+        :returns: None. Initializes the token/diagnostic caches, builds
+            the color formats from `theme`, and arms the deferred
+            rehighlight timer.
+        """
 
         super().__init__(
             document,
@@ -99,11 +138,6 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
             QTextCharFormat,
         ] = {}
 
-        # Parented to self so Qt destroys this timer (and cancels any
-        # pending timeout) if the highlighter itself is destroyed
-        # first -- a bare QTimer.singleShot(0, self.rehighlight)
-        # keeps no such link and can fire after `self`'s underlying
-        # C++ object is already gone.
         self._rehighlight_timer = QTimer(
             self,
         )
@@ -124,7 +158,12 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
     def diagnostics(
         self,
     ) -> tuple[LexDiagnostic | ParseDiagnostic, ...]:
-        """Return every lex/parse/semantic diagnostic found on the last pass."""
+        """Return every lex/parse/semantic diagnostic found on the last pass.
+
+        :returns: All diagnostics accumulated across every line of the
+            document during the most recent `_retokenize` call, in no
+            particular order.
+        """
 
         return tuple(
             diagnostic
@@ -136,7 +175,19 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
         self,
         theme: Theme,
     ) -> None:
-        """Recolor every highlighted token kind and rehighlight the document."""
+        """Recolor every highlighted token kind and rehighlight the document.
+
+        Clears `_cached_text` before rehighlighting so the next
+        `highlightBlock` call is forced to re-tokenize even though the
+        document text itself hasn't changed -- only the colors did, and
+        `highlightBlock` only re-tokenizes when the cached text is
+        stale.
+
+        :param theme: The color theme to rebuild the token formats
+            from.
+        :returns: None. Replaces `_formats` and triggers an immediate
+            full rehighlight.
+        """
 
         self._formats = {
             TokenKind.RESERVED_WORD: _build_format(
@@ -152,8 +203,6 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
                 theme.colors.syntax_comment,
             ),
         }
-        # Force the next highlightBlock() call to re-tokenize even if the
-        # text hasn't changed, since only the colors did.
         self._cached_text = None
         self.rehighlight()
 
@@ -170,6 +219,12 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
         currently in effect (its first several characters silently
         swallowed as if they were the sequence area), so switching
         formats needs a real retokenize, not just a repaint.
+
+        :param source_format: The new column convention to assume for
+            the document.
+        :returns: None. Discards the cached text so the next
+            `highlightBlock` call retokenizes, then triggers an
+            immediate full rehighlight.
         """
 
         self._source_format = source_format
@@ -180,7 +235,19 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
         self,
         text: str,
     ) -> None:
-        """Apply cached token formatting to one visible line block."""
+        """Apply cached token formatting to one visible line block.
+
+        Overrides :meth:`QSyntaxHighlighter.highlightBlock`; Qt invokes
+        this once per text block that needs (re)painting. Re-tokenizes
+        the whole document first if the cached text is stale, then
+        looks up and applies the formats and diagnostic underlines that
+        belong to the current block's line number.
+
+        :param text: The plain text of the block currently being
+            highlighted, as provided by Qt.
+        :returns: None. Formats are applied to the current block via
+            `setFormat`.
+        """
 
         full_text = self.document().toPlainText()
 
@@ -275,19 +342,41 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
         synchronously, since `rehighlight()` re-invokes
         `highlightBlock()` for every block and would recurse into this
         same method while it's still on the stack.
+
+        Calling `start()` on the timer is itself the re-entrancy
+        guard: per `QTimer.isActive()` semantics, starting an
+        already-running single-shot timer just resets its remaining
+        time rather than scheduling a second firing, so a burst of
+        edits arriving before the queued call fires still results in
+        only one `rehighlight()` pass.
+
+        :returns: None. (Re-)arms `_rehighlight_timer`.
         """
 
-        # QTimer.isActive() is the timer's own re-entrancy guard --
-        # starting an already-running single-shot timer just resets
-        # its remaining time, so a burst of edits before the queued
-        # call fires still only results in one rehighlight() pass.
         self._rehighlight_timer.start()
 
     def _retokenize(
         self,
         full_text: str,
     ) -> None:
-        """Re-lex/parse/analyze the document, indexing results by line number."""
+        """Re-lex/parse/analyze the document, indexing results by line number.
+
+        Tokenizing errors are swallowed rather than propagated: a live
+        editor must never crash from a highlighting pass over
+        transient, mid-edit invalid source, so any exception simply
+        clears the caches (skipping highlighting for this pass) rather
+        than taking the whole editor down with it.
+
+        A token whose span crosses source lines (a string literal
+        continued across two lines) is skipped rather than
+        highlighted, since it is not yet supported to highlight such a
+        token correctly on a single line.
+
+        :param full_text: The complete current document text to
+            tokenize and analyze.
+        :returns: None. Replaces `_cached_text`, `_tokens_by_line`, and
+            `_diagnostics_by_line` with the results of this pass.
+        """
 
         self._cached_text = full_text
         tokens_by_line: dict[
@@ -301,9 +390,6 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
                 source_format=self._source_format,
             )
         except Exception:
-            # A live editor must never crash from a highlighting pass over
-            # transient, mid-edit invalid source; skip highlighting for
-            # this pass rather than taking the whole editor down with it.
             self._tokens_by_line = {}
             self._diagnostics_by_line = {}
             return
@@ -313,8 +399,6 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
                 continue
 
             if token.span.start.line != token.span.end.line:
-                # A literal continued across source lines; skipped for now
-                # rather than highlighting it incorrectly on one line.
                 continue
 
             line_number = token.span.start.line - 1
@@ -361,7 +445,13 @@ class CobolSyntaxHighlighter(QSyntaxHighlighter):
 def _build_format(
     hex_color: str,
 ) -> QTextCharFormat:
-    """Build a text format that only overrides the foreground color."""
+    """Build a text format that only overrides the foreground color.
+
+    :param hex_color: The foreground color to set, in a format
+        accepted by :class:`QColor` (e.g. ``"#RRGGBB"``).
+    :returns: A new :class:`QTextCharFormat` with only its foreground
+        color set to `hex_color`.
+    """
 
     text_format = QTextCharFormat()
     text_format.setForeground(

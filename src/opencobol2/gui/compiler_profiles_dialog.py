@@ -1,4 +1,11 @@
-"""A dialog for managing configured COBOL compiler profiles."""
+"""A dialog for managing configured COBOL compiler profiles.
+
+Presents the set of configured :class:`CompilerProfile` entries in a list,
+lets the user add, remove, or designate one as the default, and renders a
+per-provider configuration form (built from each provider's declared
+:class:`CompilerConfigurationField` list) for editing the selected profile's
+details.
+"""
 
 from __future__ import annotations
 
@@ -41,12 +48,23 @@ from opencobol2.settings import (
 
 
 class _PathFieldEditor(QWidget):
-    """A single-line path editor paired with a file-picker button."""
+    """A single-line path editor paired with a file-picker button.
+
+    :ivar line_edit: The text field holding the current path, editable
+        directly or filled in via the "Browse..." button.
+    """
 
     def __init__(
         self,
         parent: QWidget | None = None,
     ) -> None:
+        """Build the line edit and browse button and lay them out horizontally.
+
+        :param parent: The optional parent widget, forwarded to
+            :class:`QWidget`.
+        :returns: None.
+        """
+
         super().__init__(
             parent,
         )
@@ -79,6 +97,13 @@ class _PathFieldEditor(QWidget):
     def _browse(
         self,
     ) -> None:
+        """Prompt for a file via a native open-file dialog and store the choice.
+
+        :returns: None. If the user picks a file, `line_edit` is updated
+            with the chosen path; if they cancel, `line_edit` is left
+            unchanged.
+        """
+
         path_str, _ = QFileDialog.getOpenFileName(
             self,
             "Select File",
@@ -92,12 +117,23 @@ class _PathFieldEditor(QWidget):
     def text(
         self,
     ) -> str:
+        """Return the current path text.
+
+        :returns: The current contents of `line_edit`.
+        """
+
         return self.line_edit.text()
 
     def setText(
         self,
         text: str,
     ) -> None:
+        """Replace the current path text.
+
+        :param text: The path to display in `line_edit`.
+        :returns: None. `line_edit` is updated in place.
+        """
+
         self.line_edit.setText(
             text,
         )
@@ -108,7 +144,13 @@ def _confirm(
     title: str,
     message: str,
 ) -> bool:
-    """Ask a yes/no confirmation question before a destructive action."""
+    """Ask a yes/no confirmation question before a destructive action.
+
+    :param parent: The widget the confirmation message box is shown over.
+    :param title: The message box's title.
+    :param message: The question text shown to the user.
+    :returns: True if the user chose Yes, False if they chose No.
+    """
 
     return (
         QMessageBox.question(
@@ -123,7 +165,34 @@ def _confirm(
 
 
 class CompilerProfilesDialog(QDialog):
-    """Adds, edits, removes, and selects configured compiler profiles."""
+    """Adds, edits, removes, and selects configured compiler profiles.
+
+    :ivar _settings_service: The service used to read the current compiler
+        settings and persist changes when the dialog is accepted.
+    :ivar _provider_registry: The registry of known compiler providers,
+        used to resolve each profile's provider and its configuration
+        fields.
+    :ivar _profiles: The working, in-memory copy of the configured
+        profiles, edited as the user interacts with the dialog and only
+        written back through `_settings_service` on accept.
+    :ivar _default_profile_id: The profile id currently marked as
+        default, or None if there is no default.
+    :ivar _field_widgets: The editor widgets currently shown in
+        `_fields_form`, keyed by configuration field key, for the
+        profile currently loaded into the form.
+    :ivar _active_row: The index into `_profiles` whose values the form
+        currently reflects, or None if the form doesn't reflect any row
+        (nothing to commit). Tracked so that switching the list
+        selection commits the previously-edited row's live form values
+        before loading the newly selected row.
+    :ivar _profile_list: The list widget showing one entry per profile.
+    :ivar _display_name_edit: The line edit for the selected profile's
+        display name.
+    :ivar _provider_label: The read-only label showing the selected
+        profile's provider display name.
+    :ivar _fields_form: The form layout holding the selected profile's
+        provider-specific configuration field widgets.
+    """
 
     def __init__(
         self,
@@ -132,7 +201,19 @@ class CompilerProfilesDialog(QDialog):
         provider_registry: CompilerProviderRegistry,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the dialog, preloaded from the current compiler settings."""
+        """Build the dialog, preloaded from the current compiler settings.
+
+        :param settings_service: The service to read compiler settings
+            from and persist them back to on accept.
+        :param provider_registry: The registry used to resolve each
+            profile's provider and its configuration fields.
+        :param parent: The optional parent widget, forwarded to
+            :class:`QDialog`.
+        :returns: None.
+        :raises TypeError: If `settings_service` is not a
+            :class:`SettingsService`, or `provider_registry` is not a
+            :class:`CompilerProviderRegistry`.
+        """
 
         super().__init__(
             parent,
@@ -172,9 +253,6 @@ class CompilerProfilesDialog(QDialog):
             str,
             QWidget,
         ] = {}
-        # Tracks which row's form values are currently live-edited, so
-        # switching selection commits them before loading the next row;
-        # `None` means the form doesn't reflect any row (nothing to commit).
         self._active_row: int | None = None
 
         self.setWindowTitle(
@@ -323,6 +401,11 @@ class CompilerProfilesDialog(QDialog):
         the form previously held, so this must not trigger another commit
         via `currentRowChanged` — signals are blocked and the resulting
         state is applied directly instead.
+
+        :param row: The row index to select, or a negative value to
+            select nothing.
+        :returns: None. The list selection and `_active_row` are updated,
+            and the form is reloaded for the new row.
         """
 
         self._profile_list.blockSignals(
@@ -345,6 +428,15 @@ class CompilerProfilesDialog(QDialog):
     def _refresh_profile_list(
         self,
     ) -> None:
+        """Rebuild the list widget's items from `_profiles`.
+
+        Marks the default profile's entry with a " (default)" suffix.
+        Signals are blocked around the rebuild so repopulating the list
+        does not itself trigger `_on_selection_changed`.
+
+        :returns: None. `_profile_list` is repopulated in place.
+        """
+
         self._profile_list.blockSignals(
             True,
         )
@@ -368,11 +460,22 @@ class CompilerProfilesDialog(QDialog):
         self,
         row: int,
     ) -> None:
+        """Commit the outgoing row's edits, then load the newly selected row.
+
+        If committing the previous row's form values fails, the visible
+        selection is moved back to the row whose form data just failed
+        to commit, without touching the form itself -- the form still
+        holds the user's unsaved, invalid text so they can see and fix
+        it.
+
+        :param row: The newly selected row index, or a negative value
+            if nothing is selected.
+        :returns: None. On successful commit, `_active_row` and the form
+            are updated for `row`; on failed commit, the list selection
+            is reverted to `_active_row` and the form is left untouched.
+        """
+
         if not self._commit_current_profile_from_form():
-            # Move the visible selection back to the row whose form
-            # data just failed to commit -- without touching the form
-            # itself, which still holds the user's unsaved, invalid
-            # text so they can see and fix it.
             self._profile_list.blockSignals(
                 True,
             )
@@ -396,6 +499,12 @@ class CompilerProfilesDialog(QDialog):
     def _clear_fields_form(
         self,
     ) -> None:
+        """Remove every row from the provider configuration fields form.
+
+        :returns: None. `_fields_form` is emptied and `_field_widgets`
+            is reset to an empty mapping.
+        """
+
         while self._fields_form.rowCount():
             self._fields_form.removeRow(
                 0,
@@ -407,6 +516,14 @@ class CompilerProfilesDialog(QDialog):
         self,
         row: int | None,
     ) -> None:
+        """Populate the details form from one profile, or blank it out.
+
+        :param row: The index into `_profiles` to load, or None (or an
+            out-of-range index) to clear and disable the form instead.
+        :returns: None. The name field, provider label, and
+            provider-specific configuration fields are rebuilt in place.
+        """
+
         self._clear_fields_form()
 
         if row is None or not (
@@ -476,6 +593,11 @@ class CompilerProfilesDialog(QDialog):
         and reported to the caller via the return value instead, so
         every caller can abort its own action cleanly without
         touching `_active_row` or the form.
+
+        :returns: True if there was nothing to commit, or the commit
+            succeeded; False if the current field values were invalid,
+            in which case a critical dialog has already been shown and
+            `_profiles` was left unmodified.
         """
 
         row = self._active_row
@@ -537,6 +659,17 @@ class CompilerProfilesDialog(QDialog):
     def _add_profile(
         self,
     ) -> None:
+        """Prompt for a provider and append a new default-configured profile.
+
+        Becomes the default profile if there was none before, and is
+        selected in the list once added.
+
+        :returns: None. On success, `_profiles` gains one entry, the
+            list is refreshed, and the new row is selected; if committing
+            the outgoing row fails or the user cancels the provider
+            picker, nothing changes.
+        """
+
         if not self._commit_current_profile_from_form():
             return
 
@@ -585,6 +718,17 @@ class CompilerProfilesDialog(QDialog):
     def _remove_profile(
         self,
     ) -> None:
+        """Remove the selected profile after user confirmation.
+
+        If the removed profile was the default, the first remaining
+        profile (if any) becomes the new default.
+
+        :returns: None. On confirmed removal, `_profiles` loses the
+            selected entry, the list is refreshed, and a nearby row is
+            selected; if nothing is selected or the user declines to
+            confirm, nothing changes.
+        """
+
         row = self._profile_list.currentRow()
 
         if not (
@@ -623,6 +767,14 @@ class CompilerProfilesDialog(QDialog):
     def _set_selected_as_default(
         self,
     ) -> None:
+        """Mark the selected profile as the default.
+
+        :returns: None. On success, `_default_profile_id` is updated
+            and the list is refreshed to show the new default marker;
+            if nothing is selected or committing the outgoing row's
+            form values fails, nothing changes.
+        """
+
         row = self._profile_list.currentRow()
 
         if not (
@@ -644,6 +796,19 @@ class CompilerProfilesDialog(QDialog):
     def _apply_and_accept(
         self,
     ) -> None:
+        """Validate every profile, persist them, and close the dialog.
+
+        Commits the currently-edited row, then validates every profile
+        against its provider before attempting to persist. If either
+        the commit, a per-profile validation, or the settings write
+        fails, a critical dialog is shown and the dialog stays open so
+        the user can fix the problem.
+
+        :returns: None. On success, the settings are persisted and the
+            dialog is accepted (closed); otherwise the dialog remains
+            open with its current state.
+        """
+
         if not self._commit_current_profile_from_form():
             return
 
@@ -691,7 +856,19 @@ class CompilerProfilesDialog(QDialog):
 def _build_field_widget(
     field: CompilerConfigurationField,
 ) -> QWidget:
-    """Create the editor widget for one provider configuration field."""
+    """Create the editor widget for one provider configuration field.
+
+    :param field: The configuration field to build a widget for; its
+        :attr:`~CompilerConfigurationField.kind` selects the widget type.
+    :returns: A new, empty widget appropriate for `field.kind`: a
+        :class:`QLineEdit` for STRING or INTEGER_LIST, a
+        :class:`_PathFieldEditor` for PATH, a :class:`QCheckBox` for
+        BOOLEAN, a :class:`QPlainTextEdit` for STRING_LIST or
+        STRING_MAP, or a :class:`QComboBox` populated from
+        `field.choices` for CHOICE.
+    :raises AssertionError: If `field.kind` is not one of the known
+        :class:`CompilerConfigurationFieldKind` values.
+    """
 
     kind = field.kind
 
@@ -740,7 +917,20 @@ def _write_field_value(
     widget: QWidget,
     value: object,
 ) -> None:
-    """Populate a field editor widget from a stored (or default) value."""
+    """Populate a field editor widget from a stored (or default) value.
+
+    :param field: The configuration field being displayed; used to
+        resolve `field.default` and to select which widget API to call
+        for `field.kind`.
+    :param widget: The widget previously built by
+        :func:`_build_field_widget` for this field.
+    :param value: The stored configuration value for this field, or
+        None to fall back to `field.default`.
+    :returns: None. `widget` is updated in place to reflect the
+        resolved value.
+    :raises AssertionError: If `field.kind` is not one of the known
+        :class:`CompilerConfigurationFieldKind` values.
+    """
 
     resolved_value = (
         field.default if value is None else value
@@ -835,6 +1025,31 @@ def _read_field_value(
 
     Returns `None` when the field is left blank, so the profile omits the
     key entirely and the provider's declared default applies instead.
+
+    For STRING_MAP, each non-blank line is parsed as a ``key=value``
+    pair and rejected up front rather than left for a later layer to
+    catch: an empty key used to sail through here cleanly and only blow
+    up two calls later inside :func:`dataclasses.replace`'s own
+    re-validation, with a message that doesn't point back at this field
+    or line at all, while a duplicate key used to silently overwrite the
+    earlier value with no rejection and no warning, discarding it before
+    any downstream layer could ever detect it happened. Both cases are
+    now raised here instead.
+
+    :param field: The configuration field being read; used to select
+        which widget API to call for `field.kind`, and to name the
+        field in raised error messages.
+    :param widget: The widget previously built by
+        :func:`_build_field_widget` for this field.
+    :returns: The value entered in `widget`, converted to the type
+        appropriate for `field.kind` (str, bool, a tuple of str, a dict
+        of str to str, or a tuple of int), or None if the field is
+        blank.
+    :raises ValueError: If a STRING_MAP line has an empty key, or a key
+        that duplicates an earlier line in the same widget; or if an
+        INTEGER_LIST entry cannot be parsed as an integer.
+    :raises AssertionError: If `field.kind` is not one of the known
+        :class:`CompilerConfigurationFieldKind` values.
     """
 
     kind = field.kind
@@ -871,14 +1086,6 @@ def _read_field_value(
             )
             normalized_key = key.strip()
 
-            # Editor §Dialogs-1/2: an empty key used to sail through
-            # here cleanly and only blow up two calls later inside
-            # `dataclasses.replace`'s own re-validation, with a
-            # message that doesn't point back at this field or line
-            # at all; a duplicate key used to silently overwrite the
-            # earlier value with no rejection and no warning,
-            # discarding it before any downstream layer could ever
-            # detect it happened.
             if not normalized_key:
                 raise ValueError(
                     f"{field.title} has an entry with no key: "
@@ -929,11 +1136,30 @@ def create_show_compiler_profiles_handler(
         QWidget | None,
     ] = lambda: None,
 ) -> CommandHandler:
-    """Create a handler that opens the Compiler Profiles dialog."""
+    """Create a handler that opens the Compiler Profiles dialog.
+
+    :param settings_service: The service passed through to the dialog
+        for reading and persisting compiler settings.
+    :param provider_registry: The provider registry passed through to
+        the dialog for resolving profiles' providers and fields.
+    :param parent_widget_provider: A callable returning the widget to
+        parent the dialog to, or None for no parent. Defaults to a
+        callable that always returns None.
+    :returns: A :class:`CommandHandler` that shows the dialog when
+        invoked.
+    """
 
     def handle_show_compiler_profiles(
         context: CommandContext,
     ) -> None:
+        """Build and modally show the Compiler Profiles dialog.
+
+        :param context: The command context this handler was invoked
+            with; unused, but required by the :class:`CommandHandler`
+            signature.
+        :returns: None. Blocks until the dialog is closed.
+        """
+
         dialog = CompilerProfilesDialog(
             settings_service=settings_service,
             provider_registry=provider_registry,

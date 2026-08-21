@@ -1,4 +1,17 @@
-"""Renders a repository's branches, tags, remotes, and commit history."""
+"""Renders a repository's branches, tags, remotes, and commit history.
+
+Every mutating action in this panel (switching branches, creating or
+deleting a branch or tag, adding/removing/renaming a remote) shares one
+common tuple of real Git failures it can catch alongside its own
+domain-specific already-exists/not-found error: a missing repository
+mid-operation, a missing `git` executable, a failed command, a timeout,
+or a plain `ValueError` raised by the service layer's own argument
+validation (for example, a dash-prefixed branch or tag name). That
+shared tuple has to be kept in sync by hand with the service layer: the
+dash-prefixed-name validation was added correctly there, but the tuple
+was not updated at the same time to include its `ValueError` exception
+type.
+"""
 
 from __future__ import annotations
 
@@ -45,13 +58,6 @@ from opencobol2.services.git import (
 
 _NAME_DATA_ROLE = Qt.ItemDataRole.UserRole
 
-# Every real Git failure this panel's mutating actions can trigger, besides
-# the domain-specific already-exists/not-found errors each action also
-# catches: a missing repository mid-operation, a missing `git` executable,
-# a failed command, a timeout, or a plain `ValueError` from the service
-# layer's own argument validation (e.g. a dash-prefixed branch/tag name --
-# Editor §GitPanels-1: that validation was added correctly at the service
-# layer, but this tuple was never updated for its exception type).
 _COMMON_GIT_ERRORS = (
     GitRepositoryNotFoundError,
     GitExecutableUnavailableError,
@@ -62,7 +68,26 @@ _COMMON_GIT_ERRORS = (
 
 
 class GitRepositoryWidget(QWidget):
-    """Shows branches, tags, remotes, and history for one Git repository."""
+    """Shows branches, tags, remotes, and history for one Git repository.
+
+    :ivar _git_service: The service used to query and mutate the
+        displayed repository.
+    :ivar _repository_path: The repository currently displayed, or
+        None if no repository is open.
+    :ivar _empty_label: The placeholder shown in `_stack` when there is
+        no repository to display.
+    :ivar _tabs: The tab widget holding the Branches, Tags, Remotes,
+        and History pages, shown in `_stack` once a repository is open.
+    :ivar _branches_list: The list widget showing every local branch,
+        with the current branch marked.
+    :ivar _tags_list: The list widget showing every tag.
+    :ivar _remotes_list: The list widget showing every configured
+        remote.
+    :ivar _history_list: The list widget showing the recent commit log.
+    :ivar _stack: The stacked widget that switches between
+        `_empty_label` and `_tabs` depending on whether a repository is
+        open.
+    """
 
     def __init__(
         self,
@@ -71,7 +96,17 @@ class GitRepositoryWidget(QWidget):
         repository_path: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the Git Repository panel, optionally already showing a repository."""
+        """Build the Git Repository panel, optionally already showing a repository.
+
+        :param git_service: The service used to query and mutate the
+            displayed repository.
+        :param repository_path: The repository to display immediately,
+            or None to start in the empty state.
+        :param parent: The optional parent widget, forwarded to
+            :class:`QWidget`.
+        :returns: None.
+        :raises TypeError: If `git_service` is not a :class:`GitService`.
+        """
 
         super().__init__(
             parent,
@@ -168,7 +203,11 @@ class GitRepositoryWidget(QWidget):
     def repository_path(
         self,
     ) -> Path | None:
-        """Return the repository path currently displayed, if any."""
+        """Return the repository path currently displayed, if any.
+
+        :returns: The repository path currently displayed, or None if
+            the panel is in its empty state.
+        """
 
         return self._repository_path
 
@@ -176,7 +215,13 @@ class GitRepositoryWidget(QWidget):
         self,
         path: Path | None,
     ) -> None:
-        """Display a repository's branches/tags/remotes/history, or clear it."""
+        """Display a repository's branches/tags/remotes/history, or clear it.
+
+        :param path: The repository to display, or None to clear the
+            panel back to its empty state.
+        :returns: None. `_repository_path` is updated and every tab is
+            refreshed from it.
+        """
 
         self._repository_path = path
         self.refresh()
@@ -184,7 +229,10 @@ class GitRepositoryWidget(QWidget):
     def show_branches_tab(
         self,
     ) -> None:
-        """Switch to the Branches tab (a no-op with no repository open)."""
+        """Switch to the Branches tab (a no-op with no repository open).
+
+        :returns: None. The visible tab is changed as a side effect.
+        """
 
         if self._repository_path is None:
             return
@@ -196,7 +244,21 @@ class GitRepositoryWidget(QWidget):
     def refresh(
         self,
     ) -> None:
-        """Re-fetch and redisplay every tab from the current repository."""
+        """Re-fetch and redisplay every tab from the current repository.
+
+        Both `GitRepositoryNotFoundError` (the directory exists but is
+        not a Git worktree) and `GitExecutableUnavailableError` are
+        caught below and treated the same way, falling back to the
+        empty-repository placeholder. Previously only
+        `GitRepositoryNotFoundError` was handled here: if the
+        repository directory itself vanished out from under a
+        still-open panel, the missing-executable-shaped
+        `GitExecutableUnavailableError` propagated uncaught on the very
+        next refresh instead of falling back to this same empty state.
+
+        :returns: None. The panel's tabs (or the empty-state
+            placeholder) are updated in place.
+        """
 
         if self._repository_path is None:
             self._stack.setCurrentWidget(
@@ -222,13 +284,6 @@ class GitRepositoryWidget(QWidget):
             GitRepositoryNotFoundError,
             GitExecutableUnavailableError,
         ):
-            # Editor §GitPanels-2: only `GitRepositoryNotFoundError`
-            # (directory exists but isn't a Git worktree) was caught
-            # here -- if the directory itself vanishes out from under
-            # a still-open panel, the missing-executable-shaped
-            # `GitExecutableUnavailableError` propagated uncaught on
-            # the very next refresh instead of falling back to this
-            # same empty state.
             self._stack.setCurrentWidget(
                 self._empty_label,
             )
@@ -254,7 +309,11 @@ class GitRepositoryWidget(QWidget):
         self,
         branches: tuple[GitBranch, ...],
     ) -> None:
-        """Populate the Branches tab, marking the current branch."""
+        """Populate the Branches tab, marking the current branch.
+
+        :param branches: Every local branch to display.
+        :returns: None. `_branches_list` is repopulated in place.
+        """
 
         self._branches_list.clear()
 
@@ -279,7 +338,11 @@ class GitRepositoryWidget(QWidget):
         self,
         tags: tuple[GitTag, ...],
     ) -> None:
-        """Populate the Tags tab."""
+        """Populate the Tags tab.
+
+        :param tags: Every tag to display.
+        :returns: None. `_tags_list` is repopulated in place.
+        """
 
         self._tags_list.clear()
 
@@ -299,7 +362,11 @@ class GitRepositoryWidget(QWidget):
         self,
         remotes: tuple[GitRemote, ...],
     ) -> None:
-        """Populate the Remotes tab."""
+        """Populate the Remotes tab.
+
+        :param remotes: Every remote to display.
+        :returns: None. `_remotes_list` is repopulated in place.
+        """
 
         self._remotes_list.clear()
 
@@ -319,7 +386,11 @@ class GitRepositoryWidget(QWidget):
         self,
         history: tuple[GitCommitLogEntry, ...],
     ) -> None:
-        """Populate the History tab."""
+        """Populate the History tab.
+
+        :param history: The recent commit log entries to display.
+        :returns: None. `_history_list` is repopulated in place.
+        """
 
         self._history_list.clear()
 
@@ -334,7 +405,13 @@ class GitRepositoryWidget(QWidget):
         self,
         item: QListWidgetItem,
     ) -> None:
-        """Switch to the branch represented by one double-clicked item."""
+        """Switch to the branch represented by one double-clicked item.
+
+        :param item: The double-clicked item from `_branches_list`.
+        :returns: None. The repository's checked-out branch and the
+            panel's tabs are updated as a side effect, or an error
+            dialog is shown on failure.
+        """
 
         if self._repository_path is None:
             return
@@ -366,7 +443,12 @@ class GitRepositoryWidget(QWidget):
     def _new_branch(
         self,
     ) -> None:
-        """Prompt for a name and create a new local branch."""
+        """Prompt for a name and create a new local branch.
+
+        :returns: None. A new branch is created and the panel's tabs
+            are refreshed, or an error dialog is shown on failure. Does
+            nothing if the user cancels or enters a blank name.
+        """
 
         if self._repository_path is None:
             return
@@ -404,7 +486,13 @@ class GitRepositoryWidget(QWidget):
         self,
         position,
     ) -> None:
-        """Show a context menu with a delete action for one branch item."""
+        """Show a context menu with a delete action for one branch item.
+
+        :param position: The position, relative to `_branches_list`,
+            that the context menu was requested at.
+        :returns: None. A branch may be deleted as a side effect,
+            depending on the user's choice.
+        """
 
         item = self._branches_list.itemAt(
             position,
@@ -437,7 +525,13 @@ class GitRepositoryWidget(QWidget):
         self,
         branch_name: str,
     ) -> None:
-        """Delete one branch after confirmation."""
+        """Delete one branch after confirmation.
+
+        :param branch_name: The name of the branch to delete.
+        :returns: None. The branch is deleted and the panel's tabs are
+            refreshed, or an error dialog is shown on failure. Does
+            nothing if the user declines the confirmation.
+        """
 
         if not _confirm(
             self,
@@ -469,7 +563,12 @@ class GitRepositoryWidget(QWidget):
     def _new_tag(
         self,
     ) -> None:
-        """Prompt for a name (and optional message) and create a new tag."""
+        """Prompt for a name (and optional message) and create a new tag.
+
+        :returns: None. A new tag is created and the panel's tabs are
+            refreshed, or an error dialog is shown on failure. Does
+            nothing if the user cancels or enters a blank name.
+        """
 
         if self._repository_path is None:
             return
@@ -518,7 +617,13 @@ class GitRepositoryWidget(QWidget):
         self,
         position,
     ) -> None:
-        """Show a context menu with a delete action for one tag item."""
+        """Show a context menu with a delete action for one tag item.
+
+        :param position: The position, relative to `_tags_list`, that
+            the context menu was requested at.
+        :returns: None. A tag may be deleted as a side effect,
+            depending on the user's choice.
+        """
 
         item = self._tags_list.itemAt(
             position,
@@ -551,7 +656,13 @@ class GitRepositoryWidget(QWidget):
         self,
         tag_name: str,
     ) -> None:
-        """Delete one tag after confirmation."""
+        """Delete one tag after confirmation.
+
+        :param tag_name: The name of the tag to delete.
+        :returns: None. The tag is deleted and the panel's tabs are
+            refreshed, or an error dialog is shown on failure. Does
+            nothing if the user declines the confirmation.
+        """
 
         if not _confirm(
             self,
@@ -583,7 +694,12 @@ class GitRepositoryWidget(QWidget):
     def _add_remote(
         self,
     ) -> None:
-        """Prompt for a name and URL and add a new remote."""
+        """Prompt for a name and URL and add a new remote.
+
+        :returns: None. A new remote is added and the panel's tabs are
+            refreshed, or an error dialog is shown on failure. Does
+            nothing if the user cancels or enters a blank name or URL.
+        """
 
         if self._repository_path is None:
             return
@@ -633,7 +749,13 @@ class GitRepositoryWidget(QWidget):
         self,
         position,
     ) -> None:
-        """Show a context menu with remove/rename actions for one remote item."""
+        """Show a context menu with remove/rename actions for one remote item.
+
+        :param position: The position, relative to `_remotes_list`,
+            that the context menu was requested at.
+        :returns: None. A remote may be removed or renamed as a side
+            effect, depending on the user's choice.
+        """
 
         item = self._remotes_list.itemAt(
             position,
@@ -673,7 +795,13 @@ class GitRepositoryWidget(QWidget):
         self,
         remote_name: str,
     ) -> None:
-        """Remove one remote after confirmation."""
+        """Remove one remote after confirmation.
+
+        :param remote_name: The name of the remote to remove.
+        :returns: None. The remote is removed and the panel's tabs are
+            refreshed, or an error dialog is shown on failure. Does
+            nothing if the user declines the confirmation.
+        """
 
         if not _confirm(
             self,
@@ -706,7 +834,13 @@ class GitRepositoryWidget(QWidget):
         self,
         remote_name: str,
     ) -> None:
-        """Rename one remote to a new, user-provided name."""
+        """Rename one remote to a new, user-provided name.
+
+        :param remote_name: The current name of the remote to rename.
+        :returns: None. The remote is renamed and the panel's tabs are
+            refreshed, or an error dialog is shown on failure. Does
+            nothing if the user cancels or enters a blank name.
+        """
 
         new_name, ok = QInputDialog.getText(
             self,
@@ -748,7 +882,17 @@ def _build_tab(
     add_button_handler,
     context_menu_handler,
 ) -> QWidget:
-    """Build one tab page: an action button above a context-menu-enabled list."""
+    """Build one tab page: an action button above a context-menu-enabled list.
+
+    :param list_widget: The list to place below the action button and
+        wire up with the context-menu policy.
+    :param add_button_label: The label text for the action button.
+    :param add_button_handler: The slot connected to the action
+        button's `clicked` signal.
+    :param context_menu_handler: The slot connected to `list_widget`'s
+        `customContextMenuRequested` signal.
+    :returns: The assembled tab page widget.
+    """
 
     tab = QWidget()
     layout = QVBoxLayout(

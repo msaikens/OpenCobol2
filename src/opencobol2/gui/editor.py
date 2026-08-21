@@ -1,4 +1,40 @@
-"""A tabbed source-code editor backed by the Qt-independent document model."""
+"""A tabbed source-code editor backed by the Qt-independent document model.
+
+Several module-level constants encode non-obvious behavioral decisions
+that are worth recording here since there is nowhere else to attach a
+docstring to a plain constant.
+
+Fold ranges come from a full lex+parse of the whole document (see
+:func:`opencobol2.language.compute_fold_ranges`) -- on a large file
+that is real, measured work (roughly a second on a ~10,000-line file).
+It was previously re-run synchronously on every single keystroke via
+`textChanged`, on top of the highlighter's own equally-expensive
+lex+parse+semantic pass for diagnostics. Held-key auto-repeat (e.g.
+backspacing quickly) queues keystrokes faster than that can keep up,
+which is exactly what reads as "the editor stopped responding" -- it
+is real, growing, unbounded work piling up on the GUI thread, not a
+hang or a bug in any one keystroke. `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`
+debounces the recompute the same way completion already is, so a burst
+of edits collapses into one recompute after they settle, rather than
+one full recompute per keystroke.
+
+`_IDENTIFIER_CHARACTERS` is hyphen-inclusive, the same word-boundary
+convention `SourceEditorWidget.rename_symbol_at_cursor` and
+`opencobol2.language.completion` both already use, since COBOL names
+legally contain hyphens.
+
+`_COLUMN_SELECTION_ARROW_KEYS` lists the arrow keys that, combined
+with Alt+Shift, extend a column (box) selection -- the same keybinding
+Visual Studio and Notepad++ both already use for it. This is
+deliberately not a separate "mode toggle" command, since the modifier
+combination itself is the trigger.
+
+`_MULTI_CURSOR_MOVEMENTS` replicates the primary cursor's own movement
+at every secondary cursor so their relative positions stay aligned --
+Home/End are deliberately excluded here since `QTextCursor`'s
+StartOfLine/EndOfLine operations already work identically regardless
+of which cursor calls them.
+"""
 
 from __future__ import annotations
 
@@ -114,23 +150,8 @@ _COMPLETION_DEBOUNCE_MILLISECONDS = 150
 _COMPLETION_POPUP_WIDTH = 320
 _COMPLETION_POPUP_HEIGHT = 160
 
-# Fold ranges come from a full lex+parse of the whole document (see
-# `compute_fold_ranges`) -- on a large file that's real, measured work
-# (roughly a second on a ~10,000-line file), and it was previously
-# re-run synchronously on every single keystroke via `textChanged`, on
-# top of the highlighter's own equally-expensive lex+parse+semantic
-# pass for diagnostics. Held-key auto-repeat (e.g. backspacing quickly)
-# queues keystrokes faster than that can keep up, which is exactly what
-# reads as "the editor stopped responding" -- it's real, growing,
-# unbounded work piling up on the GUI thread, not a hang or a bug in
-# any one keystroke. Debouncing it the same way completion already is
-# means a burst of edits collapses into one recompute after they
-# settle, rather than one full recompute per keystroke.
 _FOLD_RANGE_DEBOUNCE_MILLISECONDS = 150
 
-# Hyphen-inclusive, the same word-boundary convention
-# `rename_symbol_at_cursor` and `opencobol2.language.completion` both
-# already use, since COBOL names legally contain hyphens.
 _IDENTIFIER_CHARACTERS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789-"
 )
@@ -139,7 +160,14 @@ _IDENTIFIER_CHARACTERS = frozenset(
 def _is_identifier_character(
     text: str,
 ) -> bool:
-    """Return whether a `QKeyEvent.text()` value is one COBOL identifier character."""
+    """Return whether a `QKeyEvent.text()` value is one COBOL identifier character.
+
+    :param text: The single-character text value from a `QKeyEvent`,
+        as returned by `QKeyEvent.text()`.
+    :returns: True if `text` is exactly one character and that
+        character is a legal COBOL identifier character (letters,
+        digits, or hyphen); False otherwise.
+    """
 
     return (
         len(text) == 1
@@ -154,6 +182,11 @@ def _is_cobol_source(
 
     Untitled (unsaved) documents are treated as COBOL source too, since
     this IDE has no other file type to open or create yet.
+
+    :param path: The document's on-disk path, or None for an untitled
+        (unsaved) document.
+    :returns: True if `path` is None or has a `.cbl`/`.cob` suffix
+        (case-insensitively); False otherwise.
     """
 
     return (
@@ -162,10 +195,6 @@ def _is_cobol_source(
     )
 
 
-# Column (box) selection extends with Alt+Shift+Arrow, the same
-# keybinding Visual Studio and Notepad++ both already use for it --
-# deliberately not a separate "mode toggle" command, since the modifier
-# combination itself is the trigger.
 _COLUMN_SELECTION_ARROW_KEYS = frozenset(
     (
         Qt.Key.Key_Up,
@@ -180,12 +209,20 @@ _COLUMN_SELECTION_ARROW_KEYS = frozenset(
 class _ColumnSelectionState:
     """A rectangular (box) selection spanning one or more lines.
 
-    `anchor_*` is where the box started; `active_*` is the corner last
-    moved by keyboard or mouse. Columns are plain character offsets
-    within each line's text, not display/tab-expanded columns -- the
-    same simplification the rest of this module already makes rather
-    than reconciling literal-tab columns against the lexer's own
-    tab-expanded ones (see `keyPressEvent`'s docstring).
+    Columns are plain character offsets within each line's text, not
+    display/tab-expanded columns -- the same simplification the rest
+    of this module already makes rather than reconciling literal-tab
+    columns against the lexer's own tab-expanded ones (see
+    `keyPressEvent`'s docstring).
+
+    :ivar anchor_line: The 0-based line where the box selection
+        started.
+    :ivar anchor_column: The 0-based character column where the box
+        selection started.
+    :ivar active_line: The 0-based line of the corner last moved by
+        keyboard or mouse.
+    :ivar active_column: The 0-based character column of the corner
+        last moved by keyboard or mouse.
     """
 
     anchor_line: int
@@ -194,11 +231,6 @@ class _ColumnSelectionState:
     active_column: int
 
 
-# Multi-cursor navigation replicates the primary cursor's own movement
-# at every secondary cursor so their relative positions stay aligned --
-# Home/End are deliberately excluded here since QTextCursor's
-# StartOfLine/EndOfLine operations already work identically regardless
-# of which cursor calls them.
 _MULTI_CURSOR_MOVEMENTS: dict[
     Qt.Key,
     QTextCursor.MoveOperation,
@@ -219,6 +251,12 @@ class _LineNumberArea(QWidget):
         self,
         editor: SourceEditorWidget,
     ) -> None:
+        """Attach this gutter to the editor it belongs to.
+
+        :param editor: The editor whose line numbers this gutter paints.
+        :returns: None.
+        """
+
         super().__init__(
             editor,
         )
@@ -228,6 +266,13 @@ class _LineNumberArea(QWidget):
     def sizeHint(
         self,
     ) -> QSize:
+        """Return the preferred size, using the editor's own gutter width.
+
+        :returns: A :class:`QSize` with the editor's computed line-number
+            area width and a height of 0 (Qt stretches height to fit the
+            layout).
+        """
+
         return QSize(
             self._editor.line_number_area_width(),
             0,
@@ -237,6 +282,12 @@ class _LineNumberArea(QWidget):
         self,
         event: QPaintEvent,
     ) -> None:
+        """Delegate painting to the owning editor.
+
+        :param event: The Qt paint event describing the region to redraw.
+        :returns: None. The gutter is repainted as a side effect.
+        """
+
         self._editor.paint_line_number_area(
             event,
         )
@@ -245,6 +296,13 @@ class _LineNumberArea(QWidget):
         self,
         event: QMouseEvent,
     ) -> None:
+        """Delegate a click to the owning editor's fold-toggle handler.
+
+        :param event: The Qt mouse event describing the click.
+        :returns: None. May toggle a fold in the owning editor as a side
+            effect.
+        """
+
         self._editor.handle_line_number_area_click(
             event.position().toPoint(),
         )
@@ -257,6 +315,12 @@ class _MinimapArea(QWidget):
         self,
         editor: SourceEditorWidget,
     ) -> None:
+        """Attach this minimap strip to the editor it belongs to.
+
+        :param editor: The editor whose overview this strip paints.
+        :returns: None.
+        """
+
         super().__init__(
             editor,
         )
@@ -266,6 +330,13 @@ class _MinimapArea(QWidget):
     def sizeHint(
         self,
     ) -> QSize:
+        """Return the preferred size, using the editor's own minimap width.
+
+        :returns: A :class:`QSize` with the editor's computed minimap
+            area width and a height of 0 (Qt stretches height to fit the
+            layout).
+        """
+
         return QSize(
             self._editor.minimap_area_width(),
             0,
@@ -275,6 +346,12 @@ class _MinimapArea(QWidget):
         self,
         event: QPaintEvent,
     ) -> None:
+        """Delegate painting to the owning editor.
+
+        :param event: The Qt paint event describing the region to redraw.
+        :returns: None. The minimap is repainted as a side effect.
+        """
+
         self._editor.paint_minimap(
             event,
         )
@@ -283,6 +360,12 @@ class _MinimapArea(QWidget):
         self,
         event: QMouseEvent,
     ) -> None:
+        """Delegate a click to the owning editor's minimap navigation.
+
+        :param event: The Qt mouse event describing the click.
+        :returns: None. Moves the owning editor's cursor as a side effect.
+        """
+
         self._editor.handle_minimap_click(
             event.position().toPoint(),
         )
@@ -291,6 +374,13 @@ class _MinimapArea(QWidget):
         self,
         event: QMouseEvent,
     ) -> None:
+        """Continue minimap navigation while the left button is held and dragged.
+
+        :param event: The Qt mouse event describing the drag.
+        :returns: None. Moves the owning editor's cursor as a side effect
+            when the left button is held.
+        """
+
         if event.buttons() & Qt.MouseButton.LeftButton:
             self._editor.handle_minimap_click(
                 event.position().toPoint(),
@@ -304,6 +394,12 @@ class _FindReplaceBar(QWidget):
         self,
         editor: SourceEditorWidget,
     ) -> None:
+        """Build the find/replace row widgets, hidden by default.
+
+        :param editor: The editor this bar searches and edits.
+        :returns: None.
+        """
+
         super().__init__(
             editor,
         )
@@ -423,7 +519,11 @@ class _FindReplaceBar(QWidget):
         self,
         visible: bool,
     ) -> None:
-        """Show or hide the replace row for find-only vs. find-and-replace."""
+        """Show or hide the replace row for find-only vs. find-and-replace.
+
+        :param visible: Whether the replace row should be shown.
+        :returns: None. The replace row's visibility is toggled in place.
+        """
 
         self._replace_row_widget.setVisible(
             visible,
@@ -432,6 +532,12 @@ class _FindReplaceBar(QWidget):
     def _flags(
         self,
     ) -> QTextDocument.FindFlag:
+        """Return the current search flags reflecting the case-sensitivity checkbox.
+
+        :returns: `QTextDocument.FindFlag.FindCaseSensitively` if the
+            "Match case" checkbox is checked, otherwise no flags.
+        """
+
         flags = QTextDocument.FindFlag(
             0,
         )
@@ -446,6 +552,12 @@ class _FindReplaceBar(QWidget):
     def _handle_find_next(
         self,
     ) -> None:
+        """Find the next occurrence of the search text and report the result.
+
+        :returns: None. Moves the editor's selection and updates the
+            status label as side effects.
+        """
+
         self._report_found(
             self._editor.find_text(
                 self.find_edit.text(),
@@ -457,6 +569,12 @@ class _FindReplaceBar(QWidget):
     def _handle_find_previous(
         self,
     ) -> None:
+        """Find the previous occurrence of the search text and report the result.
+
+        :returns: None. Moves the editor's selection and updates the
+            status label as side effects.
+        """
+
         self._report_found(
             self._editor.find_text(
                 self.find_edit.text(),
@@ -468,6 +586,12 @@ class _FindReplaceBar(QWidget):
     def _handle_replace(
         self,
     ) -> None:
+        """Replace the current match, then find the next one.
+
+        :returns: None. Edits the editor's text and updates the status
+            label as side effects.
+        """
+
         self._report_found(
             self._editor.replace_current(
                 self.find_edit.text(),
@@ -479,6 +603,12 @@ class _FindReplaceBar(QWidget):
     def _handle_replace_all(
         self,
     ) -> None:
+        """Replace every occurrence and report how many were replaced.
+
+        :returns: None. Edits the editor's text and updates the status
+            label as side effects.
+        """
+
         count = self._editor.replace_all(
             self.find_edit.text(),
             self.replace_edit.text(),
@@ -494,6 +624,13 @@ class _FindReplaceBar(QWidget):
         self,
         found: bool,
     ) -> None:
+        """Clear or set the status label based on whether a match was found.
+
+        :param found: Whether the preceding find/replace operation
+            located a match.
+        :returns: None. Updates the status label in place.
+        """
+
         self.status_label.setText(
             ""
             if found
@@ -513,6 +650,12 @@ class _CompletionPopup(QWidget):
         self,
         editor: SourceEditorWidget,
     ) -> None:
+        """Build the candidate list widget, hidden by default.
+
+        :param editor: The editor this popup offers completions for.
+        :returns: None.
+        """
+
         super().__init__(
             editor,
         )
@@ -555,7 +698,12 @@ class _CompletionPopup(QWidget):
         self,
         items: tuple[CompletionItem, ...],
     ) -> None:
-        """Replace the candidate list and select the first entry."""
+        """Replace the candidate list and select the first entry.
+
+        :param items: The new completion candidates to display, in
+            display order.
+        :returns: None. The list widget's contents are replaced in place.
+        """
 
         self._items = items
         self.list_widget.clear()
@@ -575,7 +723,11 @@ class _CompletionPopup(QWidget):
     def selected_item(
         self,
     ) -> CompletionItem | None:
-        """Return the currently highlighted candidate, if any."""
+        """Return the currently highlighted candidate, if any.
+
+        :returns: The highlighted :class:`CompletionItem`, or None if
+            the list is empty or nothing is highlighted.
+        """
 
         row = self.list_widget.currentRow()
 
@@ -587,7 +739,10 @@ class _CompletionPopup(QWidget):
     def select_next(
         self,
     ) -> None:
-        """Move the highlight to the next candidate, wrapping around."""
+        """Move the highlight to the next candidate, wrapping around.
+
+        :returns: None. The list widget's current row is updated in place.
+        """
 
         if not self._items:
             return
@@ -600,7 +755,10 @@ class _CompletionPopup(QWidget):
     def select_previous(
         self,
     ) -> None:
-        """Move the highlight to the previous candidate, wrapping around."""
+        """Move the highlight to the previous candidate, wrapping around.
+
+        :returns: None. The list widget's current row is updated in place.
+        """
 
         if not self._items:
             return
@@ -614,6 +772,14 @@ class _CompletionPopup(QWidget):
         self,
         _list_item,
     ) -> None:
+        """Accept the double-clicked candidate as if it had been selected.
+
+        :param _list_item: The `QListWidgetItem` that was double-clicked;
+            unused since the popup tracks the selection by row.
+        :returns: None. Inserts the accepted completion into the editor
+            as a side effect.
+        """
+
         self._editor.accept_selected_completion()
 
 
@@ -650,7 +816,34 @@ class SourceEditorWidget(QPlainTextEdit):
         path: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build an editor preloaded with one document's text."""
+        """Build an editor preloaded with one document's text.
+
+        Word-wrap is always disabled: coding-area column guides (and
+        printing) are painted from "one visual row == one logical line
+        starting at column 1", which is only true without word-wrap.
+        Fixed-format COBOL is column-sensitive by convention anyway, so
+        a horizontal scrollbar on an overly-long line is the right
+        trade-off here, rather than silently wrapping it and desyncing
+        every guide line past the first visual row.
+
+        :param document_id: The identity of the document this editor
+            displays, used to look it up again in a `DocumentService`.
+        :param initial_text: The document's starting text content.
+        :param theme: The color theme to render with.
+        :param editor_settings: Font, tab width, and other editing
+            preferences to apply; defaults to :class:`EditorSettings`'
+            defaults when None.
+        :param guide_settings: Which fixed-format coding-area guides to
+            show; defaults to :class:`CobolGuideSettings`' defaults when
+            None.
+        :param source_format: Whether to assume fixed-format or
+            free-format COBOL column conventions.
+        :param path: The document's on-disk path, or None if it is
+            untitled; used only to decide whether COBOL support
+            (highlighting, folding, language services) applies.
+        :param parent: The optional parent widget.
+        :returns: None.
+        """
 
         super().__init__(
             parent,
@@ -658,13 +851,6 @@ class SourceEditorWidget(QPlainTextEdit):
 
         self._source_format = source_format
 
-        # Coding-area column guides (and printing) are painted from
-        # "one visual row == one logical line starting at column 1" --
-        # true only without word-wrap. Fixed-format COBOL is
-        # column-sensitive by convention anyway, so a horizontal
-        # scrollbar on an overly-long line is the right trade-off here,
-        # not silently wrapping it and desyncing every guide line past
-        # the first visual row.
         self.setLineWrapMode(
             QPlainTextEdit.LineWrapMode.NoWrap,
         )
@@ -786,16 +972,6 @@ class SourceEditorWidget(QPlainTextEdit):
         self.blockCountChanged.connect(
             self._update_line_number_area_width,
         )
-        # textChanged, not blockCountChanged: an in-place edit that
-        # keeps the same line count (e.g. replacing an IF line's text
-        # with a DISPLAY statement on that same physical line) still
-        # changes which lines should fold, but never fires
-        # blockCountChanged -- leaving toggle_fold() working off a
-        # now-stale range for a fold-start line that may not even be a
-        # fold-start anymore. Debounced (see
-        # `_FOLD_RANGE_DEBOUNCE_MILLISECONDS`'s comment above) so a
-        # burst of edits recomputes once after they settle rather than
-        # once per keystroke.
         self.textChanged.connect(
             self._schedule_fold_range_update,
         )

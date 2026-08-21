@@ -78,7 +78,7 @@ def _require_non_empty_string(
     name: str,
 ) -> str:
     """Require and normalize one non-empty string."""
-
+    
     if not isinstance(
         value,
         str,

@@ -1,4 +1,13 @@
-"""Cross-platform GnuCOBOL toolchain discovery."""
+"""Cross-platform GnuCOBOL toolchain discovery.
+
+Locates an installed GnuCOBOL compiler by trying, in order, an explicit
+user-configured path, the executable available on ``PATH``, paths
+derived from known environment variables (MSYS2/MinGW prefixes and
+GnuCOBOL-specific variables), and conventional per-platform
+installation directories. A candidate location is only accepted as a
+real toolchain once it has actually been probed by invoking it and
+parsing its version and ``--info`` output.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +37,11 @@ _INFO_PATTERN = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class _ToolchainCandidate:
-    """Internal compiler discovery candidate."""
+    """One not-yet-probed candidate compiler location.
+
+    :ivar path: The filesystem path to a candidate ``cobc`` executable.
+    :ivar source: Which discovery mechanism produced this candidate.
+    """
 
     path: Path
     source: ToolchainSource
@@ -50,6 +63,14 @@ def discover_gnucobol(
 
     A candidate is returned only when the compiler can be successfully
     probed for version and compiler information.
+
+    :param explicit_path: An optional user-configured compiler path or
+        directory, tried before any other discovery mechanism.
+    :param environment: The process environment to search and probe
+        candidates with. Defaults to the real ``os.environ`` when
+        omitted.
+    :returns: The first successfully probed :class:`GnuCobolToolchain`,
+        or None if no candidate could be found and validated.
     """
     process_environment = dict(
         os.environ if environment is None else environment
@@ -75,13 +96,29 @@ def _iter_candidates(
     explicit_path: str | os.PathLike[str] | None,
     environment: Mapping[str, str],
 ) -> Iterable[_ToolchainCandidate]:
-    """Yield unique GnuCOBOL compiler candidates in priority order."""
+    """Yield unique GnuCOBOL compiler candidates in priority order.
+
+    :param explicit_path: An optional user-configured compiler path or
+        directory, yielded first when present.
+    :param environment: The process environment to derive
+        environment-variable and PATH candidates from.
+    :returns: Every distinct candidate location, in discovery-priority
+        order, deduplicated by normalized absolute path.
+    """
     seen: set[str] = set()
 
     def candidate(
         path: str | os.PathLike[str] | None,
         source: ToolchainSource,
     ) -> _ToolchainCandidate | None:
+        """Build a deduplicated candidate for one path, if not already seen.
+
+        :param path: The raw candidate path, or None/empty when absent.
+        :param source: Which discovery mechanism this candidate comes from.
+        :returns: A new :class:`_ToolchainCandidate`, or None if `path`
+            is empty or its normalized absolute form was already
+            returned by an earlier call.
+        """
         if not path:
             return None
 
@@ -144,7 +181,14 @@ def _iter_candidates(
 def _environment_candidates(
     environment: Mapping[str, str],
 ) -> Iterable[Path]:
-    """Yield compiler candidates derived from process environment values."""
+    """Yield compiler candidates derived from process environment values.
+
+    :param environment: The process environment to inspect for a
+        direct ``COBC`` override and MSYS2/MinGW/GnuCOBOL prefix
+        variables.
+    :returns: Candidate ``cobc`` paths inferred from environment
+        variables, in priority order.
+    """
     compiler_override = environment.get("COBC")
 
     if compiler_override:
@@ -164,7 +208,14 @@ def _environment_candidates(
 def _well_known_candidates(
     environment: Mapping[str, str],
 ) -> Iterable[Path]:
-    """Yield conventional platform-specific compiler locations."""
+    """Yield conventional platform-specific compiler locations.
+
+    :param environment: The process environment used to resolve
+        platform-specific installation roots (e.g. ``ProgramFiles``,
+        ``SystemDrive`` on Windows).
+    :returns: Candidate ``cobc`` paths at well-known installation
+        directories for the current platform.
+    """
     executable = _compiler_executable_name()
 
     if sys.platform == "win32":
@@ -212,7 +263,13 @@ def _well_known_candidates(
 
 
 def _normalize_compiler_path(path: Path) -> Path:
-    """Normalize a configured compiler path."""
+    """Normalize a configured compiler path.
+
+    :param path: A user-configured path, which may point directly at
+        the compiler executable or at its containing directory.
+    :returns: `path`, expanded, with the platform compiler executable
+        name appended when `path` refers to a directory.
+    """
     expanded_path = path.expanduser()
 
     if expanded_path.is_dir():
@@ -222,7 +279,10 @@ def _normalize_compiler_path(path: Path) -> Path:
 
 
 def _compiler_executable_name() -> str:
-    """Return the platform-specific GnuCOBOL compiler executable name."""
+    """Return the platform-specific GnuCOBOL compiler executable name.
+
+    :returns: ``"cobc.exe"`` on Windows, otherwise ``"cobc"``.
+    """
     return "cobc.exe" if sys.platform == "win32" else "cobc"
 
 
@@ -230,7 +290,15 @@ def _probe_candidate(
     candidate: _ToolchainCandidate,
     base_environment: Mapping[str, str],
 ) -> GnuCobolToolchain | None:
-    """Probe a compiler candidate and return its toolchain description."""
+    """Probe a compiler candidate and return its toolchain description.
+
+    :param candidate: The candidate compiler location to probe.
+    :param base_environment: The environment to layer probe-specific
+        overrides on top of before invoking the compiler.
+    :returns: A fully populated :class:`GnuCobolToolchain` if the
+        candidate exists and both the ``--version`` and ``--info``
+        probes succeed, otherwise None.
+    """
     compiler_path = candidate.path
 
     if not compiler_path.is_file():
@@ -297,7 +365,11 @@ def _probe_candidate(
 
 @dataclass(frozen=True, slots=True)
 class _ProbeResult:
-    """Result of a compiler metadata probe."""
+    """Result of a compiler metadata probe.
+
+    :ivar returncode: The probe subprocess's exit code.
+    :ivar output: The probe subprocess's combined stdout/stderr output.
+    """
 
     returncode: int
     output: str
@@ -308,7 +380,15 @@ def _run_probe(
     argument: str,
     environment: Mapping[str, str],
 ) -> _ProbeResult | None:
-    """Run one compiler metadata probe."""
+    """Run one compiler metadata probe.
+
+    :param compiler_path: The compiler executable to invoke.
+    :param argument: The single command-line argument to pass (e.g.
+        ``"--version"`` or ``"--info"``).
+    :param environment: The environment to run the subprocess with.
+    :returns: The probe's result, or None if the subprocess could not
+        be started, timed out, or otherwise failed at the OS level.
+    """
     try:
         completed_process = subprocess.run(
             [
@@ -339,7 +419,15 @@ def _build_candidate_environment(
     compiler_path: Path,
     base_environment: Mapping[str, str],
 ) -> dict[str, str]:
-    """Build an isolated environment for probing a compiler candidate."""
+    """Build an isolated environment for probing a compiler candidate.
+
+    :param compiler_path: The candidate compiler executable whose
+        directory is prepended to ``PATH``.
+    :param base_environment: The environment to copy and layer
+        candidate-specific overrides on top of.
+    :returns: A new environment mapping with the compiler's directory
+        prepended to ``PATH`` and any inferred layout variables applied.
+    """
     environment = dict(base_environment)
 
     compiler_directory = compiler_path.parent
@@ -369,6 +457,13 @@ def _apply_layout_environment(
 
     Layout inference is capability-based. Paths are only exported when the
     corresponding directory or configuration file actually exists.
+
+    :param compiler_path: The candidate compiler executable whose
+        parent installation prefix is used to derive layout paths.
+    :param environment: The environment mapping to mutate in place.
+        Existing ``COB_CONFIG_DIR``/``COB_COPY_DIR``/``COB_LIBRARY_PATH``
+        entries are left untouched.
+    :returns: None. `environment` is updated in place.
     """
     prefix = compiler_path.parent.parent
 
@@ -419,7 +514,12 @@ def _apply_layout_environment(
 
 
 def _parse_version(output: str) -> str | None:
-    """Extract the numeric GnuCOBOL version from compiler output."""
+    """Extract the numeric GnuCOBOL version from compiler output.
+
+    :param output: The raw ``cobc --version`` output to search.
+    :returns: The matched version string (e.g. ``"3.2.0"``), or None if
+        no version-shaped substring was found.
+    """
     match = _VERSION_PATTERN.search(output)
 
     if match is None:
@@ -429,7 +529,13 @@ def _parse_version(output: str) -> str | None:
 
 
 def _parse_info(output: str) -> dict[str, str]:
-    """Parse ``cobc --info`` output into key/value pairs."""
+    """Parse ``cobc --info`` output into key/value pairs.
+
+    :param output: The raw ``cobc --info`` output to parse.
+    :returns: A mapping from each recognized ``key : value`` line's key
+        to its value. Lines that don't match the expected format are
+        skipped.
+    """
     information: dict[str, str] = {}
 
     for line in output.splitlines():
@@ -444,7 +550,14 @@ def _parse_info(output: str) -> dict[str, str]:
 
 
 def _parse_64_bit_mode(value: str | None) -> bool | None:
-    """Parse the GnuCOBOL 64-bit mode information value."""
+    """Parse the GnuCOBOL 64-bit mode information value.
+
+    :param value: The raw ``64bit-mode`` value from ``cobc --info``
+        output, or None if that key was absent.
+    :returns: True for ``"yes"``, False for ``"no"``, or None if
+        `value` is None or doesn't match either expected string
+        (case-insensitively).
+    """
     if value is None:
         return None
 
@@ -460,7 +573,12 @@ def _parse_64_bit_mode(value: str | None) -> bool | None:
 
 
 def _path_or_none(value: str | None) -> Path | None:
-    """Convert a non-empty path string to a Path."""
+    """Convert a non-empty path string to a Path.
+
+    :param value: A path string, or None/empty when absent.
+    :returns: A :class:`~pathlib.Path` wrapping `value`, or None if
+        `value` is None or empty.
+    """
     if not value:
         return None
 
@@ -470,7 +588,13 @@ def _path_or_none(value: str | None) -> Path | None:
 def _environment_overrides(
     environment: Mapping[str, str],
 ) -> dict[str, str]:
-    """Return only GnuCOBOL-specific environment overrides."""
+    """Return only GnuCOBOL-specific environment overrides.
+
+    :param environment: The environment to filter.
+    :returns: A new mapping containing only the ``COB_CONFIG_DIR``,
+        ``COB_COPY_DIR``, and ``COB_LIBRARY_PATH`` entries present in
+        `environment`.
+    """
     variable_names = (
         "COB_CONFIG_DIR",
         "COB_COPY_DIR",

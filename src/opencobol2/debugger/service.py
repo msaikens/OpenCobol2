@@ -82,6 +82,19 @@ def resolve_picture_and_usage(
 
     Defaults to an alphanumeric picture and `DISPLAY` usage when a
     clause is absent, matching COBOL's own implicit defaults.
+
+    This looks for a `USAGE` keyword clause among `item.clauses`
+    directly, rather than for a `USAGE` clause carrying the specific
+    usage as a token, because the parser splits clauses on any
+    recognized clause keyword, and every USAGE keyword (`COMP-3`,
+    `BINARY`, ...) is itself one of those -- so `USAGE COMP-3` always
+    yields a bare "USAGE" clause followed by its own separate "COMP-3"
+    clause, never a "USAGE" clause carrying the keyword as a second
+    token.
+
+    :param item: The data item whose PIC/USAGE clauses to inspect.
+    :returns: A tuple of the item's decoded `PictureSpec` and
+        `DataUsage`.
     """
 
     picture = PictureSpec(is_numeric=False)
@@ -93,12 +106,6 @@ def resolve_picture_and_usage(
                 render_clause_tokens(clause.tokens),
             )
         elif clause.keyword in _USAGE_CLAUSE_KEYWORDS:
-            # The parser splits clauses on any recognized clause
-            # keyword, and every USAGE keyword (COMP-3, BINARY, ...)
-            # is itself one of those -- so `USAGE COMP-3` always
-            # yields a bare "USAGE" clause followed by its own
-            # separate "COMP-3" clause, never "USAGE" carrying the
-            # keyword as a second token.
             usage = usage_from_clause_keyword(clause.keyword)
 
     return picture, usage
@@ -109,6 +116,15 @@ def _stack_frame_from_mi(
     *,
     default_level: int = 0,
 ) -> StackFrame:
+    """Build a :class:`StackFrame` from one raw MI frame tuple.
+
+    :param frame: The raw MI `frame` tuple, as returned inline in
+        breakpoint/stop records or as one entry of `-stack-list-frames`.
+    :param default_level: The stack level to use when `frame` has no
+        `level` field.
+    :returns: The decoded :class:`StackFrame`.
+    """
+
     level_raw = frame.get("level")
     file_raw = frame.get("fullname") or frame.get("file")
     line_raw = frame.get("line")
@@ -123,6 +139,13 @@ def _stack_frame_from_mi(
 
 
 def _breakpoint_from_mi(bkpt: Mapping[str, MIValue]) -> Breakpoint:
+    """Build a :class:`Breakpoint` from a raw MI `bkpt` tuple.
+
+    :param bkpt: The raw MI `bkpt` tuple, as returned by
+        `-break-insert`.
+    :returns: The decoded :class:`Breakpoint`.
+    """
+
     source_path = bkpt.get("fullname") or bkpt.get("file") or ""
 
     return Breakpoint(
@@ -136,6 +159,17 @@ def _breakpoint_from_mi(bkpt: Mapping[str, MIValue]) -> Breakpoint:
 
 
 def _stopped_event_from_record(record: MIRecord) -> StoppedEvent:
+    """Build a :class:`StoppedEvent` from a raw MI `*stopped` record.
+
+    `exit_code` is parsed as base-8 because GDB reports the inferior's
+    exit code in plain octal digits with no `"0o"` prefix (e.g. `"052"`
+    for decimal 42) -- verified against a real
+    `*stopped,reason="exited",exit-code="052"` record.
+
+    :param record: The raw MI `*stopped` async record to decode.
+    :returns: The decoded :class:`StoppedEvent`.
+    """
+
     reason = StopReason.from_gdb_reason(record.get("reason"))
     thread_id_raw = record.get("thread-id")
     frame_raw = record.get("frame")
@@ -153,9 +187,6 @@ def _stopped_event_from_record(record: MIRecord) -> StoppedEvent:
             if isinstance(frame_raw, Mapping)
             else None
         ),
-        # GDB reports the inferior's exit code in plain octal digits
-        # with no "0o" prefix (e.g. "052" for decimal 42) -- verified
-        # against a real `*stopped,reason="exited",exit-code="052"`.
         exit_code=(
             int(exit_code_raw, 8)
             if isinstance(exit_code_raw, str)
@@ -165,6 +196,12 @@ def _stopped_event_from_record(record: MIRecord) -> StoppedEvent:
 
 
 def _escape_mi_expression(expression: str) -> str:
+    """Escape an expression for safe embedding in a quoted MI command.
+
+    :param expression: The raw expression text to escape.
+    :returns: `expression` with backslashes and double quotes escaped.
+    """
+
     return expression.replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -172,7 +209,31 @@ _COBOL_SOURCE_EXTENSIONS = frozenset({".cbl", ".cob"})
 
 
 class DebuggerService:
-    """Owns one GDB-backed debug session for a compiled COBOL program."""
+    """Owns one GDB-backed debug session for a compiled COBOL program.
+
+    :ivar _adapter: The underlying `GdbAdapter` this service drives.
+    :ivar _state: The session's current lifecycle state, exposed via
+        the `state` property.
+    :ivar _symbol_table: The active program's analyzed semantic symbol
+        table, set by `start_session`; `None` before a session starts.
+    :ivar _field_symbols: The active program's generated-header field
+        symbol map (COBOL data name to raw buffer location), set by
+        `start_session`.
+    :ivar _breakpoints: Every breakpoint currently known to this
+        session, keyed by breakpoint number.
+    :ivar _stopped_callbacks: Every callback registered via
+        `on_stopped`, fired whenever the debugged program pauses.
+    :ivar _stop_event: Signaled by `_handle_stopped` each time a
+        `*stopped` record arrives, used by `_smart_step` to wait for
+        one internal step to complete.
+    :ivar _last_stopped_event: The most recently decoded
+        :class:`StoppedEvent`, read by `_smart_step` once `_stop_event`
+        is signaled.
+    :ivar _suspend_stopped_callbacks: While `True`, `_handle_stopped`
+        updates session state but does not fire `_stopped_callbacks`;
+        set during `_smart_step` so intermediate internal steps stay
+        silent and only the final landing fires a callback.
+    """
 
     def __init__(
         self,
@@ -180,6 +241,15 @@ class DebuggerService:
         gdb_executable: str = "gdb",
         command_timeout_seconds: float = 10.0,
     ) -> None:
+        """Construct a debugger service with no active session yet.
+
+        :param gdb_executable: The GDB executable name or path to
+            launch for this session.
+        :param command_timeout_seconds: How long to wait for a reply to
+            any single MI command before raising.
+        :returns: None.
+        """
+
         self._adapter = GdbAdapter(
             gdb_executable=gdb_executable,
             command_timeout_seconds=command_timeout_seconds,

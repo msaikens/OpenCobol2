@@ -36,7 +36,11 @@ class WelcomePageWidget(QWidget):
         self,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the welcome page, initially with an empty recent list."""
+        """Build the welcome page, initially with an empty recent list.
+
+        :param parent: The optional parent widget.
+        :returns: None.
+        """
 
         super().__init__(
             parent,
@@ -155,7 +159,14 @@ class WelcomePageWidget(QWidget):
         self,
         paths: Sequence[Path],
     ) -> None:
-        """Replace the displayed recent-projects list."""
+        """Replace the displayed recent-projects list.
+
+        :param paths: The recent project paths to display, in the
+            order they should be shown.
+        :returns: None. The recent-projects list widget is repopulated
+            in place, and the "no recent projects" placeholder is
+            shown or hidden to match.
+        """
 
         self._recent_list.clear()
 
@@ -189,6 +200,15 @@ class WelcomePageWidget(QWidget):
         self,
         item: QListWidgetItem,
     ) -> None:
+        """Emit :attr:`open_recent_project_requested` for a double-clicked entry.
+
+        :param item: The list item that was double-clicked, whose
+            `Qt.ItemDataRole.UserRole` data holds the project's path.
+        :returns: None. Emits :attr:`open_recent_project_requested`
+            when the item's stored data is a :class:`Path`; does
+            nothing otherwise.
+        """
+
         path = item.data(
             Qt.ItemDataRole.UserRole,
         )

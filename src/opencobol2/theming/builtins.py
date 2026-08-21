@@ -1,4 +1,9 @@
-"""Built-in color theme catalog."""
+"""Built-in color theme catalog.
+
+Defines the light, dark, high-contrast light, and high-contrast dark
+themes shipped with the application, and a factory that assembles
+them into a ready-to-use :class:`~opencobol2.theming.registry.ThemeRegistry`.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +24,10 @@ DEFAULT_THEME_ID = DARK_THEME_ID
 
 
 def _create_light_theme() -> Theme:
-    """Create the built-in light theme."""
+    """Create the built-in light theme.
+
+    :returns: A new :class:`Theme` describing the light color scheme.
+    """
 
     return Theme(
         theme_id=LIGHT_THEME_ID,
@@ -47,7 +55,10 @@ def _create_light_theme() -> Theme:
 
 
 def _create_dark_theme() -> Theme:
-    """Create the built-in dark theme."""
+    """Create the built-in dark theme.
+
+    :returns: A new :class:`Theme` describing the dark color scheme.
+    """
 
     return Theme(
         theme_id=DARK_THEME_ID,
@@ -75,7 +86,18 @@ def _create_dark_theme() -> Theme:
 
 
 def _create_high_contrast_light_theme() -> Theme:
-    """Create the built-in high-contrast light theme."""
+    """Create the built-in high-contrast light theme.
+
+    The syntax palette is distinct from the regular Light theme's and
+    each color was individually verified at WCAG AAA contrast
+    (>= 7:1) against this theme's #FFFFFF background. The regular
+    Light theme's ``syntax_number`` (#098658) is only 4.6:1, which
+    fails AAA and has no business in a theme whose whole purpose is
+    maximum contrast.
+
+    :returns: A new :class:`Theme` describing the high-contrast light
+        color scheme.
+    """
 
     return Theme(
         theme_id=HIGH_CONTRAST_LIGHT_THEME_ID,
@@ -94,12 +116,6 @@ def _create_high_contrast_light_theme() -> Theme:
             diagnostic_error="#FF0000",
             diagnostic_warning="#B35900",
             diagnostic_information="#0000FF",
-            # Distinct from the Light theme's syntax palette and each
-            # individually verified at WCAG AAA contrast (>= 7:1)
-            # against this theme's #FFFFFF background -- the regular
-            # Light theme's syntax_number (#098658) is only 4.6:1,
-            # which fails AAA and has no business in a theme whose
-            # whole purpose is maximum contrast.
             syntax_keyword="#0000FF",
             syntax_string="#8B0000",
             syntax_number="#006400",
@@ -109,7 +125,11 @@ def _create_high_contrast_light_theme() -> Theme:
 
 
 def _create_high_contrast_dark_theme() -> Theme:
-    """Create the built-in high-contrast dark theme."""
+    """Create the built-in high-contrast dark theme.
+
+    :returns: A new :class:`Theme` describing the high-contrast dark
+        color scheme.
+    """
 
     return Theme(
         theme_id=HIGH_CONTRAST_DARK_THEME_ID,
@@ -137,7 +157,11 @@ def _create_high_contrast_dark_theme() -> Theme:
 
 
 def create_builtin_theme_registry() -> ThemeRegistry:
-    """Create a registry pre-populated with the built-in theme catalog."""
+    """Create a registry pre-populated with the built-in theme catalog.
+
+    :returns: A new :class:`ThemeRegistry` containing the light, dark,
+        high-contrast light, and high-contrast dark built-in themes.
+    """
 
     registry = ThemeRegistry()
 

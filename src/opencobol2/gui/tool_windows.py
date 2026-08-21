@@ -43,6 +43,12 @@ def dock_area_for(
 
     The DOCUMENT area has no rendered editor tab region yet, so it falls
     back to the right dock area until Phase 3's editor shell exists.
+
+    :param area: The domain-level tool-window area to translate.
+    :returns: The Qt dock widget area that `area` maps to, or
+        :attr:`Qt.DockWidgetArea.RightDockWidgetArea` when `area` has no
+        entry in the mapping (currently only
+        :attr:`ToolWindowArea.DOCUMENT`).
     """
 
     return _AREA_TO_QT_DOCK_AREA.get(
@@ -52,7 +58,19 @@ def dock_area_for(
 
 
 class ToolWindowDockManager:
-    """Creates and synchronizes dock widgets for registered tool windows."""
+    """Creates and synchronizes dock widgets for registered tool windows.
+
+    :ivar _main_window: The Qt main window that owns every dock widget
+        this manager creates.
+    :ivar _tool_window_service: The domain-level service that tracks
+        each tool window's area, visibility, and active state, and that
+        this manager keeps synchronized with the real dock widgets.
+    :ivar _content_factories: Callables, keyed by tool-window ID, that
+        build the real content widget for a tool window. Tool windows
+        with no entry here get placeholder content instead.
+    :ivar _dock_widgets: Every created :class:`QDockWidget`, keyed by
+        tool-window ID.
+    """
 
     def __init__(
         self,
@@ -69,6 +87,27 @@ class ToolWindowDockManager:
 
         Tool windows without an entry in `content_factories` fall back to
         placeholder content — most panels don't have a real widget yet.
+
+        Also subscribes to the tool-window service's state-change
+        notifications (see :meth:`_on_state_changed`). Without that
+        subscription, every View-menu tool-window command
+        (`activate()`) and the two hand-rolled reveal-panel workarounds
+        elsewhere would only ever update domain state -- the real
+        `QDockWidget` would never move, so a hidden panel would stay
+        hidden forever with no way to bring it back through the menu.
+
+        :param main_window: The Qt main window to dock every tool
+            window's widget into.
+        :param tool_window_service: The domain-level service that owns
+            each tool window's registered definitions and current
+            state.
+        :param content_factories: Optional callables, keyed by
+            tool-window ID, that build the real content widget for a
+            tool window. Tool windows with no entry here get
+            placeholder content instead.
+        :raises TypeError: If `main_window` is not a
+            :class:`QMainWindow`, or `tool_window_service` is not a
+            :class:`ToolWindowService`.
         """
 
         if not isinstance(
@@ -109,11 +148,6 @@ class ToolWindowDockManager:
                 definition,
             )
 
-        # Editor §UIShell-1: without this, every View-menu tool-window
-        # command (`activate()`) and the two hand-rolled reveal-panel
-        # workarounds elsewhere only ever updated domain state -- the
-        # real `QDockWidget` never moved, so a hidden panel stayed
-        # hidden forever with no way to bring it back through the menu.
         tool_window_service.add_listener(
             self._on_state_changed,
         )
@@ -122,7 +156,11 @@ class ToolWindowDockManager:
     def dock_widgets(
         self,
     ) -> dict[str, QDockWidget]:
-        """Return created dock widgets keyed by tool-window ID."""
+        """Return created dock widgets keyed by tool-window ID.
+
+        :returns: A shallow copy of the internal tool-window-ID-to-dock-
+            widget mapping, safe for the caller to hold onto or mutate.
+        """
 
         return dict(
             self._dock_widgets,
@@ -132,7 +170,14 @@ class ToolWindowDockManager:
         self,
         tool_window_id: str,
     ) -> QDockWidget:
-        """Return the dock widget for one registered tool window."""
+        """Return the dock widget for one registered tool window.
+
+        :param tool_window_id: The ID of the registered tool window
+            whose dock widget should be returned.
+        :returns: The :class:`QDockWidget` created for `tool_window_id`.
+        :raises KeyError: If `tool_window_id` has no created dock
+            widget.
+        """
 
         return self._dock_widgets[
             tool_window_id
@@ -142,7 +187,13 @@ class ToolWindowDockManager:
         self,
         definition: ToolWindowDefinition,
     ) -> QDockWidget:
-        """Create, place, and wire one tool window's dock widget."""
+        """Create, place, and wire one tool window's dock widget.
+
+        :param definition: The registered tool-window definition to
+            build a dock widget for.
+        :returns: The newly created and docked :class:`QDockWidget`,
+            already registered in :attr:`_dock_widgets`.
+        """
 
         state = self._tool_window_service.get_state(
             definition.tool_window_id,
@@ -208,12 +259,20 @@ class ToolWindowDockManager:
     ) -> None:
         """Reflect a tool window's domain-state change onto its real dock widget.
 
-        The reverse direction (`_on_visibility_changed` below) already
+        The reverse direction (:meth:`_on_visibility_changed`) already
         guards against exactly the re-entrant loop this could otherwise
         cause: it only calls back into the service when the dock
         widget's new visibility actually differs from the state that
         was just stored, and by the time this listener runs, the store
         already happened.
+
+        :param state: The tool window's new state, as reported by the
+            tool-window service.
+        :returns: None. If a dock widget exists for `state`'s
+            tool-window ID, its visibility is set to match `state`, and
+            it is raised when the state marks it both visible and
+            active. Silently does nothing if no dock widget is
+            registered for that ID.
         """
 
         dock_widget = self._dock_widgets.get(
@@ -235,7 +294,17 @@ class ToolWindowDockManager:
         tool_window_id: str,
         visible: bool,
     ) -> None:
-        """Reflect a dock widget's visibility change back into the service."""
+        """Reflect a dock widget's visibility change back into the service.
+
+        :param tool_window_id: The ID of the tool window whose dock
+            widget changed visibility.
+        :param visible: The dock widget's new visibility.
+        :returns: None. Calls into the tool-window service to show or
+            hide `tool_window_id` when `visible` differs from the
+            service's currently stored visibility; does nothing when it
+            already matches, which avoids feeding the change back into
+            :meth:`_on_state_changed` as a redundant update.
+        """
 
         current_state = (
             self._tool_window_service.get_state(
@@ -259,7 +328,14 @@ class ToolWindowDockManager:
 def _create_placeholder_content(
     definition: ToolWindowDefinition,
 ) -> QLabel:
-    """Create placeholder content for a tool window with no real widget yet."""
+    """Create placeholder content for a tool window with no real widget yet.
+
+    :param definition: The tool-window definition to build placeholder
+        content for.
+    :returns: A word-wrapped, top-left-aligned :class:`QLabel` showing
+        the definition's accessibility description, or its title if no
+        description is set.
+    """
 
     label = QLabel(
         definition.accessibility_description

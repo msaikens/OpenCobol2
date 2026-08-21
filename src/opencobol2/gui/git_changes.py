@@ -1,4 +1,13 @@
-"""Renders a repository's Git working tree status and staging controls."""
+"""Renders a repository's Git working tree status and staging controls.
+
+The staging helpers (`_stage_paths`, `_unstage_paths`, `_stage_all`,
+and `_unstage_all`) all share the same set of caught Git-service
+errors. Unlike `_commit` in this same module, they previously had no
+exception handling of their own at all: a real Git failure during any
+of them -- a path deleted out from under a stale list, a vanished
+repository directory, a timeout -- would have propagated completely
+uncaught.
+"""
 
 from __future__ import annotations
 
@@ -47,11 +56,6 @@ _STATUS_LABELS = {
 
 _PATH_DATA_ROLE = Qt.ItemDataRole.UserRole
 
-# Editor §GitPanels-3: `_stage_paths`/`_unstage_paths`/`_stage_all`/
-# `_unstage_all` had zero exception handling at all, unlike `_commit` in
-# this same file -- any real Git failure during them (a path deleted out
-# from under a stale list, a vanished repository directory, a timeout)
-# propagated completely uncaught.
 _COMMON_GIT_ERRORS = (
     GitRepositoryNotFoundError,
     GitExecutableUnavailableError,
@@ -70,7 +74,15 @@ class GitChangesWidget(QWidget):
         repository_path: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the Git Changes panel, optionally already showing a repository."""
+        """Build the Git Changes panel, optionally already showing a repository.
+
+        :param git_service: The service used to query and mutate Git
+            repository state.
+        :param repository_path: An optional repository to display
+            immediately; if None, the panel starts in its empty state.
+        :param parent: The optional parent widget.
+        :raises TypeError: If `git_service` is not a :class:`GitService`.
+        """
 
         super().__init__(
             parent,
@@ -200,7 +212,11 @@ class GitChangesWidget(QWidget):
     def repository_path(
         self,
     ) -> Path | None:
-        """Return the repository path currently displayed, if any."""
+        """Return the repository path currently displayed, if any.
+
+        :returns: The currently displayed repository path, or None if
+            the panel is showing its empty state.
+        """
 
         return self._repository_path
 
@@ -208,7 +224,12 @@ class GitChangesWidget(QWidget):
         self,
         path: Path | None,
     ) -> None:
-        """Display a repository's status, or clear back to the empty state."""
+        """Display a repository's status, or clear back to the empty state.
+
+        :param path: The repository to display, or None to clear back
+            to the empty state.
+        :returns: None. The panel is refreshed in place.
+        """
 
         self._repository_path = path
         self.refresh()
@@ -216,7 +237,19 @@ class GitChangesWidget(QWidget):
     def refresh(
         self,
     ) -> None:
-        """Re-fetch and redisplay the current repository's status."""
+        """Re-fetch and redisplay the current repository's status.
+
+        Both `GitRepositoryNotFoundError` and
+        `GitExecutableUnavailableError` fall back to the same empty
+        state here: if the repository's directory itself (not just
+        `.git`) vanishes out from under a still-open panel, the
+        missing-executable-shaped `GitExecutableUnavailableError` must
+        be caught too, rather than propagating uncaught on the very
+        next refresh.
+
+        :returns: None. The panel's stacked widget and staged/unstaged
+            lists are updated in place.
+        """
 
         if self._repository_path is None:
             self._stack.setCurrentWidget(

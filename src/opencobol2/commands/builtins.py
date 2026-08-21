@@ -1,4 +1,15 @@
-"""Built-in OpenCobol2 IDE commands and standard command surfaces."""
+"""Built-in OpenCobol2 IDE commands and standard command surfaces.
+
+Defines the stable identifiers, metadata catalog, and factory functions
+used to assemble the IDE's default command registry and command
+contribution registry. Most commands declared here (file, edit, build,
+debug, git, and so on) are metadata-only: their actual behavior is
+supplied by the embedding application and wired in through
+:class:`BuiltInCommandHandlers`. Commands whose behavior already lives in
+a shared service -- tool-window activation and accessibility profile
+management -- are instead wired directly to that service, bypassing the
+application-handler mapping entirely.
+"""
 
 from __future__ import annotations
 
@@ -37,11 +48,23 @@ from opencobol2.tool_windows import (
 
 
 class BuiltInCommandHandlerNotConfiguredError(RuntimeError):
-    """Raised when a built-in command has no application handler."""
+    """Raised when a built-in command has no application handler.
+
+    This is raised lazily, from the handler itself, for any command
+    listed in :data:`_EXTERNAL_COMMANDS` whose command ID has no matching
+    entry in the :class:`BuiltInCommandHandlers` passed to
+    :func:`create_builtin_command_registry`.
+    """
 
 
 class BuiltInCommandIds:
-    """Stable identifiers for built-in OpenCobol2 IDE commands."""
+    """Stable identifiers for built-in OpenCobol2 IDE commands.
+
+    Every attribute is a plain string command ID, grouped by menu
+    category (File, Edit, View, Build, Debug, Git, Tools, Accessibility,
+    Help) in declaration order. These are the IDs used to register,
+    look up, and invoke commands through the command registry.
+    """
 
     FILE_NEW = "file.new"
     PROJECT_NEW = "project.new"
@@ -141,7 +164,12 @@ class BuiltInCommandIds:
 
 
 class BuiltInCommandSurfaceIds:
-    """Stable identifiers for built-in OpenCobol2 command surfaces."""
+    """Stable identifiers for built-in OpenCobol2 command surfaces.
+
+    Every attribute is a plain string surface ID identifying a top-level
+    menu (or, for :attr:`FILE_NEW`, a submenu) that built-in command
+    contributions register into.
+    """
 
     FILE = "file"
     FILE_NEW = "file.new"
@@ -157,7 +185,25 @@ class BuiltInCommandSurfaceIds:
 
 
 class BuiltInMenuContributionIds:
-    """Stable identifiers for built-in menu contributions."""
+    """Stable identifiers for built-in menu contributions.
+
+    Only covers the contributions that are referenced by identifier
+    elsewhere in this module (the ``SubmenuContribution`` and
+    ``DynamicMenuContribution`` entries); the many plain
+    :class:`~opencobol2.commands.contributions.CommandContribution`
+    entries registered via :func:`_register_command_contribution` use
+    inline ``"core.menu...."`` string literals instead, since nothing
+    outside their own registration call needs to reference them by name.
+
+    :cvar FILE_NEW: Identifies the File menu's "New" submenu
+        contribution.
+    :cvar FILE_OPEN_RECENT: Identifies the File menu's dynamic
+        "Open Recent File" contribution.
+    :cvar PROJECT_OPEN_RECENT: Identifies the File menu's dynamic
+        "Open Recent Project" contribution.
+    :cvar ACCESSIBILITY_PROFILES: Identifies the Accessibility menu's
+        dynamic "Profiles" contribution.
+    """
 
     FILE_NEW = "core.menu.file.new"
     FILE_OPEN_RECENT = "core.menu.file.open-recent"
@@ -170,52 +216,90 @@ class BuiltInMenuContributionIds:
 
 @runtime_checkable
 class ToolWindowCommandService(Protocol):
-    """Tool-window operations required by built-in view commands."""
+    """Tool-window operations required by built-in view commands.
+
+    Implemented by the application's tool-window service and consumed by
+    the View menu's tool-window commands (see
+    :func:`_create_tool_window_handler` and
+    :func:`_create_tool_window_state_provider`).
+    """
 
     def get_state(
         self,
         tool_window_id: str,
     ) -> ToolWindowState:
-        """Return current state for one tool window."""
+        """Return current state for one tool window.
+
+        :param tool_window_id: The identifier of the tool window to
+            inspect.
+        :returns: The tool window's current :class:`ToolWindowState`.
+        """
         ...
 
     def activate(
         self,
         tool_window_id: str,
     ) -> ToolWindowState:
-        """Show and activate one tool window."""
+        """Show and activate one tool window.
+
+        :param tool_window_id: The identifier of the tool window to
+            show and activate.
+        :returns: The tool window's state after activation.
+        """
         ...
 
 
 @runtime_checkable
 class AccessibilityCommandService(Protocol):
-    """Accessibility operations required by built-in commands."""
+    """Accessibility operations required by built-in commands.
+
+    Implemented by the application's accessibility service and consumed
+    by the Accessibility menu's profile commands (see
+    :func:`_create_accessibility_profile_handler`,
+    :func:`_create_accessibility_profile_state_provider`, and
+    :func:`_create_accessibility_profile_menu_provider`).
+    """
 
     @property
     def profile_registry(
         self,
     ) -> AccessibilityProfileRegistry:
-        """Return the accessibility profile registry."""
+        """Return the accessibility profile registry.
+
+        :returns: The registry of configured accessibility profiles.
+        """
         ...
 
     @property
     def active_profile_id(
         self,
     ) -> UUID | None:
-        """Return the active accessibility profile identifier."""
+        """Return the active accessibility profile identifier.
+
+        :returns: The identifier of the currently active profile, or
+            None if no profile is active.
+        """
         ...
 
     def activate_profile(
         self,
         profile_id: UUID,
     ) -> AccessibilityProfile:
-        """Activate one accessibility profile."""
+        """Activate one accessibility profile.
+
+        :param profile_id: The identifier of the profile to activate.
+        :returns: The now-active :class:`AccessibilityProfile`.
+        """
         ...
 
     def clear_active_profile(
         self,
     ) -> None:
-        """Clear the current profile selection."""
+        """Clear the current profile selection.
+
+        :returns: None. The active profile selection is cleared while
+            current accessibility settings are preserved.
+        """
         ...
 
 
@@ -230,12 +314,26 @@ class BuiltInCommandHandlers:
     Commands whose behavior is already owned by the shell or accessibility
     services are wired directly by the built-in catalog and do not use this
     mapping.
+
+    :ivar values: A mapping of normalized command ID to the callable
+        that implements it. Normalized after construction into a
+        read-only :class:`~types.MappingProxyType` copy of whatever
+        mapping was supplied.
     """
 
     values: Mapping[str, CommandHandler]
 
     def __post_init__(self) -> None:
-        """Copy and validate supplied command handlers."""
+        """Copy and validate supplied command handlers.
+
+        :returns: None. Replaces `values` in place with a validated,
+            read-only :class:`~types.MappingProxyType` copy of the
+            mapping originally supplied.
+        :raises TypeError: If `values` is not a mapping, if any command
+            ID is not a string, or if any handler is not callable.
+        :raises ValueError: If any command ID is empty, or is not
+            already normalized (stripped of surrounding whitespace).
+        """
 
         if not isinstance(
             self.values,
@@ -290,7 +388,12 @@ class BuiltInCommandHandlers:
         self,
         command_id: str,
     ) -> CommandHandler | None:
-        """Return a configured handler when one exists."""
+        """Return a configured handler when one exists.
+
+        :param command_id: The command ID to look up.
+        :returns: The configured handler, or None if no handler was
+            supplied for `command_id`.
+        """
 
         return self.values.get(
             command_id,
@@ -303,7 +406,19 @@ class BuiltInCommandHandlers:
     kw_only=True,
 )
 class _CommandMetadata:
-    """Declarative metadata for one externally handled command."""
+    """Declarative metadata for one externally handled command.
+
+    :ivar command_id: The command's stable identifier, normally one of
+        the :class:`BuiltInCommandIds` attributes.
+    :ivar title: The command's short, human-readable display title.
+    :ivar description: A one-sentence description of what the command
+        does.
+    :ivar category: The command's category, normally corresponding to
+        the top-level menu it appears in (for example ``"File"`` or
+        ``"Edit"``).
+    :ivar default_shortcuts: The command's default keyboard shortcuts,
+        if any. Empty when the command has no default shortcut.
+    """
 
     command_id: str
     title: str
@@ -781,6 +896,11 @@ _EXTERNAL_COMMANDS = (
         category="Help",
     ),
 )
+"""Metadata for every built-in command whose behavior is supplied by the
+embedding application through :class:`BuiltInCommandHandlers`, rather
+than by a shared service. Consumed by
+:func:`create_builtin_command_registry` to register one
+:class:`~opencobol2.commands.models.Command` per entry."""
 
 
 _TOOL_WINDOW_COMMANDS = (
@@ -887,6 +1007,11 @@ _TOOL_WINDOW_COMMANDS = (
         BuiltInToolWindowIds.MEMORY,
     ),
 )
+"""One ``(command_id, title, description, tool_window_id)`` tuple per
+built-in View-menu command that shows and activates a tool window.
+Consumed by :func:`create_builtin_command_registry` to register one
+:class:`~opencobol2.commands.models.Command`, wired directly to the
+:class:`ToolWindowCommandService`, per entry."""
 
 
 def create_builtin_command_registry(
@@ -895,7 +1020,31 @@ def create_builtin_command_registry(
     accessibility_service: AccessibilityCommandService,
     handlers: BuiltInCommandHandlers | None = None,
 ) -> CommandRegistry:
-    """Create the built-in OpenCobol2 IDE command registry."""
+    """Create the built-in OpenCobol2 IDE command registry.
+
+    Registers one :class:`~opencobol2.commands.models.Command` for every
+    entry in :data:`_EXTERNAL_COMMANDS` (wired to `handlers`, or to a
+    handler that raises :class:`BuiltInCommandHandlerNotConfiguredError`
+    when unconfigured) and every entry in :data:`_TOOL_WINDOW_COMMANDS`
+    (wired directly to `tool_window_service`), plus the accessibility
+    profile activation and clear-profile commands (wired directly to
+    `accessibility_service`).
+
+    :param tool_window_service: The service used to activate and query
+        tool-window state for the View menu's tool-window commands.
+    :param accessibility_service: The service used to activate, clear,
+        and query accessibility profiles for the accessibility profile
+        commands.
+    :param handlers: The application-supplied handlers for externally
+        handled commands. Treated as empty (every such command raises
+        :class:`BuiltInCommandHandlerNotConfiguredError` when invoked)
+        when None.
+    :returns: A new :class:`CommandRegistry` populated with every
+        built-in command.
+    :raises TypeError: If `handlers` is neither None nor a
+        :class:`BuiltInCommandHandlers`, or if `tool_window_service` or
+        `accessibility_service` does not satisfy its required protocol.
+    """
 
     _validate_tool_window_service(
         tool_window_service,
@@ -1018,7 +1167,25 @@ def create_builtin_command_contribution_registry(
     recent_project_provider: DynamicMenuProvider,
     accessibility_service: AccessibilityCommandService,
 ) -> CommandContributionRegistry:
-    """Create standard built-in IDE command surface declarations."""
+    """Create standard built-in IDE command surface declarations.
+
+    Registers the File, Edit, View, Build, Debug, Git, Tools,
+    Accessibility, and Help menu surfaces, delegating each to its own
+    ``_register_*_surface`` helper.
+
+    :param recent_file_provider: The dynamic menu provider used to
+        populate the File menu's "Open Recent File" contribution.
+    :param recent_project_provider: The dynamic menu provider used to
+        populate the File menu's "Open Recent Project" contribution.
+    :param accessibility_service: The service used to populate the
+        Accessibility menu's dynamic "Profiles" contribution.
+    :returns: A new :class:`CommandContributionRegistry` populated with
+        every built-in command surface declaration.
+    :raises TypeError: If `recent_file_provider` or
+        `recent_project_provider` is not callable, or if
+        `accessibility_service` does not satisfy
+        :class:`AccessibilityCommandService`.
+    """
 
     if not callable(
         recent_file_provider,
@@ -1080,7 +1247,22 @@ def _register_file_surface(
     recent_file_provider: DynamicMenuProvider,
     recent_project_provider: DynamicMenuProvider,
 ) -> None:
-    """Register the standard File menu surface."""
+    """Register the standard File menu surface.
+
+    Registers, in group order, the "New" submenu; Open File and Open
+    Project; the dynamic Open Recent File and Open Recent Project
+    entries; Save, Save As, Save All, and Save Project As; Print; Close
+    File, Close All Files, and Close Project; Exit; and, in the "New"
+    submenu itself, New File and New Project.
+
+    :param registry: The command contribution registry to register
+        into.
+    :param recent_file_provider: The dynamic menu provider used to
+        populate the "Open Recent File" contribution.
+    :param recent_project_provider: The dynamic menu provider used to
+        populate the "Open Recent Project" contribution.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     registry.register(
         SubmenuContribution(
@@ -1255,7 +1437,17 @@ def _register_file_surface(
 def _register_edit_surface(
     registry: CommandContributionRegistry,
 ) -> None:
-    """Register the standard Edit menu surface."""
+    """Register the standard Edit menu surface.
+
+    Registers, in group order, Undo and Redo; Cut, Copy, Paste, Delete,
+    and Select All; the navigation commands (Find through Find All
+    References); Rename, Format Document, and Trigger Suggest; and Add
+    Cursor Above/Below.
+
+    :param registry: The command contribution registry to register
+        into.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     _register_command_contribution(
         registry,
@@ -1418,7 +1610,16 @@ def _register_edit_surface(
 def _register_view_surface(
     registry: CommandContributionRegistry,
 ) -> None:
-    """Register the standard View menu surface."""
+    """Register the standard View menu surface.
+
+    Registers Command Palette; every tool-window activation command,
+    from Project Explorer through Memory; and, last, Toggle Split
+    Editor.
+
+    :param registry: The command contribution registry to register
+        into.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     _register_command_contribution(
         registry,
@@ -1532,7 +1733,15 @@ def _register_view_surface(
 def _register_build_surface(
     registry: CommandContributionRegistry,
 ) -> None:
-    """Register the standard Build menu surface."""
+    """Register the standard Build menu surface.
+
+    Registers, in group order, Build/Rebuild/Clean Project; then Run,
+    Stop, and View Listing File.
+
+    :param registry: The command contribution registry to register
+        into.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     for order, (
         contribution_id,
@@ -1598,7 +1807,15 @@ def _register_build_surface(
 def _register_debug_surface(
     registry: CommandContributionRegistry,
 ) -> None:
-    """Register the standard Debug menu surface."""
+    """Register the standard Debug menu surface.
+
+    Registers, in group order, Start Debugging, Stop Debugging, and
+    Continue; then Step Over, Step Into, and Step Out.
+
+    :param registry: The command contribution registry to register
+        into.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     _register_command_contribution(
         registry,
@@ -1663,7 +1880,16 @@ def _register_debug_surface(
 def _register_git_surface(
     registry: CommandContributionRegistry,
 ) -> None:
-    """Register the concise top-level Git menu surface."""
+    """Register the concise top-level Git menu surface.
+
+    Registers, in group order, the Git Changes and Git Repository
+    tool-window surfaces; Create Repository and Clone Repository; Fetch,
+    Pull, Push, and Sync; and Manage Branches and Repository Settings.
+
+    :param registry: The command contribution registry to register
+        into.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     _register_command_contribution(
         registry,
@@ -1763,7 +1989,15 @@ def _register_git_surface(
 def _register_tools_surface(
     registry: CommandContributionRegistry,
 ) -> None:
-    """Register the standard Tools menu surface."""
+    """Register the standard Tools menu surface.
+
+    Registers, in group order, Compiler Profiles; Plugins; and
+    Settings.
+
+    :param registry: The command contribution registry to register
+        into.
+    :returns: None. Contributions are added to `registry` in place.
+    """
 
     _register_command_contribution(
         registry,

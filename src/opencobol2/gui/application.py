@@ -1,4 +1,10 @@
-"""Bootstraps and launches the OpenCobol2 desktop application shell."""
+"""Bootstraps and launches the OpenCobol2 desktop application shell.
+
+Wires the built-in services, panels, dock widgets, and command handlers
+together into a single :class:`~opencobol2.gui.main_window.MainWindow`
+instance (see :func:`create_main_window`) and exposes the process entry
+point (:func:`main`) that the application is launched from.
+"""
 
 from __future__ import annotations
 
@@ -192,11 +198,25 @@ def _create_status_bar_registry(
     project_explorer: ProjectExplorerWidget,
     theme_service: ThemeService,
 ) -> StatusBarItemRegistry:
-    """Create the built-in status bar items: current project and theme."""
+    """Create the built-in status bar items: current project and theme.
+
+    :param project_explorer: The panel whose current project backs the
+        left-aligned "Project" status bar item.
+    :param theme_service: The service whose active theme backs the
+        right-aligned "Theme" status bar item.
+    :returns: A registry containing the two built-in status bar item
+        definitions, ready to pass to :class:`StatusBarService`.
+    """
 
     registry = StatusBarItemRegistry()
 
     def _project_content() -> StatusBarItemContent:
+        """Render the left-aligned "Project" status bar item.
+
+        :returns: Content showing the open project's name, or a
+            placeholder if no project is open.
+        """
+
         project = project_explorer.project
 
         return StatusBarItemContent(
@@ -208,6 +228,12 @@ def _create_status_bar_registry(
         )
 
     def _theme_content() -> StatusBarItemContent:
+        """Render the right-aligned "Theme" status bar item.
+
+        :returns: Content showing the currently active theme's display
+            name.
+        """
+
         return StatusBarItemContent(
             text=(
                 "Theme: "
@@ -238,7 +264,14 @@ def _create_status_bar_registry(
 def _resolve_git_executable_path(
     settings: ApplicationSettings,
 ) -> str:
-    """Return the configured Git executable, defaulting to `"git"`."""
+    """Return the configured Git executable, defaulting to `"git"`.
+
+    :param settings: The application settings snapshot to read the
+        external-tools configuration from.
+    :returns: The user-configured Git executable path, or the literal
+        string `"git"` if none is configured (relying on `PATH`
+        resolution).
+    """
 
     configured_path = (
         settings.external_tools.git_executable_path
@@ -260,6 +293,15 @@ def _discover_repository_path(
     Returns `None` for no project, a non-repository root, a missing `git`
     executable, or any other Git command failure — the Git Changes panel
     degrades to its empty state rather than the bootstrap crashing outright.
+
+    :param git_service: The service used to perform the repository
+        discovery.
+    :param project: The currently open project, or `None` if no project
+        is open.
+    :returns: The discovered repository's root path, or `None` if there
+        is no open project, the project root is not a Git repository,
+        the `git` executable is unavailable, or the discovery command
+        otherwise failed.
     """
 
     if project is None:
@@ -281,7 +323,13 @@ def _discover_repository_path(
 def _recent_project_paths(
     settings_service: SettingsService,
 ) -> tuple[Path, ...]:
-    """Return persisted recent-project paths that still exist on disk."""
+    """Return persisted recent-project paths that still exist on disk.
+
+    :param settings_service: The service whose current settings hold
+        the persisted list of recent-project paths.
+    :returns: Every persisted recent-project path that still points at
+        an existing file, in their persisted order.
+    """
 
     return tuple(
         path
@@ -324,6 +372,57 @@ def create_main_window(
     `excluded_patterns`) using the default configured compiler profile
     (GnuCOBOL auto-discovery or a custom local compiler), logging process
     output to the Output panel and parsed diagnostics to the Problems panel.
+    Every Debug and most Build/Git/Tools/Help commands are wired to real
+    handlers too; before this, everything past Debug Step Out in the
+    built-in command handler map simply had no handler configured at all,
+    so triggering one raised `BuiltInCommandHandlerNotConfiguredError`
+    that PySide6's own slot-exception reporter silently swallowed.
+
+    `ThemeService` is constructed before the editor and the command
+    registry (unlike most other services here) because nothing about it
+    depends on them, while both the editor's initial colors and the
+    Settings dialog's handler need a live `ThemeService` to read and
+    switch themes. Its persisted `active_theme_id` is validated against
+    the theme registry before use, falling back to `DEFAULT_THEME_ID` on
+    a lookup failure: `ThemeService.__init__` resolves that ID eagerly
+    and unguarded, so a `settings.json` referencing a since-removed or
+    otherwise unregistered theme ID used to crash the entire application
+    launch with an uncaught `ThemeNotFoundError`. Every comparable
+    resolution elsewhere in this function (compiler profiles, Git
+    repository discovery) was already validated with a fallback before
+    use; this one wasn't.
+
+    Several single-element mutable list "cells" are threaded through the
+    closures built here, standing in for values that do not exist yet at
+    the point they must be captured: `main_window_holder` is filled in
+    once the `MainWindow` itself is constructed (dialogs such as Open
+    Project need it as a parent, but it is only read later, when a user
+    actually triggers the command); `command_service_holder` holds the
+    `CommandService` that wraps the very registry it is being registered
+    into, for the same reason (the command palette needs it, but it
+    cannot exist until after that registry is built); and
+    `debug_symbol_table_holder` holds the symbol table a debug session's
+    Locals panel needs, which is not known until Start Debugging actually
+    compiles something, even though the stopped-signal handler that reads
+    it is wired up well before that happens. `project_file_path_holder`
+    tracks which file the open project was loaded from — nothing tracked
+    this at all before, so even a well-intentioned Project Properties
+    persistence fix had no path to save back to without it; every real
+    Open/New/Save-As/Open-Recent Project handler updates it, and Close
+    Project clears it.
+
+    Clearing the debug side panels (Call Stack, Locals, Threads,
+    Registers, Watch, Memory) is connected to `DebugSessionController`'s
+    `session_ended` signal rather than duplicated at each call site,
+    because `stop()` is the one place every session-ending path — a
+    natural program exit as well as the manual Stop Debugging command in
+    `debug_commands.py` — already funnels through.
+
+    :param settings_service: The settings service to use, or `None` to
+        construct a fresh default one.
+    :param project: The project to seed the Project Explorer panel with,
+        or `None` to start with no project open.
+    :returns: The fully wired :class:`MainWindow`, ready to `show()`.
     """
 
     resolved_settings_service = (
@@ -341,19 +440,6 @@ def create_main_window(
         tool_window_service=tool_window_service,
     )
 
-    # Built before the editor and command registry below (unlike most other
-    # services) because nothing about it depends on them, and both the
-    # editor's initial colors and the Settings dialog's handler need a live
-    # ThemeService to read and switch themes.
-    #
-    # Editor §UIBootstrap-2: `ThemeService.__init__` resolves
-    # `initial_theme_id` against the registry eagerly and unguarded --
-    # a persisted `settings.json` referencing a since-removed or
-    # otherwise unregistered theme ID used to crash the entire
-    # application launch with an uncaught `ThemeNotFoundError`. Every
-    # comparable resolution elsewhere in this file (compiler profiles,
-    # Git repository discovery) is already validated with a fallback
-    # before use; this one wasn't.
     _builtin_theme_registry = create_builtin_theme_registry()
     _persisted_theme_id = (
         resolved_settings_service
@@ -442,11 +528,6 @@ def create_main_window(
     registers_widget = RegistersWidget()
     memory_widget = MemoryWidget()
     debug_controller = DebugSessionController()
-    # A single-element mutable cell (matching main_window_holder /
-    # command_service_holder below): the symbol table a debug session's
-    # Locals panel needs isn't known until Start Debugging actually
-    # compiles something, but the stopped-signal handler that reads it
-    # is wired up before that ever happens.
     debug_symbol_table_holder: list = [None]
 
     compiler_provider_registry = (
@@ -477,24 +558,12 @@ def create_main_window(
         )
     )
 
-    # MainWindow doesn't exist until after the command registry below, but
-    # the Open Project dialog needs it as a parent; this cell is filled in
-    # once construction finishes and only read later, when a user actually
-    # triggers the command.
     main_window_holder: list[
         MainWindow | None
     ] = [None]
-    # Same problem in reverse: the command palette needs the CommandService
-    # that wraps THIS registry, which doesn't exist until after the registry
-    # it's being registered into is fully built.
     command_service_holder: list[
         CommandService | None
     ] = [None]
-    # Editor §ProjectPanels-1: nothing tracked which file the open
-    # project was loaded from at all, so even a well-intentioned
-    # Project Properties persistence fix had no path to save back to
-    # without this. Updated by every real Open/New/Save-As/Open-Recent
-    # Project handler below and cleared on Close Project.
     project_file_path_holder: list[
         Path | None
     ] = [None]
@@ -507,6 +576,9 @@ def create_main_window(
         manager only listens the other way, dock -> service). Show/raise the
         dock widget directly instead, since a search whose results stay
         hidden would look like it silently did nothing.
+
+        :returns: None. Shows and raises the Find Results dock widget, or
+            does nothing if `main_window_holder` is not yet populated.
         """
 
         main_window = main_window_holder[0]
@@ -525,7 +597,11 @@ def create_main_window(
         dock_widget.raise_()
 
     def _reveal_git_repository_panel() -> None:
-        """Force the Git Repository dock panel visible, mirroring `_reveal_find_results`."""
+        """Force the Git Repository dock panel visible, mirroring `_reveal_find_results`.
+
+        :returns: None. Shows and raises the Git Repository dock widget,
+            or does nothing if `main_window_holder` is not yet populated.
+        """
 
         main_window = main_window_holder[0]
 
@@ -543,7 +619,11 @@ def create_main_window(
         dock_widget.raise_()
 
     def _handle_find_all_references() -> None:
-        """Find every reference to whatever the active tab's cursor is on."""
+        """Find every reference to whatever the active tab's cursor is on.
+
+        :returns: None. Populates the Find Results panel with the
+            references found and reveals it.
+        """
 
         results = (
             editor_tabs_widget.find_references_for_active_tab()
@@ -554,7 +634,13 @@ def create_main_window(
         _reveal_find_results()
 
     def _handle_rename_symbol() -> None:
-        """Prompt for a new name and rename every reference under the cursor."""
+        """Prompt for a new name and rename every reference under the cursor.
+
+        :returns: None. Does nothing if the active tab is not a source
+            editor, if the cursor is not on a renameable symbol, or if
+            the rename dialog is cancelled or given an empty name;
+            otherwise renames every reference on the active tab.
+        """
 
         editor = editor_tabs_widget.currentWidget()
 
@@ -585,7 +671,12 @@ def create_main_window(
         )
 
     def _handle_go_to_line() -> None:
-        """Prompt for a line number and move the active tab's cursor there."""
+        """Prompt for a line number and move the active tab's cursor there.
+
+        :returns: None. Does nothing if the active tab is not a source
+            editor or the dialog is cancelled; otherwise moves the
+            active tab's cursor to the chosen line.
+        """
 
         editor = editor_tabs_widget.currentWidget()
 
@@ -613,7 +704,11 @@ def create_main_window(
         )
 
     def _handle_file_print() -> None:
-        """Print the active tab's document contents, after a Print dialog."""
+        """Print the active tab's document contents, after a Print dialog.
+
+        :returns: None. Prints the active tab's document if the Print
+            dialog is accepted; does nothing if it is cancelled.
+        """
 
         printer = QPrinter()
         dialog = QPrintDialog(
@@ -630,7 +725,22 @@ def create_main_window(
             )
 
     def _handle_show_project_properties() -> None:
-        """Open Project Properties for the currently displayed project."""
+        """Open Project Properties for the currently displayed project.
+
+        Saves the updated project back to its backing file when the
+        dialog is accepted and a backing file is known. This used to
+        only update in-memory state — reloading the same project file
+        afterward showed the change was completely discarded, with no
+        separate "Save Project" command anywhere to perform one instead.
+        `project_file_path_holder` is unset only for a project seeded
+        directly into :func:`create_main_window` with no known backing
+        file (mainly a test/embedding scenario); there is genuinely
+        nowhere to save back to in that case, so the save is skipped.
+
+        :returns: None. Updates the Project Explorer panel with the
+            edited project, and persists it to disk when a backing file
+            path is known.
+        """
 
         current_project = project_explorer.project
 
@@ -648,15 +758,6 @@ def create_main_window(
                 dialog.updated_project,
             )
 
-            # Editor §ProjectPanels-1: this used to only update
-            # in-memory state -- reloading the same project file
-            # afterward showed the change was completely discarded,
-            # with no separate "Save Project" command anywhere to
-            # perform one. `project_file_path_holder` is unset only
-            # for a project seeded directly into `create_main_window()`
-            # with no known backing file (mainly a test/embedding
-            # scenario); there is genuinely nowhere to save back to
-            # in that case.
             project_file_path = (
                 project_file_path_holder[0]
             )
@@ -675,7 +776,14 @@ def create_main_window(
     def _apply_settings_to_running_window(
         settings: ApplicationSettings,
     ) -> None:
-        """Reflect newly-saved settings onto the already-built shell."""
+        """Reflect newly-saved settings onto the already-built shell.
+
+        :param settings: The newly-saved application settings to apply.
+        :returns: None. Updates the active theme, the editor's theme,
+            editor/guide/source-format settings, and the configured Git
+            executable path on the already-constructed widgets and
+            services.
+        """
 
         theme_service.set_active_theme(
             settings.theme.active_theme_id,
@@ -995,11 +1103,6 @@ def create_main_window(
                             ),
                         )
                     ),
-                    # Editor §UIBootstrap-1: everything below this
-                    # line previously had no handler at all -- each
-                    # raised `BuiltInCommandHandlerNotConfiguredError`
-                    # when triggered, silently swallowed by PySide6's
-                    # own slot-exception reporter.
                     BuiltInCommandIds.APPLICATION_EXIT: (
                         lambda context: (
                             main_window_holder[0].close()
@@ -1358,6 +1461,12 @@ def create_main_window(
     main_window_holder[0] = window
 
     def _refresh_task_list() -> None:
+        """Rescan the open project for TODO/FIXME-style tasks.
+
+        :returns: None. Clears the Task List panel if no project is
+            open, otherwise repopulates it with the tasks found.
+        """
+
         current_project = project_explorer.project
 
         if current_project is None:
@@ -1373,16 +1482,30 @@ def create_main_window(
     def _on_project_changed(
         changed_project: Project | None,
     ) -> None:
-        """Refresh everything derived from the project when it changes."""
+        """Refresh everything derived from the project when it changes.
+
+        Clears the Output and Problems panels on every project switch.
+        Neither panel used to be wired to clear on a project switch —
+        only `build_commands.py`'s own clear calls at the *start* of the
+        next build ever touched them, so a closed or replaced project's
+        stale build transcript and diagnostics stayed on screen until
+        the next build happened to run. Find Results is cleared for the
+        same reason: Task List already had an equivalent clear-on-switch
+        hook, and Find Results was simply missing the one-line call,
+        so it kept showing a closed/replaced project's stale search
+        results indefinitely.
+
+        :param changed_project: The newly-open project, or `None` if
+            the project was closed.
+        :returns: None. Refreshes the status bar, clears the
+            Output/Problems/Find Results panels, re-points the Git
+            Changes/Repository panels and terminal's working directory
+            at the new project, rescans the Task List, and refreshes
+            the welcome page's recent-projects list.
+        """
 
         window.refresh_status_bar()
 
-        # Editor §ProjectPanels-2: neither panel was wired to clear on
-        # a project switch -- only `build_commands.py`'s own clear
-        # calls at the *start* of the next build ever touched them, so
-        # a closed or replaced project's stale build transcript and
-        # diagnostics stayed on screen until the next build happened
-        # to run.
         output_widget.clear()
         problems_widget.clear_diagnostics()
 
@@ -1407,11 +1530,6 @@ def create_main_window(
             else None
         )
         _refresh_task_list()
-        # Editor §SearchOutlineTasks-1: Task List already had this
-        # hook and correctly clears on a project switch; Find Results
-        # was simply missing the equivalent one-line call, so it kept
-        # showing a closed/replaced project's stale search results
-        # indefinitely.
         find_results_widget.clear_results()
 
     project_explorer.project_changed.connect(
@@ -1419,11 +1537,21 @@ def create_main_window(
     )
 
     def _handle_welcome_new_project() -> None:
+        """Run the New Project command from the welcome page's button.
+
+        :returns: None. Delegates to the `PROJECT_NEW` command handler.
+        """
+
         command_service_holder[0].execute(
             BuiltInCommandIds.PROJECT_NEW,
         )
 
     def _handle_welcome_open_project() -> None:
+        """Run the Open Project command from the welcome page's button.
+
+        :returns: None. Delegates to the `PROJECT_OPEN` command handler.
+        """
+
         command_service_holder[0].execute(
             BuiltInCommandIds.PROJECT_OPEN,
         )
@@ -1431,6 +1559,15 @@ def create_main_window(
     def _handle_welcome_open_recent_project(
         project_path: Path,
     ) -> None:
+        """Open one project chosen from the welcome page's recent list.
+
+        :param project_path: The path of the recent project file to
+            open, as chosen on the welcome page.
+        :returns: None. Delegates to the `PROJECT_OPEN_RECENT` command
+            handler with `project_path` passed as its `"path"` context
+            value.
+        """
+
         command_service_holder[0].execute(
             BuiltInCommandIds.PROJECT_OPEN_RECENT,
             CommandContext(
@@ -1463,6 +1600,15 @@ def create_main_window(
         line: int,
         column: int,
     ) -> None:
+        """Open a Find Results entry at its exact source position.
+
+        :param path: The file the activated result belongs to.
+        :param line: The 1-based line of the match.
+        :param column: The 1-based column of the match.
+        :returns: None. Opens `path` in the editor and moves the
+            cursor to `line`/`column`.
+        """
+
         editor_tabs_widget.open_path_at_line(
             path,
             line,
@@ -1474,16 +1620,33 @@ def create_main_window(
     )
 
     def _refresh_outline() -> None:
+        """Rebuild the Outline panel from the active tab's structure.
+
+        :returns: None. Replaces the Outline panel's contents with the
+            active tab's current outline.
+        """
+
         outline_widget.set_outline(
             editor_tabs_widget.current_outline(),
         )
 
     def _refresh_live_diagnostics() -> None:
+        """Rebuild the Problems panel's live diagnostics from the active tab.
+
+        :returns: None. Replaces the Problems panel's live diagnostics
+            with the active tab's current diagnostics.
+        """
+
         problems_widget.set_live_diagnostics(
             editor_tabs_widget.current_diagnostics(),
         )
 
     def _handle_active_document_changed() -> None:
+        """React to the active tab changing by refreshing derived panels.
+
+        :returns: None. Refreshes the Outline and Problems panels.
+        """
+
         _refresh_outline()
         _refresh_live_diagnostics()
 
@@ -1499,6 +1662,15 @@ def create_main_window(
         line: int,
         column: int,
     ) -> None:
+        """Open a Task List entry at its exact source position.
+
+        :param path: The file the activated task belongs to.
+        :param line: The 1-based line of the task marker.
+        :param column: The 1-based column of the task marker.
+        :returns: None. Opens `path` in the editor and moves the
+            cursor to `line`/`column`.
+        """
+
         editor_tabs_widget.open_path_at_line(
             path,
             line,
@@ -1514,6 +1686,12 @@ def create_main_window(
     _refresh_task_list()
 
     def _refresh_bookmarks() -> None:
+        """Rebuild the Bookmarks panel from every open tab's bookmarks.
+
+        :returns: None. Replaces the Bookmarks panel's contents with
+            every bookmark currently set across open tabs.
+        """
+
         bookmarks_widget.set_bookmarks(
             editor_tabs_widget.all_bookmarks(),
         )
@@ -1526,6 +1704,12 @@ def create_main_window(
     )
 
     def _refresh_breakpoints() -> None:
+        """Rebuild the Breakpoints panel from every open tab's breakpoints.
+
+        :returns: None. Replaces the Breakpoints panel's contents with
+            every breakpoint currently set across open tabs.
+        """
+
         breakpoints_widget.set_breakpoints(
             editor_tabs_widget.all_breakpoints(),
         )
@@ -1538,7 +1722,13 @@ def create_main_window(
     )
 
     def _sync_debug_breakpoints() -> None:
-        """Push the debugged tab's current breakpoints to GDB, if active."""
+        """Push the debugged tab's current breakpoints to GDB, if active.
+
+        :returns: None. Does nothing if no debug session is active, or
+            if the debugged document is not open in an editor tab;
+            otherwise pushes that tab's current breakpoint lines to the
+            debug session.
+        """
 
         if (
             not debug_controller.is_active
@@ -1560,6 +1750,13 @@ def create_main_window(
     )
 
     def _refresh_watch_now() -> None:
+        """Re-evaluate every watch expression against the active debug session.
+
+        :returns: None. Clears the Watch panel if no debug session is
+            active; otherwise repopulates it with each expression's
+            freshly-evaluated value.
+        """
+
         if not debug_controller.is_active:
             watch_widget.clear_watches()
             return
@@ -1579,6 +1776,16 @@ def create_main_window(
         address: str,
         length: int,
     ) -> None:
+        """Read a memory range from the active debug session for the Memory panel.
+
+        :param address: The starting address to read from, as entered
+            in the Memory panel.
+        :param length: The number of bytes to read.
+        :returns: None. Does nothing if no debug session is active;
+            otherwise populates the Memory panel with the bytes read,
+            or shows a warning dialog if the read fails.
+        """
+
         if not debug_controller.is_active:
             return
 
@@ -1604,6 +1811,14 @@ def create_main_window(
         path: Path,
         line: int,
     ) -> None:
+        """Open the source location for an activated Call Stack frame.
+
+        :param path: The source file the activated frame points to.
+        :param line: The 1-based line the activated frame points to.
+        :returns: None. Opens `path` in the editor and moves the
+            cursor to `line`.
+        """
+
         editor_tabs_widget.open_path_at_line(
             path,
             line,

@@ -1,4 +1,11 @@
-"""Renders an OpenCobol2 project as a real file/organization tree widget."""
+"""Renders an OpenCobol2 project as a real file/organization tree widget.
+
+The tree combines the project's physical files on disk with its
+virtual organization: real directory entries first, then a "Virtual
+Folders" branch for any virtual folders the project defines, then a
+"Linked Files" branch for any linked file not already referenced by a
+virtual folder.
+"""
 
 from __future__ import annotations
 
@@ -40,7 +47,13 @@ class ProjectExplorerWidget(QWidget):
         project: Project | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build the project explorer, optionally already showing a project."""
+        """Build the project explorer, optionally already showing a project.
+
+        :param project: The project to display immediately, or `None`
+            to start in the empty state.
+        :param parent: The owning Qt widget, if any.
+        :returns: None.
+        """
 
         super().__init__(
             parent,
@@ -98,7 +111,11 @@ class ProjectExplorerWidget(QWidget):
     def project(
         self,
     ) -> Project | None:
-        """Return the project currently displayed, if any."""
+        """Return the project currently displayed, if any.
+
+        :returns: The currently displayed project, or `None` if the
+            explorer is in its empty state.
+        """
 
         return self._project
 
@@ -106,7 +123,15 @@ class ProjectExplorerWidget(QWidget):
         self,
         project: Project | None,
     ) -> None:
-        """Display a project's tree, or clear back to the empty state."""
+        """Display a project's tree, or clear back to the empty state.
+
+        :param project: The project to display, or `None` to clear
+            back to the empty state.
+        :returns: None. The tree widget is rebuilt (or cleared) and
+            `project_changed` is emitted with the new project.
+        :raises TypeError: If `project` is neither a :class:`Project`
+            nor `None`.
+        """
 
         if (
             project is not None
@@ -147,7 +172,15 @@ class ProjectExplorerWidget(QWidget):
         item: QTreeWidgetItem,
         column: int,
     ) -> None:
-        """Emit `file_double_clicked` when a physical file item is opened."""
+        """Emit `file_double_clicked` when a physical file item is opened.
+
+        :param item: The tree item that was double-clicked.
+        :param column: The column that was double-clicked (unused;
+            the tree has only one column).
+        :returns: None. `file_double_clicked` is emitted only if
+            `item` carries a physical file path; a virtual-folder or
+            organizational item carries none and is silently ignored.
+        """
 
         path = item.data(
             0,
@@ -166,7 +199,14 @@ class ProjectExplorerWidget(QWidget):
         self,
         position,
     ) -> None:
-        """Show Properties... when the project's own root item is right-clicked."""
+        """Show Properties... when the project's own root item is right-clicked.
+
+        :param position: The right-click position, in the tree
+            widget's own coordinates.
+        :returns: None. A context menu is shown only when the
+            right-clicked item is the tree's top-level (project root)
+            item; any other item, or empty space, is ignored.
+        """
 
         item = self._tree.itemAt(
             position,
@@ -198,7 +238,10 @@ class ProjectExplorerWidget(QWidget):
     def _show_project_properties(
         self,
     ) -> None:
-        """Request that the project's properties be edited."""
+        """Request that the project's properties be edited.
+
+        :returns: None. `project_properties_requested` is emitted.
+        """
 
         self.project_properties_requested.emit()
 
@@ -207,7 +250,15 @@ def populate_project_tree(
     tree: QTreeWidget,
     project: Project,
 ) -> None:
-    """Populate a tree widget with one project's files and organization."""
+    """Populate a tree widget with one project's files and organization.
+
+    :param tree: The tree widget to populate. Any existing content is
+        cleared first.
+    :param project: The project whose files and organization to
+        display.
+    :returns: None. `tree` is populated in place and its root item is
+        expanded.
+    """
 
     tree.clear()
 
@@ -292,7 +343,23 @@ def _add_physical_entries(
     directory: Path,
     excluded_patterns: Sequence[str],
 ) -> None:
-    """Recursively add a directory's real entries, honoring exclusions."""
+    """Recursively add a directory's real entries, honoring exclusions.
+
+    :param parent_item: The tree item to add this directory's entries
+        under.
+    :param directory: The directory to list and recurse into.
+    :param excluded_patterns: Glob patterns; an entry whose name
+        matches any of them is skipped entirely (and, for a directory,
+        never recursed into).
+    :returns: None. Child items are appended to `parent_item` in
+        place. Entries are sorted directories-first, then
+        case-insensitively by name. A file item carries its
+        :class:`~pathlib.Path` in `Qt.ItemDataRole.UserRole`; a
+        directory item does not, since it is a container rather than
+        something that can be opened. If `directory` cannot be listed
+        (e.g. a permissions error) or is not actually a directory, no
+        entries are added.
+    """
 
     if not directory.is_dir():
         return
@@ -342,7 +409,13 @@ def _is_excluded(
     name: str,
     excluded_patterns: Sequence[str],
 ) -> bool:
-    """Return whether a file or directory name matches an exclusion pattern."""
+    """Return whether a file or directory name matches an exclusion pattern.
+
+    :param name: The file or directory name to test.
+    :param excluded_patterns: Glob patterns to test `name` against.
+    :returns: True if `name` matches any pattern in
+        `excluded_patterns`, False otherwise.
+    """
 
     return any(
         fnmatch.fnmatch(
@@ -358,7 +431,25 @@ def _add_virtual_folder(
     folder: VirtualFolder,
     project: Project,
 ) -> None:
-    """Recursively add one virtual folder and its members."""
+    """Recursively add one virtual folder and its members.
+
+    :param parent_item: The tree item to add this virtual folder
+        under.
+    :param folder: The virtual folder to render, including its nested
+        virtual folders and its member paths and linked files.
+    :param project: The owning project, used to resolve member paths
+        to absolute locations and linked-file IDs to their targets.
+    :returns: None. Child items are appended to `parent_item` in
+        place.
+
+    Each of a virtual folder's own member paths gets
+    `setData(0, UserRole, entry)` set on its tree item, exactly like a
+    physical tree entry, so that the double-click handler's
+    `isinstance(path, Path)` check finds it; before this was added,
+    virtual-folder members never carried that data, so double-clicking
+    one always silently failed that check, unlike an ordinary file
+    row.
+    """
 
     folder_item = QTreeWidgetItem(
         [
@@ -377,11 +468,6 @@ def _add_virtual_folder(
         )
 
     for member_path in folder.member_paths:
-        # Editor §ProjectPanels-3: physical tree entries get
-        # `setData(0, UserRole, entry)` so the double-click handler's
-        # `isinstance(path, Path)` check finds it -- virtual-folder
-        # members never did, so double-clicking one always silently
-        # failed that check, unlike an ordinary file row.
         item = QTreeWidgetItem(
             [
                 member_path,
@@ -425,7 +511,13 @@ def _add_virtual_folder(
 def _collect_referenced_linked_file_ids(
     virtual_folders: Sequence[VirtualFolder],
 ) -> set:
-    """Collect every linked file ID referenced anywhere in a virtual folder tree."""
+    """Collect every linked file ID referenced anywhere in a virtual folder tree.
+
+    :param virtual_folders: The top-level virtual folders to walk,
+        including their nested virtual folders recursively.
+    :returns: The set of every linked file ID referenced by any of
+        `virtual_folders` or their descendants.
+    """
 
     referenced_ids: set = set()
 

@@ -14,7 +14,42 @@ from opencobol2.theming import Theme
 def build_palette(
     theme: Theme,
 ) -> QPalette:
-    """Build a QPalette reflecting one OpenCobol2 theme."""
+    """Build a QPalette reflecting one OpenCobol2 theme.
+
+    Per Editor §UIShell-4, `QPalette.ColorRole.PlaceholderText` is set
+    explicitly here because it was never set before: every widget that
+    relies on `setPlaceholderText()` (Terminal, Watch, Memory, Git
+    Changes, Command Palette, Compiler Profiles dialog) rendered a
+    fresh `QPalette()`'s built-in default -- pure black regardless of
+    theme -- rather than anything sourced from the active theme at all.
+    `syntax_comment` is used for it because every built-in theme already
+    tunes that color to be legible-but-secondary against
+    `editor_background` (the same color `Base` uses here), which is
+    exactly the contrast placeholder text needs; computed WCAG contrast
+    against `editor_background` is 5.0-11.5:1 across all four built-in
+    themes.
+
+    Bevel/border tones for dock-widget separators, splitter handles, and
+    sunken/raised frames are derived from the window color relative to
+    itself (lighter/darker) rather than from new `ThemeColors` fields, so
+    borders show up with real contrast under every theme -- dark or
+    light -- without per-theme tuning. Without this, Qt's default
+    `QPalette` would leave them at its own built-in light-gray tones,
+    which is why panels used to blend together with no visible
+    separation.
+
+    The disabled-text color is computed by blending the foreground
+    toward the background rather than using alpha, because a single-arg
+    `setColor()` call applies to every color group uniformly: without an
+    explicit, distinct disabled color, a disabled menu command would
+    otherwise render in the exact same, fully legible color as an
+    enabled one, and text rendering doesn't reliably respect a
+    translucent `QColor` everywhere.
+
+    :param theme: The theme whose colors populate the palette.
+    :returns: A new :class:`QPalette` reflecting `theme`.
+    :raises TypeError: If `theme` is not a :class:`Theme`.
+    """
 
     if not isinstance(
         theme,

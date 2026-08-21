@@ -1,4 +1,13 @@
-"""Compiler provider domain models."""
+"""Compiler provider domain models.
+
+Defines the shapes shared by every compiler provider integration: the
+`JsonValue` alias for configuration data, the `CompilerExecutionKind`
+and `CompilerConfigurationFieldKind` enums, the `CompilerConfigurationField`
+and `CompilerProfile` dataclasses (both of which validate and freeze
+their contents in `__post_init__` so a constructed instance is always
+immutable and well-formed), and the `CompilerProvider` protocol that
+concrete providers implement.
+"""
 
 from __future__ import annotations
 
@@ -23,14 +32,30 @@ JsonValue: TypeAlias = (
 
 
 class CompilerExecutionKind(StrEnum):
-    """Describes how a compiler provider performs compilation."""
+    """Describes how a compiler provider performs compilation.
+
+    :cvar LOCAL_PROCESS: Compilation runs as a local subprocess (e.g. an
+        installed `cobc` executable).
+    :cvar REMOTE_JOB: Compilation is dispatched to a remote job runner
+        rather than executed on this machine.
+    """
 
     LOCAL_PROCESS = "local-process"
     REMOTE_JOB = "remote-job"
 
 
 class CompilerConfigurationFieldKind(StrEnum):
-    """Describes a provider configuration field's value type."""
+    """Describes a provider configuration field's value type.
+
+    :cvar STRING: A single free-form string value.
+    :cvar PATH: A single filesystem path string.
+    :cvar BOOLEAN: A true/false flag.
+    :cvar STRING_LIST: An ordered list of strings.
+    :cvar STRING_MAP: A mapping of string keys to string values.
+    :cvar INTEGER_LIST: An ordered list of integers.
+    :cvar CHOICE: A single string constrained to one of a fixed set of
+        `choices`.
+    """
 
     STRING = "string"
     PATH = "path"
@@ -43,7 +68,23 @@ class CompilerConfigurationFieldKind(StrEnum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CompilerConfigurationField:
-    """Describes one user-configurable compiler provider setting."""
+    """Describes one user-configurable compiler provider setting.
+
+    :ivar key: The stable, non-empty identifier used to look this field
+        up in a `CompilerProfile.configuration` mapping.
+    :ivar title: The user-facing label for this setting.
+    :ivar kind: The value type this field holds, which determines how
+        `default` and any assigned value are validated.
+    :ivar required: Whether a profile must supply a value for this
+        field.
+    :ivar description: Optional user-facing help text, stripped of
+        leading/trailing whitespace.
+    :ivar default: The field's default value, if any, validated and
+        frozen the same way an assigned value would be.
+    :ivar choices: The fixed set of allowed values when `kind` is
+        :attr:`CompilerConfigurationFieldKind.CHOICE`; empty for every
+        other kind.
+    """
 
     key: str
     title: str
@@ -54,7 +95,19 @@ class CompilerConfigurationField:
     choices: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Validate and normalize the configuration field."""
+        """Validate and normalize the configuration field.
+
+        :returns: None. Normalizes `key`, `title`, `kind`, `description`,
+            `choices`, and `default` in place via `object.__setattr__`
+            (the dataclass is frozen, so this is the only way to
+            normalize fields after construction).
+        :raises TypeError: If `description` or `required` has the wrong
+            type, or if `default` is not a valid value for `kind`.
+        :raises ValueError: If `choices` contains a duplicate, if `kind`
+            is :attr:`CompilerConfigurationFieldKind.CHOICE` with no
+            `choices`, if `kind` is any other kind but `choices` is
+            non-empty, or if `default` is not a valid value for `kind`.
+        """
         key = _normalize_nonempty_string(
             self.key,
             "Compiler configuration field key",
@@ -172,7 +225,20 @@ class CompilerConfigurationField:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CompilerProfile:
-    """Describes one configured compiler provider instance."""
+    """Describes one configured compiler provider instance.
+
+    :ivar provider_id: The identifier of the :class:`CompilerProvider`
+        this profile configures.
+    :ivar display_name: The user-facing name for this profile.
+    :ivar profile_id: The stable unique identifier for this profile
+        instance, generated automatically if not supplied.
+    :ivar configuration: The provider-specific configuration values for
+        this profile, keyed by :attr:`CompilerConfigurationField.key`.
+        Frozen into an immutable mapping of frozen JSON-compatible
+        values.
+    :ivar environment_overrides: Extra environment variables to apply
+        when this profile compiles, frozen into an immutable mapping.
+    """
 
     provider_id: str
     display_name: str
@@ -187,7 +253,20 @@ class CompilerProfile:
     )
 
     def __post_init__(self) -> None:
-        """Validate and freeze compiler profile configuration."""
+        """Validate and freeze compiler profile configuration.
+
+        :returns: None. Normalizes `provider_id` and `display_name`,
+            and freezes `configuration` and `environment_overrides`
+            into immutable mappings, in place via `object.__setattr__`
+            (the dataclass is frozen, so this is the only way to
+            normalize fields after construction).
+        :raises TypeError: If `provider_id` or `display_name` is not a
+            string, if `profile_id` is not a `UUID`, or if
+            `configuration` or `environment_overrides` is not a mapping
+            of the expected shape.
+        :raises ValueError: If `provider_id` or `display_name` is an
+            empty (or whitespace-only) string.
+        """
         provider_id = _normalize_nonempty_string(
             self.provider_id,
             "Compiler provider ID",
@@ -240,42 +319,79 @@ class CompilerProfile:
 
 
 class CompilerProvider(Protocol):
-    """Contract implemented by compiler provider integrations."""
+    """Contract implemented by compiler provider integrations.
+
+    Any object exposing this shape (whether via inheritance or simple
+    structural conformance, since this is a `Protocol`) can be
+    registered and used wherever a compiler provider is expected.
+    """
 
     @property
     def provider_id(self) -> str:
-        """Return the stable provider identifier."""
+        """Return the stable provider identifier.
+
+        :returns: The provider's stable, non-empty identifier string.
+        """
         ...
 
     @property
     def display_name(self) -> str:
-        """Return the user-facing provider name."""
+        """Return the user-facing provider name.
+
+        :returns: The provider's user-facing display name.
+        """
         ...
 
     @property
     def execution_kind(self) -> CompilerExecutionKind:
-        """Return how the provider performs compilation."""
+        """Return how the provider performs compilation.
+
+        :returns: The :class:`CompilerExecutionKind` describing whether
+            this provider compiles locally or dispatches a remote job.
+        """
         ...
 
     @property
     def configuration_fields(
         self,
     ) -> tuple[CompilerConfigurationField, ...]:
-        """Return the provider's configurable settings."""
+        """Return the provider's configurable settings.
+
+        :returns: Every :class:`CompilerConfigurationField` a
+            `CompilerProfile` for this provider may or must supply.
+        """
         ...
 
     def validate_profile(
         self,
         profile: CompilerProfile,
     ) -> None:
-        """Validate a compiler profile for this provider."""
+        """Validate a compiler profile for this provider.
+
+        :param profile: The profile to validate against this
+            provider's `configuration_fields`.
+        :returns: None. Implementations signal an invalid profile by
+            raising rather than by a return value.
+        :raises ValueError: If implementations determine `profile` is
+            not a valid configuration for this provider.
+        """
         ...
 
 
 def _freeze_configuration(
     configuration: Mapping[str, JsonValue],
 ) -> Mapping[str, JsonValue]:
-    """Validate and freeze compiler profile configuration."""
+    """Validate and freeze compiler profile configuration.
+
+    :param configuration: The raw configuration mapping to validate.
+    :returns: An immutable `MappingProxyType` with every key normalized
+        and every value frozen via `_freeze_json_value`.
+    :raises TypeError: If `configuration` is not a mapping, if any key
+        is not a non-empty string, or if any value is not a supported
+        JSON-compatible type.
+    :raises ValueError: If any key is an empty (or whitespace-only)
+        string.
+    """
     if not isinstance(
         configuration,
         Mapping,
@@ -306,7 +422,17 @@ def _freeze_configuration(
 def _freeze_environment(
     environment: Mapping[str, str],
 ) -> Mapping[str, str]:
-    """Validate and freeze compiler environment overrides."""
+    """Validate and freeze compiler environment overrides.
+
+    :param environment: The raw environment variable mapping to
+        validate.
+    :returns: An immutable `MappingProxyType` with every key
+        normalized.
+    :raises TypeError: If `environment` is not a mapping, if any key is
+        not a non-empty string, or if any value is not a string.
+    :raises ValueError: If any key is an empty (or whitespace-only)
+        string.
+    """
     if not isinstance(
         environment,
         Mapping,
@@ -344,7 +470,24 @@ def _freeze_environment(
 def _freeze_json_value(
     value: JsonValue,
 ) -> JsonValue:
-    """Validate and freeze one JSON-compatible configuration value."""
+    """Validate and freeze one JSON-compatible configuration value.
+
+    Recurses into mappings and sequences so a nested structure is
+    frozen all the way down.
+
+    :param value: The value to validate and freeze. Must be `None`, a
+        `str`, `bool`, `int`, a finite `float`, a `Mapping`, or a
+        `list`/`tuple`.
+    :returns: `value` unchanged if it is already an immutable scalar
+        type; otherwise an immutable `MappingProxyType` (for a mapping)
+        or `tuple` (for a list or tuple) with every element likewise
+        frozen.
+    :raises ValueError: If `value` is a non-finite `float` (`nan` or
+        infinity), or if a nested mapping key is an empty (or
+        whitespace-only) string.
+    :raises TypeError: If `value` is not one of the supported JSON-
+        compatible types, or if a nested mapping key is not a string.
+    """
     if (
         value is None
         or isinstance(
@@ -420,7 +563,17 @@ def _normalize_nonempty_string(
     value: str,
     name: str,
 ) -> str:
-    """Validate and normalize one required string."""
+    """Validate and normalize one required string.
+
+    :param value: The value to validate. Must be a non-empty (after
+        stripping) string.
+    :param name: A human-readable label for `value`, used to build the
+        error message when validation fails.
+    :returns: `value` with leading/trailing whitespace stripped.
+    :raises TypeError: If `value` is not a string.
+    :raises ValueError: If `value` is empty or contains only
+        whitespace.
+    """
     if not isinstance(
         value,
         str,
@@ -445,7 +598,33 @@ def _validate_configuration_value(
     key: str,
     choices: tuple[str, ...],
 ) -> None:
-    """Validate one provider configuration field value."""
+    """Validate one provider configuration field value.
+
+    Dispatches to the type check appropriate for `kind`: a non-empty
+    string for `STRING`/`PATH`, a `bool` for `BOOLEAN`, a list of
+    strings for `STRING_LIST`, a mapping of strings for `STRING_MAP`,
+    a list of non-bool integers for `INTEGER_LIST`, and a string drawn
+    from `choices` for `CHOICE`.
+
+    :param kind: The configuration field kind that determines which
+        shape `value` must have.
+    :param value: The value to validate.
+    :param key: The configuration field's key, used to build error
+        messages.
+    :param choices: The allowed values when `kind` is `CHOICE`; unused
+        for every other kind.
+    :returns: None. Raises on an invalid `value`; returns silently
+        otherwise.
+    :raises TypeError: If `value` does not match the shape required by
+        `kind`.
+    :raises ValueError: If `kind` is `CHOICE` and `value` is not one of
+        `choices`, or if `kind` is `STRING`/`PATH`/`CHOICE` and `value`
+        is an empty (or whitespace-only) string.
+    :raises AssertionError: If `kind` is not one of the known
+        :class:`CompilerConfigurationFieldKind` members (unreachable in
+        practice, since `kind` is itself validated to be a member of
+        that enum before this function is called).
+    """
     if kind in {
         CompilerConfigurationFieldKind.STRING,
         CompilerConfigurationFieldKind.PATH,

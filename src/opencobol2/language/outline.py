@@ -21,8 +21,14 @@ from opencobol2.language.parser import parse_cobol_tokens
 class OutlineNode:
     """One entry in a COBOL source outline tree.
 
-    `kind` is one of "division", "section", or "paragraph". `line` is the
-    1-based source line where the entry starts.
+    :ivar name: The display label for the entry, e.g. a division
+        name, a ``"<name> SECTION"`` label, or a paragraph name.
+    :ivar kind: One of ``"division"``, ``"section"``, or
+        ``"paragraph"``.
+    :ivar line: The 1-based source line where the entry starts.
+    :ivar children: The nested outline entries, e.g. sections and
+        paragraphs under a division. Empty for leaf entries such as
+        paragraphs.
     """
 
     name: str
@@ -45,6 +51,13 @@ def compute_outline(
 
     Never raises: parsing errors or genuinely invalid mid-edit source just
     yield an empty outline for this pass, rather than breaking the editor.
+
+    :param source_text: The complete COBOL source text to analyze.
+    :param source_format: Whether `source_text` is fixed-format or
+        free-format COBOL. Defaults to :attr:`CobolSourceFormat.FIXED`.
+    :returns: The top-level outline entries (one per division present),
+        each nesting its sections and paragraphs. Empty if lexing or
+        parsing raised, or if parsing produced no compilation unit.
     """
 
     try:

@@ -1,4 +1,13 @@
-"""Text document domain models."""
+"""Text document domain models.
+
+Models the editable state of one plain-text document (:class:`TextDocument`)
+together with the two on-disk framing conventions that round-trip through
+it: the line-ending convention (:class:`LineEnding`) and an explicit
+Unicode byte-order mark (:class:`ByteOrderMark`). Internally, document text
+always uses plain LF line separators regardless of the on-disk convention;
+the module-level normalization helpers below convert between the two at
+the document's boundary.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +17,12 @@ from pathlib import Path
 
 
 class LineEnding(StrEnum):
-    """Describes a text document's on-disk line-ending convention."""
+    """Describes a text document's on-disk line-ending convention.
+
+    Each member's value is the literal character sequence it represents:
+    ``LF`` is a bare line feed, ``CRLF`` is a carriage return followed by
+    a line feed, and ``CR`` is a bare carriage return.
+    """
 
     LF = "\n"
     CRLF = "\r\n"
@@ -16,7 +30,13 @@ class LineEnding(StrEnum):
 
 
 class ByteOrderMark(Enum):
-    """Describes an explicit Unicode byte-order mark or signature."""
+    """Describes an explicit Unicode byte-order mark or signature.
+
+    Each member's value is the raw byte sequence written at the start of
+    a file to signal its encoding: ``UTF8`` is the UTF-8 signature, and
+    the ``UTF16``/``UTF32`` members are the little-endian (``_LE``) or
+    big-endian (``_BE``) mark for their respective encoding.
+    """
 
     UTF8 = codecs.BOM_UTF8
     UTF16_LE = codecs.BOM_UTF16_LE
@@ -26,7 +46,11 @@ class ByteOrderMark(Enum):
 
     @property
     def bytes(self) -> bytes:
-        """Return the raw byte sequence for the mark."""
+        """Return the raw byte sequence for the mark.
+
+        :returns: The literal bytes written to disk to represent this
+            byte-order mark.
+        """
         return self.value
 
 
@@ -40,7 +64,22 @@ _BOM_ENCODINGS = {
 
 
 class TextDocument:
-    """Represents the editable state of one plain-text document."""
+    """Represents the editable state of one plain-text document.
+
+    :ivar _path: The document's filesystem path, or ``None`` for an
+        untitled, never-yet-saved document.
+    :ivar _text: The document text, normalized to plain LF line
+        separators for internal use.
+    :ivar _encoding: The normalized text encoding name used when
+        reading or saving the document.
+    :ivar _line_ending: The on-disk line-ending convention to use when
+        saving.
+    :ivar _byte_order_mark: The explicit Unicode byte-order mark to
+        write when saving, or ``None`` if none should be written.
+    :ivar _saved_state: A snapshot of the state tuple returned by
+        `_current_state` as of the last successful save, used by
+        `is_modified` to detect unsaved changes.
+    """
 
     __slots__ = (
         "_path",
@@ -60,6 +99,30 @@ class TextDocument:
         line_ending: LineEnding | str = LineEnding.LF,
         byte_order_mark: ByteOrderMark | bytes | None = None,
     ) -> None:
+        """Initialize a document's text, path, and encoding metadata.
+
+        :param text: The initial document text. Any CR or CRLF
+            sequences are normalized to LF for internal storage.
+        :param path: The document's filesystem path, or ``None`` for
+            an untitled document.
+        :param encoding: The text encoding to use when saving. A
+            BOM-implying codec name (e.g. ``"utf-8-sig"``, ``"utf-16"``,
+            ``"utf-32"``) is normalized to its base encoding name plus
+            the corresponding :class:`ByteOrderMark`.
+        :param line_ending: The on-disk line-ending convention to use
+            when saving.
+        :param byte_order_mark: An explicit Unicode byte-order mark to
+            write when saving, or ``None``. Ignored if `encoding`
+            already implies a byte-order mark.
+        :raises ValueError: If `byte_order_mark` is explicitly given
+            and conflicts with the byte-order mark implied by
+            `encoding`, or if the (possibly implied) byte-order mark
+            is incompatible with the resulting encoding.
+        :raises TypeError: If `text` is not a string, or if `encoding`
+            is not a string.
+        :returns: None. Initializes all instance state, including the
+            saved-state snapshot used for modification tracking.
+        """
         normalized_encoding, implied_bom = (
             _normalize_encoding_configuration(
                 encoding,

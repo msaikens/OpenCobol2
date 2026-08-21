@@ -1,4 +1,14 @@
-"""Local Git repository services."""
+"""Local Git repository services.
+
+Wraps invocations of the local Git command-line executable and turns
+its raw text output into typed dataclasses (see
+:mod:`opencobol2.git.models`), raising a typed exception for every
+distinct failure mode -- a missing executable, a timed-out process, a
+non-zero exit, a merge conflict, or a domain-specific precondition
+failure such as committing with nothing staged -- so callers can
+branch on exception type instead of parsing Git's text output
+themselves.
+"""
 
 from __future__ import annotations
 
@@ -72,14 +82,29 @@ class GitCommandTimedOutError(TimeoutError):
 
 
 class GitCommandFailedError(RuntimeError):
-    """Raised when Git completes with a non-zero return code."""
+    """Raised when Git completes with a non-zero return code.
+
+    :ivar result: The completed, unsuccessful :class:`GitCommandResult`
+        that produced this error.
+    """
 
     def __init__(
         self,
         *,
         result: GitCommandResult,
     ) -> None:
-        """Initialize a failed Git command error."""
+        """Initialize a failed Git command error.
+
+        :param result: The completed, unsuccessful
+            :class:`GitCommandResult` that this error wraps. Exposed
+            as :attr:`result` for callers that want the raw command
+            details.
+        :raises TypeError: If `result` is not a
+            :class:`GitCommandResult`.
+        :returns: None. Sets :attr:`result` and derives the exception
+            message from the most specific detail available on
+            `result`.
+        """
 
         if not isinstance(
             result,
@@ -192,7 +217,15 @@ class GitCherryPickConflictError(RuntimeError):
 
 
 class GitService:
-    """Reads and updates local Git repository state."""
+    """Reads and updates local Git repository state.
+
+    Every public method resolves the Git worktree root for a given
+    path (via :meth:`discover_repository`), invokes one or more local
+    Git subprocess commands relative to that root, and parses the
+    resulting output into a typed result. Failures surface as the
+    specific exception subclasses defined in this module rather than
+    as raw `subprocess` errors.
+    """
 
     def __init__(
         self,
@@ -201,7 +234,25 @@ class GitService:
         environment_overrides: Mapping[str, str] | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
-        """Initialize local Git repository services."""
+        """Initialize local Git repository services.
+
+        :param executable_path: Path to (or name of) the Git
+            executable to invoke for every command. Defaults to
+            `"git"`, resolved via the process `PATH`.
+        :param environment_overrides: Extra environment variables to
+            layer on top of the current process environment for
+            every invoked Git command, or None for no overrides.
+        :param timeout_seconds: Maximum time, in seconds, to wait for
+            a local Git command to complete before raising
+            :class:`GitCommandTimedOutError`. Defaults to 30 seconds.
+        :raises ValueError: If `executable_path` is blank,
+            `timeout_seconds` is not greater than zero, or an
+            environment override name is empty after stripping.
+        :raises TypeError: If `timeout_seconds` is not numeric (or is
+            a `bool`), `environment_overrides` is not a mapping or
+            None, or an environment override name or value is not a
+            string.
+        """
 
         executable = str(
             executable_path,
@@ -291,7 +342,13 @@ class GitService:
         self,
         executable_path: Path | str,
     ) -> None:
-        """Update the configured Git executable path."""
+        """Update the configured Git executable path.
+
+        :param executable_path: The new path to (or name of) the Git
+            executable to use for subsequent commands.
+        :raises ValueError: If `executable_path` is blank.
+        :returns: None. Replaces the stored executable path in place.
+        """
 
         executable = str(
             executable_path,
@@ -308,7 +365,11 @@ class GitService:
     def executable_path(
         self,
     ) -> str:
-        """Return the configured Git executable."""
+        """Return the configured Git executable.
+
+        :returns: The path to (or name of) the Git executable that is
+            invoked for every command.
+        """
 
         return self._executable_path
 
@@ -316,7 +377,12 @@ class GitService:
     def environment_overrides(
         self,
     ) -> Mapping[str, str]:
-        """Return copied Git process environment overrides."""
+        """Return copied Git process environment overrides.
+
+        :returns: A fresh copy of the environment variable overrides
+            applied on top of the current process environment for
+            every invoked Git command.
+        """
 
         return dict(
             self._environment_overrides,
@@ -326,7 +392,12 @@ class GitService:
     def timeout_seconds(
         self,
     ) -> float:
-        """Return the local Git process timeout."""
+        """Return the local Git process timeout.
+
+        :returns: The maximum time, in seconds, allowed for a local
+            Git command to complete before it is treated as timed
+            out.
+        """
 
         return self._timeout_seconds
 
@@ -334,7 +405,23 @@ class GitService:
         self,
         path: Path | str,
     ) -> Path:
-        """Resolve the Git worktree root containing a path."""
+        """Resolve the Git worktree root containing a path.
+
+        :param path: A path inside (or at) the Git worktree to
+            locate the root for. If it names a file, its parent
+            directory is used as the process working directory for
+            the underlying Git invocation.
+        :returns: The absolute path to the worktree's top-level
+            directory.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        :raises GitCommandFailedError: If Git reports success but
+            returns no repository root, or otherwise fails.
+        :raises GitExecutableUnavailableError: If the configured Git
+            executable cannot be started.
+        :raises GitCommandTimedOutError: If the Git command exceeds
+            the configured timeout.
+        """
 
         working_directory = _resolve_working_directory(
             path,
@@ -387,7 +474,15 @@ class GitService:
         self,
         path: Path | str,
     ) -> GitRepositoryStatus:
-        """Return current local status for a Git worktree."""
+        """Return current local status for a Git worktree.
+
+        :param path: A path inside the Git worktree to report status
+            for.
+        :returns: The parsed repository status, including branch,
+            HEAD, and per-path staged/unstaged state.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         repository_root = self.discover_repository(
             path,
@@ -404,7 +499,18 @@ class GitService:
             str | PathLike[str]
         ],
     ) -> GitRepositoryStatus:
-        """Stage repository-relative paths and return refreshed status."""
+        """Stage repository-relative paths and return refreshed status.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param repository_paths: The repository-relative paths to
+            stage.
+        :returns: The repository status after staging.
+        :raises GitRepositoryPathError: If `repository_paths` is
+            empty, or any entry is empty, absolute, or traverses
+            outside the repository.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         normalized_paths = _normalize_repository_paths(
             repository_paths,
@@ -437,7 +543,23 @@ class GitService:
             str | PathLike[str]
         ],
     ) -> GitRepositoryStatus:
-        """Unstage repository-relative paths and return refreshed status."""
+        """Unstage repository-relative paths and return refreshed status.
+
+        When the repository has no commits yet (`status.head_oid` is
+        None), unstages via `git rm --cached --ignore-unmatch`
+        instead of `git restore --staged`, since `restore --staged`
+        requires an existing HEAD to restore from.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param repository_paths: The repository-relative paths to
+            unstage.
+        :returns: The repository status after unstaging.
+        :raises GitRepositoryPathError: If `repository_paths` is
+            empty, or any entry is empty, absolute, or traverses
+            outside the repository.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         normalized_paths = _normalize_repository_paths(
             repository_paths,
@@ -482,7 +604,13 @@ class GitService:
         self,
         path: Path | str,
     ) -> GitRepositoryStatus:
-        """Stage all worktree changes and return refreshed status."""
+        """Stage all worktree changes and return refreshed status.
+
+        :param path: A path inside the Git worktree to operate on.
+        :returns: The repository status after staging.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         repository_root = self.discover_repository(
             path,
@@ -508,7 +636,18 @@ class GitService:
         self,
         path: Path | str,
     ) -> GitRepositoryStatus:
-        """Unstage all index changes and return refreshed status."""
+        """Unstage all index changes and return refreshed status.
+
+        As with :meth:`unstage_paths`, falls back to `git rm --cached
+        -r --ignore-unmatch` for a repository with no commits yet,
+        since `git restore --staged` requires an existing HEAD to
+        restore from.
+
+        :param path: A path inside the Git worktree to operate on.
+        :returns: The repository status after unstaging.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         repository_root = self.discover_repository(
             path,
@@ -552,7 +691,19 @@ class GitService:
         path: Path | str,
         message: str,
     ) -> GitCommitResult:
-        """Commit current staged index content and return refreshed state."""
+        """Commit current staged index content and return refreshed state.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param message: The commit message to use.
+        :returns: The new commit's object ID together with the
+            refreshed repository status.
+        :raises GitCommitMessageError: If `message` is empty (after
+            stripping) or contains NUL characters.
+        :raises GitNothingToCommitError: If the repository has no
+            staged changes to commit.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         normalized_message = _normalize_commit_message(
             message,
@@ -600,7 +751,25 @@ class GitService:
         *,
         initial_branch: str | None = None,
     ) -> GitRepositoryCreateResult:
-        """Create a new local Git repository and return its state."""
+        """Create a new local Git repository and return its state.
+
+        :param path: The filesystem destination for the new
+            repository. Must not already exist as a non-empty
+            directory or as a non-directory entry, though its parent
+            directory must already exist.
+        :param initial_branch: The name to give the initial branch,
+            or None to use Git's configured default.
+        :returns: The new repository's root path, branch name, HEAD
+            object ID (if any commits exist), and full repository
+            status.
+        :raises GitRepositoryAlreadyExistsError: If `path` already
+            exists and is a non-empty directory, or exists as a
+            non-directory entry.
+        :raises GitRepositoryPathError: If `path`'s parent directory
+            does not exist.
+        :raises ValueError: If `initial_branch` is given but empty
+            after stripping, or starts with a dash.
+        """
 
         normalized_branch = _normalize_optional_ref_name(
             initial_branch,
@@ -662,9 +831,35 @@ class GitService:
         """Clone a Git repository into a new destination directory.
 
         `timeout_seconds` overrides the service's default timeout for
-        this call -- a clone can transfer far more data over the
+        this call: a clone can transfer far more data over the
         network than any local operation, so the same timeout budget
-        that's reasonable for local commands is often too short here.
+        that is reasonable for local commands is often too short
+        here.
+
+        :param source: The clone source URL or path.
+        :param destination: The filesystem destination for the
+            clone. Must not already exist as a non-empty directory or
+            as a non-directory entry, though its parent directory
+            must already exist.
+        :param branch: The branch to check out after cloning, or None
+            to use the remote's default branch.
+        :param timeout_seconds: A timeout, in seconds, that overrides
+            the service's configured default for this call only, or
+            None to use the configured default.
+        :returns: The new repository's root path, default branch
+            name, HEAD object ID (if any commits exist), and full
+            repository status.
+        :raises GitCloneSourceError: If `source` is empty (after
+            stripping) or contains NUL characters, or if Git reports
+            it as invalid or unreachable.
+        :raises GitCloneDestinationNotEmptyError: If `destination`
+            already exists and is a non-empty directory, or exists as
+            a non-directory entry.
+        :raises GitRepositoryPathError: If `destination`'s parent
+            directory does not exist.
+        :raises ValueError: If `branch` is given but empty after
+            stripping or starts with a dash, or `timeout_seconds` is
+            given but not greater than zero.
         """
 
         normalized_source = _require_clone_source(
@@ -729,7 +924,13 @@ class GitService:
         self,
         path: Path | str,
     ) -> tuple[GitRemote, ...]:
-        """Return configured remotes for a Git worktree."""
+        """Return configured remotes for a Git worktree.
+
+        :param path: A path inside the Git worktree to inspect.
+        :returns: Every configured remote.
+        :raises GitRepositoryNotFoundError: If `path` is not inside a
+            Git worktree.
+        """
 
         repository_root = self.discover_repository(
             path,
@@ -745,7 +946,21 @@ class GitService:
         name: str,
         url: str,
     ) -> GitRemoteAddResult:
-        """Add a new Git remote and return the refreshed remote list."""
+        """Add a new Git remote and return the refreshed remote list.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param name: The name to give the new remote.
+        :param url: The URL to configure for the new remote.
+        :returns: The newly added remote together with the refreshed
+            remote list.
+        :raises GitRemoteNameError: If `name` is empty (after
+            stripping), contains NUL characters, or contains
+            whitespace.
+        :raises GitRemoteUrlError: If `url` is empty (after
+            stripping) or contains NUL characters.
+        :raises GitRemoteAlreadyExistsError: If a remote named `name`
+            is already configured.
+        """
 
         normalized_name = _require_remote_name(
             name,
@@ -803,7 +1018,18 @@ class GitService:
         path: Path | str,
         name: str,
     ) -> GitRemoteRemoveResult:
-        """Remove a Git remote and return the refreshed remote list."""
+        """Remove a Git remote and return the refreshed remote list.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param name: The name of the remote to remove.
+        :returns: The removed remote's name together with the
+            refreshed remote list.
+        :raises GitRemoteNameError: If `name` is empty (after
+            stripping), contains NUL characters, or contains
+            whitespace.
+        :raises GitRemoteNotFoundError: If no remote named `name` is
+            configured.
+        """
 
         normalized_name = _require_remote_name(
             name,
@@ -853,7 +1079,21 @@ class GitService:
         name: str,
         new_name: str,
     ) -> GitRemoteRenameResult:
-        """Rename a Git remote and return the refreshed remote list."""
+        """Rename a Git remote and return the refreshed remote list.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param name: The current name of the remote to rename.
+        :param new_name: The new name to give the remote.
+        :returns: The renamed remote, its previous name, and the
+            refreshed remote list.
+        :raises GitRemoteNameError: If `name` or `new_name` is empty
+            (after stripping), contains NUL characters, or contains
+            whitespace.
+        :raises GitRemoteNotFoundError: If no remote named `name` is
+            configured.
+        :raises GitRemoteAlreadyExistsError: If `new_name` differs
+            from `name` and a remote already exists with that name.
+        """
 
         normalized_name = _require_remote_name(
             name,
@@ -926,7 +1166,21 @@ class GitService:
         *,
         timeout_seconds: float | None = None,
     ) -> GitFetchResult:
-        """Fetch from a Git remote and return refreshed status."""
+        """Fetch from a Git remote and return refreshed status.
+
+        :param path: A path inside the Git worktree to operate on.
+        :param remote: The remote to fetch from, or None to use
+            Git's configured default.
+        :param timeout_seconds: A timeout, in seconds, that overrides
+            the service's configured default for this call only, or
+            None to use the configured default.
+        :returns: The remote that was fetched from (or None if the
+            default was used) together with the refreshed repository
+            status.
+        :raises ValueError: If `remote` is given but empty after
+            stripping or starts with a dash, or `timeout_seconds` is
+            given but not greater than zero.
+        """
 
         normalized_remote = _normalize_optional_ref_name(
             remote,

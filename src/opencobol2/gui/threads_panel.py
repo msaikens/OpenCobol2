@@ -1,4 +1,8 @@
-"""A table view of the active debug session's threads."""
+"""A table view of the active debug session's threads.
+
+Renders one row per thread reported by the debugger, showing its ID,
+run state, and current stack frame location.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +35,11 @@ class ThreadsWidget(QTableWidget):
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build an empty, read-only threads table."""
+        """Build an empty, read-only threads table.
+
+        :param parent: The optional parent widget.
+        :returns: None.
+        """
 
         super().__init__(0, len(_COLUMN_HEADERS), parent)
 

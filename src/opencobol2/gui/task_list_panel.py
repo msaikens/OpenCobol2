@@ -19,7 +19,15 @@ from PySide6.QtWidgets import (
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProjectTaskEntry:
-    """One task-tagged comment found in one project source file."""
+    """One task-tagged comment found in one project source file.
+
+    :ivar path: The absolute path of the source file the marker was
+        found in.
+    :ivar tag: The marker's tag word, e.g. ``"TODO"`` or ``"FIXME"``.
+    :ivar line: The 1-based line the marker appears on.
+    :ivar column: The 1-based column the marker starts at.
+    :ivar text: The remainder of the marker's comment text.
+    """
 
     path: Path
     tag: str
@@ -55,7 +63,11 @@ class TaskListWidget(QWidget):
         self,
         parent: QWidget | None = None,
     ) -> None:
-        """Build an empty task list with its Refresh control."""
+        """Build an empty task list with its Refresh control.
+
+        :param parent: The optional parent widget.
+        :returns: None.
+        """
 
         super().__init__(
             parent,
@@ -115,7 +127,10 @@ class TaskListWidget(QWidget):
     def row_count(
         self,
     ) -> int:
-        """Return the number of listed task entries."""
+        """Return the number of listed task entries.
+
+        :returns: The number of rows currently in the table.
+        """
 
         return self._table.rowCount()
 
@@ -123,7 +138,12 @@ class TaskListWidget(QWidget):
         self,
         entries: Sequence[ProjectTaskEntry],
     ) -> None:
-        """Replace the table's contents with a new set of task entries."""
+        """Replace the table's contents with a new set of task entries.
+
+        :param entries: The task entries to display, in the order they
+            should be shown.
+        :returns: None. The table widget is repopulated in place.
+        """
 
         self._entries = tuple(
             entries,
@@ -173,7 +193,11 @@ class TaskListWidget(QWidget):
     def clear_tasks(
         self,
     ) -> None:
-        """Remove every entry from the task list."""
+        """Remove every entry from the task list.
+
+        :returns: None. The table is emptied and the entry cache is
+            cleared.
+        """
 
         self._entries = ()
         self._table.setRowCount(
@@ -185,6 +209,16 @@ class TaskListWidget(QWidget):
         row: int,
         _column: int,
     ) -> None:
+        """Emit :attr:`entry_activated` for the task entry that was double-clicked.
+
+        :param row: The table row that was double-clicked.
+        :param _column: The table column that was double-clicked;
+            unused, since activation depends only on which row's entry
+            was clicked.
+        :returns: None. Emits :attr:`entry_activated`, or does nothing
+            if `row` is out of range for the current entries.
+        """
+
         if not (
             0
             <= row

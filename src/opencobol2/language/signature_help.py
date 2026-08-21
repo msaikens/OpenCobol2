@@ -38,7 +38,13 @@ _INTRINSIC_FUNCTION_SIGNATURES: dict[str, str] = {
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SignatureHelp:
-    """A one-line signature hint for the FUNCTION call the cursor is inside."""
+    """A one-line signature hint for the FUNCTION call the cursor is inside.
+
+    :ivar name: The intrinsic function's name, exactly as written at the
+        call site (original casing preserved).
+    :ivar signature: The formatted signature string to display, e.g.
+        ``"FUNCTION TRIM(argument [, LEADING | TRAILING])"``.
+    """
 
     name: str
     signature: str
@@ -59,6 +65,37 @@ def compute_signature_help(
     the editor. Only recognizes documented intrinsic functions -- an
     undocumented one yields no signature help, same policy as
     Documentation lookup.
+
+    Per Editor §Editor-Facing-3, tokens are scanned in source order but
+    the search deliberately does not return on the first match: scanning
+    in source order and stopping at the first match would always pick
+    the outermost FUNCTION call, since an outer call's parentheses fully
+    enclose any nested call's. Instead, every candidate whose range
+    contains the cursor is considered, and the last match wins --
+    necessarily the most deeply nested one, since a later match can only
+    exist if it lies inside an earlier, containing match. Because of the
+    Editor §Editor-Facing-6 handling described below, a signature-bearing
+    candidate can still turn out to have no known signature; that case
+    uses `continue` rather than returning `None` outright, so a more
+    specific known inner call can still be found even when an outer or
+    unrecognized wrapper isn't.
+
+    Per Editor §Editor-Facing-6, an unclosed call -- the user is still
+    typing its argument list, which is exactly when signature help is
+    most useful -- must not be treated as no match at all. When no
+    matching close paren is found, only the lower bound (the position
+    just after the open paren) is checked against the cursor, since
+    there's no upper bound to test against.
+
+    :param source_text: The complete COBOL source text to analyze.
+    :param line: The 1-based line of the cursor position to describe.
+    :param column: The 1-based column of the cursor position to
+        describe.
+    :param source_format: Whether `source_text` is fixed-format or
+        free-format COBOL. Defaults to :attr:`CobolSourceFormat.FIXED`.
+    :returns: The signature help for the innermost enclosing intrinsic
+        FUNCTION call, or `None` if the cursor isn't inside a recognized
+        call, or if lexing raised.
     """
 
     try:
@@ -70,17 +107,6 @@ def compute_signature_help(
         return None
 
     tokens = lex_result.tokens
-    # Editor §Editor-Facing-3: scanning in source order and returning on
-    # the *first* match always picks the outermost FUNCTION call, since
-    # an outer call's parens fully enclose any nested call's. Instead,
-    # every candidate whose range contains the cursor is considered,
-    # and the last (necessarily most deeply nested, since a later match
-    # can only exist if it's inside an earlier containing one) match
-    # wins. Editor §Editor-Facing-6's fix (below) can also mean a
-    # signature-bearing candidate has no signature -- `continue`,
-    # rather than returning `None` outright, so a more specific known
-    # inner call is still found even when an outer/unrecognized
-    # wrapper isn't.
     best: SignatureHelp | None = None
 
     for index, token in enumerate(tokens):
@@ -108,11 +134,6 @@ def compute_signature_help(
         )
 
         if close_paren is None:
-            # Editor §Editor-Facing-6: an unclosed call (the user is
-            # still typing its argument list -- exactly when signature
-            # help is most useful) must not be treated as no match at
-            # all; only the lower bound can be checked; there's no
-            # upper bound to test against.
             if not _position_at_or_after(
                 open_paren.span.end,
                 line,
@@ -146,6 +167,17 @@ def _find_matching_close_paren(
     tokens,
     start_index: int,
 ):
+    """Find the close parenthesis that matches an already-opened one.
+
+    :param tokens: The full token sequence to scan.
+    :param start_index: The index to begin scanning from, i.e. the
+        index just after the open parenthesis whose match is sought.
+    :returns: The matching :class:`~opencobol2.language.tokens.Token`
+        for the right parenthesis, accounting for nested parentheses
+        in between, or `None` if the tokens run out before the
+        nesting depth returns to zero.
+    """
+
     depth = 1
 
     for index in range(
@@ -175,6 +207,18 @@ def _position_between(
     line: int,
     column: int,
 ) -> bool:
+    """Check whether a line/column position lies within a span, inclusive.
+
+    :param start: The span's start position, exposing `line` and
+        `column` attributes.
+    :param end: The span's end position, exposing `line` and `column`
+        attributes.
+    :param line: The 1-based line of the position to test.
+    :param column: The 1-based column of the position to test.
+    :returns: `True` if `(line, column)` is between `start` and `end`,
+        inclusive of both endpoints; `False` otherwise.
+    """
+
     position = (
         line,
         column,
@@ -199,6 +243,16 @@ def _position_at_or_after(
     line: int,
     column: int,
 ) -> bool:
+    """Check whether a line/column position is at or after a given position.
+
+    :param start: The reference position, exposing `line` and `column`
+        attributes.
+    :param line: The 1-based line of the position to test.
+    :param column: The 1-based column of the position to test.
+    :returns: `True` if `(line, column)` is equal to or after `start`;
+        `False` otherwise.
+    """
+
     return (
         line,
         column,

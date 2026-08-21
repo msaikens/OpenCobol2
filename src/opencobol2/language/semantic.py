@@ -48,7 +48,12 @@ from opencobol2.language.tokens import (
 
 
 class ProcedureSymbolKind(StrEnum):
-    """Distinguishes a procedure division section from a paragraph."""
+    """Distinguishes a procedure division section from a paragraph.
+
+    :cvar SECTION: A named ``SECTION`` in the procedure division.
+    :cvar PARAGRAPH: A named paragraph, whether top-level or nested
+        inside a section.
+    """
 
     SECTION = "section"
     PARAGRAPH = "paragraph"
@@ -56,7 +61,20 @@ class ProcedureSymbolKind(StrEnum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DataSymbol:
-    """One named data item, condition name, or renames entry."""
+    """One named data item, condition name, or renames entry.
+
+    :ivar name: The data name, condition name, or renames name, as
+        written in the source.
+    :ivar level_number: The item's COBOL level number (for example
+        01, 05, 66, 77, or 88).
+    :ivar item: The parsed data item node this symbol was built from.
+    :ivar parent_name: The name of the immediately enclosing data
+        item, or None if this symbol has no parent (a top-level item,
+        or a 77-level standalone item).
+    :ivar is_condition_name: True if this symbol is an 88-level
+        condition name.
+    :ivar is_renames: True if this symbol is a 66-level RENAMES entry.
+    """
 
     name: str
     level_number: int
@@ -68,7 +86,13 @@ class DataSymbol:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProcedureSymbol:
-    """One named paragraph or section in the procedure division."""
+    """One named paragraph or section in the procedure division.
+
+    :ivar name: The paragraph or section name, as written in the
+        source.
+    :ivar kind: Whether this symbol is a section or a paragraph.
+    :ivar span: The source span covered by this paragraph or section.
+    """
 
     name: str
     kind: ProcedureSymbolKind
@@ -77,7 +101,21 @@ class ProcedureSymbol:
 
 @dataclass(slots=True)
 class SymbolTable:
-    """Data and procedure division symbols for one compilation unit."""
+    """Data and procedure division symbols for one compilation unit.
+
+    :ivar data_symbols: Every data symbol declared in the compilation
+        unit's data division, in declaration order.
+    :ivar procedure_symbols: Every paragraph and section symbol
+        declared in the compilation unit's procedure division, in
+        declaration order.
+    :ivar _data_symbols_by_name: A cache mapping each upper-cased data
+        symbol name to every :class:`DataSymbol` sharing that name.
+        None until :meth:`_ensure_indexed` first builds it.
+    :ivar _procedure_symbols_by_name: A cache mapping each upper-cased
+        procedure symbol name to every :class:`ProcedureSymbol`
+        sharing that name. None until :meth:`_ensure_indexed` first
+        builds it.
+    """
 
     data_symbols: tuple[DataSymbol, ...]
     procedure_symbols: tuple[ProcedureSymbol, ...]
@@ -116,6 +154,11 @@ class SymbolTable:
         synthetic file, re-run on every keystroke since live diagnostics
         analyze on every edit). Indexing once and reusing it drops that
         to O(references + symbols).
+
+        :returns: None. Populates `_data_symbols_by_name` and
+            `_procedure_symbols_by_name` in place. A no-op on every
+            call after the first, since it returns early once the
+            index already exists.
         """
 
         if self._data_symbols_by_name is not None:
@@ -161,7 +204,12 @@ class SymbolTable:
         self,
         name: str,
     ) -> tuple[DataSymbol, ...]:
-        """Return every data symbol matching a name, case-insensitively."""
+        """Return every data symbol matching a name, case-insensitively.
+
+        :param name: The data name to look up.
+        :returns: Every :class:`DataSymbol` whose name matches `name`
+            case-insensitively, or an empty tuple if none match.
+        """
 
         self._ensure_indexed()
 
@@ -174,7 +222,13 @@ class SymbolTable:
         self,
         name: str,
     ) -> tuple[ProcedureSymbol, ...]:
-        """Return every procedure symbol matching a name, case-insensitively."""
+        """Return every procedure symbol matching a name, case-insensitively.
+
+        :param name: The paragraph or section name to look up.
+        :returns: Every :class:`ProcedureSymbol` whose name matches
+            `name` case-insensitively, or an empty tuple if none
+            match.
+        """
 
         self._ensure_indexed()
 
@@ -187,7 +241,12 @@ class SymbolTable:
         self,
         name: str,
     ) -> ProcedureSymbol | None:
-        """Return the first procedure symbol matching a name, if any."""
+        """Return the first procedure symbol matching a name, if any.
+
+        :param name: The paragraph or section name to look up.
+        :returns: The first matching :class:`ProcedureSymbol`, or None
+            if no procedure symbol matches `name`.
+        """
 
         matches = self.find_procedure_symbols(
             name,
@@ -198,7 +257,11 @@ class SymbolTable:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DataNameReference:
-    """One resolved usage of a data name (or condition/renames name)."""
+    """One resolved usage of a data name (or condition/renames name).
+
+    :ivar name: The data name as it was referenced.
+    :ivar position: The source position of the reference.
+    """
 
     name: str
     position: SourcePosition
@@ -206,7 +269,11 @@ class DataNameReference:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProcedureNameReference:
-    """One resolved usage of a paragraph or section name."""
+    """One resolved usage of a paragraph or section name.
+
+    :ivar name: The paragraph or section name as it was referenced.
+    :ivar position: The source position of the reference.
+    """
 
     name: str
     position: SourcePosition
@@ -214,7 +281,16 @@ class ProcedureNameReference:
 
 @dataclass(slots=True)
 class SemanticAnalysisResult:
-    """The symbol table, diagnostics, and cross-references from analysis."""
+    """The symbol table, diagnostics, and cross-references from analysis.
+
+    :ivar symbol_table: The data and procedure division symbol table
+        built for the analyzed compilation unit.
+    :ivar diagnostics: Every diagnostic raised during analysis.
+    :ivar data_references: Every resolved usage of a data name found
+        during analysis.
+    :ivar procedure_references: Every resolved usage of a paragraph or
+        section name found during analysis.
+    """
 
     symbol_table: SymbolTable
     diagnostics: tuple[ParseDiagnostic, ...] = ()
@@ -225,7 +301,11 @@ class SemanticAnalysisResult:
     def has_errors(
         self,
     ) -> bool:
-        """Return whether any diagnostic is an error."""
+        """Return whether any diagnostic in this result is an error.
+
+        :returns: True if any diagnostic's severity is
+            :attr:`DiagnosticSeverity.ERROR`, False otherwise.
+        """
 
         return any(
             diagnostic.severity is DiagnosticSeverity.ERROR
@@ -236,7 +316,13 @@ class SemanticAnalysisResult:
         self,
         name: str,
     ) -> tuple[SourcePosition, ...]:
-        """Return every usage location resolved for one data name."""
+        """Return every usage location resolved for one data name.
+
+        :param name: The data name to look up, matched
+            case-insensitively.
+        :returns: The source position of every resolved reference to
+            `name`, in the order they were recorded.
+        """
 
         normalized = name.upper()
 
@@ -250,7 +336,13 @@ class SemanticAnalysisResult:
         self,
         name: str,
     ) -> tuple[SourcePosition, ...]:
-        """Return every usage location resolved for one procedure name."""
+        """Return every usage location resolved for one procedure name.
+
+        :param name: The paragraph or section name to look up, matched
+            case-insensitively.
+        :returns: The source position of every resolved reference to
+            `name`, in the order they were recorded.
+        """
 
         normalized = name.upper()
 
@@ -263,7 +355,14 @@ class SemanticAnalysisResult:
 
 @dataclass(slots=True)
 class _AnalysisContext:
-    """Mutable accumulator threaded through one analysis pass."""
+    """Mutable accumulator threaded through one analysis pass.
+
+    :ivar diagnostics: Diagnostics raised so far during this pass.
+    :ivar data_references: Data name references resolved so far
+        during this pass.
+    :ivar procedure_references: Paragraph and section name references
+        resolved so far during this pass.
+    """
 
     diagnostics: list[ParseDiagnostic]
     data_references: list[DataNameReference]
@@ -273,7 +372,13 @@ class _AnalysisContext:
 def analyze_compilation_unit(
     unit: CompilationUnitNode,
 ) -> SemanticAnalysisResult:
-    """Build a symbol table and resolve name references for one unit."""
+    """Build a symbol table and resolve name references for one unit.
+
+    :param unit: The parsed compilation unit to analyze.
+    :returns: The resulting symbol table together with every
+        diagnostic and resolved reference found while analyzing it.
+    :raises TypeError: If `unit` is not a :class:`CompilationUnitNode`.
+    """
 
     if not isinstance(
         unit,
@@ -342,20 +447,35 @@ def _build_data_symbols(
     unit: CompilationUnitNode,
     diagnostics: list[ParseDiagnostic],
 ) -> tuple[DataSymbol, ...]:
-    """Build the data item symbol table, respecting level-number nesting."""
+    """Build the data item symbol table, respecting level-number nesting.
+
+    Duplicate-sibling tracking (Semantic-3) is scoped to one data
+    division section at a time, not the whole data division:
+    WORKING-STORAGE and LINKAGE (for example) are separate areas where
+    the same name legitimately recurs. Only ordinary (non-88, non-66)
+    sibling items under the same immediate parent are tracked this
+    way; 88-level condition names and 66-level RENAMES entries have
+    their own separate naming conventions and are not covered by this
+    check.
+
+    A 66-level RENAMES entry's parent is resolved as the enclosing
+    01-level record -- the bottom of the ancestor stack, since a
+    RENAMES entry does not itself push onto the stack -- rather than
+    `stack[-1]`, which would merely be the most recently processed
+    *sibling* elementary item (Editor §Semantic-9).
+
+    :param unit: The parsed compilation unit whose data division
+        sections are walked to build the symbol table.
+    :param diagnostics: The accumulator that duplicate-name
+        diagnostics are appended to.
+    :returns: Every data symbol found, in declaration order.
+    """
 
     symbols: list[DataSymbol] = []
 
     for section in unit.data.sections:
         stack: list[tuple[int, str | None]] = []
         last_non_condition_name: str | None = None
-        # Scoped to this one section, not the whole data division --
-        # WORKING-STORAGE and LINKAGE (for example) are separate areas
-        # where the same name legitimately recurs. Only ordinary
-        # (non-88, non-66) sibling items under the same immediate
-        # parent are tracked here (Semantic-3); 88-level condition
-        # names and 66-level RENAMES entries have their own separate
-        # naming conventions and are not covered by this check.
         seen_siblings: set[tuple[str | None, str]] = set()
 
         for item in section.items:
@@ -377,11 +497,6 @@ def _build_data_symbols(
                 continue
 
             if level == 66:
-                # Editor §Semantic-9: the enclosing 01-level record --
-                # the bottom of the ancestor stack, since a 66-level
-                # RENAMES entry does not itself push onto the stack --
-                # not `stack[-1]`, which is merely the most recently
-                # processed *sibling* elementary item.
                 parent_name = (
                     stack[0][1]
                     if stack
@@ -492,6 +607,15 @@ def _resolve_data_clause_references(
     qualifying clause's own token list is fed through the same
     best-effort `_resolve_identifier_tokens` scan already used for
     every other loosely-parsed token list in this module.
+
+    :param unit: The parsed compilation unit whose data division
+        clauses are scanned for references.
+    :param symbol_table: The symbol table to resolve identifier
+        tokens against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
     """
 
     for section in unit.data.sections:
@@ -521,6 +645,12 @@ def _build_procedure_symbols(
     therefore scoped per enclosing paragraph list: the top-level
     (unsectioned) paragraphs are one scope, and each section's own
     paragraphs are a separate scope from every other section's.
+
+    :param procedure: The parsed procedure division to walk.
+    :param diagnostics: The accumulator that duplicate-name
+        diagnostics are appended to.
+    :returns: Every paragraph and section symbol found, in
+        declaration order.
     """
 
     symbols: list[ProcedureSymbol] = []
@@ -532,6 +662,23 @@ def _build_procedure_symbols(
         span: object,
         seen_names: set[str],
     ) -> None:
+        """Record one paragraph or section symbol, flagging duplicates.
+
+        :param name: The paragraph or section name, or None if the
+            node was unnamed, in which case nothing is recorded.
+        :param kind: Whether the symbol being recorded is a section
+            or a paragraph.
+        :param span: The source span of the paragraph or section.
+        :param seen_names: The set of upper-cased names already seen
+            in this symbol's scope (either the top-level paragraphs,
+            or one section's own paragraphs); a name already present
+            triggers a duplicate-name diagnostic instead of being
+            silently re-added.
+        :returns: None. Appends a new :class:`ProcedureSymbol` to the
+            enclosing `symbols` list and records the upper-cased
+            `name` into `seen_names`, unless `name` is None.
+        """
+
         if name is None:
             return
 
@@ -598,7 +745,16 @@ def _resolve_references(
     symbol_table: SymbolTable,
     context: _AnalysisContext,
 ) -> None:
-    """Resolve MOVE targets and PERFORM targets against the symbol table."""
+    """Resolve MOVE targets and PERFORM targets against the symbol table.
+
+    :param procedure: The parsed procedure division to walk.
+    :param symbol_table: The symbol table to resolve references
+        against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
+    """
 
     for paragraph in procedure.paragraphs:
         _resolve_statements(
@@ -621,7 +777,26 @@ def _resolve_statements(
     symbol_table: SymbolTable,
     context: _AnalysisContext,
 ) -> None:
-    """Recursively resolve references within a statement list."""
+    """Recursively resolve references within a statement list.
+
+    A `GenericStatement` (the catch-all for verbs this parser does not
+    deeply model, like ADD or CALL) not routed to `GO TO`/`ALTER`'s own
+    dedicated resolvers below has its whole token list scanned by the
+    best-effort identifier scan; this is safe because `tokens[0]` is
+    always the verb itself, a reserved word, which the identifier-kind
+    filter inside that scan already skips on its own. `GO TO` and
+    `ALTER` are routed to their own dedicated resolvers instead, since
+    their operands are paragraph names rather than data names.
+
+    :param statements: The statement list to resolve, typically a
+        paragraph's or branch's body.
+    :param symbol_table: The symbol table to resolve references
+        against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
+    """
 
     for statement in statements:
         if isinstance(
@@ -718,8 +893,6 @@ def _resolve_statements(
             statement,
             GenericStatement,
         ):
-            # tokens[0] is always the verb itself (a reserved word, so
-            # the identifier filter below already skips it).
             if statement.verb == "GO":
                 _resolve_go_to_targets(
                     statement.tokens,
@@ -753,6 +926,16 @@ def _resolve_data_names(
     condition-names -- `MOVE value TO condition-name` is illegal COBOL
     (Editor §Semantic-10), so a match that's exclusively a condition
     name is flagged even though the name itself did resolve.
+
+    :param names: The data names to resolve, in the order they
+        appear.
+    :param position: The source position to attach to any diagnostic
+        or reference produced for these names.
+    :param symbol_table: The symbol table to resolve names against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
     """
 
     for name in names:
@@ -814,6 +997,14 @@ def _resolve_identifier_tokens(
     ERROR) since these token lists are not deeply parsed and may
     legitimately contain names this analysis cannot classify yet
     (intrinsic FUNCTION names, index-names, special registers).
+
+    :param tokens: The raw token list to scan.
+    :param symbol_table: The symbol table to resolve identifier
+        tokens against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
     """
 
     for token in tokens:
@@ -871,6 +1062,16 @@ def _resolve_procedure_name(
     unqualified reference matching more than one is now a real,
     reachable case, not the merely-hypothetical one it used to be
     while every such duplicate was rejected outright at declaration.
+
+    :param name: The paragraph or section name to resolve, or None if
+        there is no name to resolve, in which case this is a no-op.
+    :param position: The source position to attach to any diagnostic
+        or reference produced for this name.
+    :param symbol_table: The symbol table to resolve the name against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
     """
 
     if name is None:
@@ -936,6 +1137,14 @@ def _resolve_perform_modifier_tokens(
     data-name-bearing modifiers (`VARYING`, `WITH TEST`), and without
     this split a section name would be checked as if it might be a
     data item (Editor §Semantic-6).
+
+    :param modifier_tokens: The PERFORM statement's modifier tokens.
+    :param symbol_table: The symbol table to resolve references
+        against.
+    :param context: The mutable analysis accumulator that diagnostics
+        and resolved references are appended to.
+    :returns: None. Diagnostics and resolved references are appended
+        to `context` in place.
     """
 
     length = len(

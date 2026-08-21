@@ -1,4 +1,18 @@
-"""Domain models for local Git repository state."""
+"""Domain models for local Git repository state.
+
+Every model here is a frozen, slotted, keyword-only dataclass that
+represents either a piece of observed repository state (a change, a
+branch, a tag, a commit log entry, ...) or the outcome of running one
+Git operation (a commit, a fetch, a branch switch, ...). Each
+dataclass validates and normalizes its own fields in `__post_init__`,
+raising `TypeError`/`ValueError` for malformed input so that
+downstream code can trust the shape of any instance it receives
+without re-checking it. Several "operation result" dataclasses go
+further and cross-check their fields against an embedded, freshly
+refreshed :class:`GitRepositoryStatus` (or list of branches/remotes/
+tags), so a result object can never claim an outcome that the
+refreshed state contradicts.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +22,16 @@ from pathlib import Path
 
 
 class GitCommandExecutionStatus(StrEnum):
-    """Outcome of invoking one local Git process."""
+    """Outcome of invoking one local Git process.
+
+    :cvar COMPLETED: The process ran to completion and produced a
+        return code, whether or not that return code indicates
+        success.
+    :cvar TIMED_OUT: The process was still running when its allotted
+        run time elapsed and was killed.
+    :cvar FAILED_TO_START: The process could not be started at all,
+        for example because the Git executable was not found.
+    """
 
     COMPLETED = "completed"
     TIMED_OUT = "timed-out"
@@ -21,7 +44,21 @@ class GitCommandExecutionStatus(StrEnum):
     kw_only=True,
 )
 class GitCommandResult:
-    """Captured result from one local Git process invocation."""
+    """Captured result from one local Git process invocation.
+
+    :ivar command: The argument vector that was executed, normalized
+        to a tuple of strings.
+    :ivar status: The high-level outcome of the invocation.
+    :ivar return_code: The process's exit code, or None if it never
+        produced one because it timed out or failed to start.
+    :ivar stdout: The captured standard output.
+    :ivar stderr: The captured standard error.
+    :ivar elapsed_seconds: How long the invocation took, normalized
+        to a non-negative float.
+    :ivar error_message: A human-readable description of why the
+        process failed to start or timed out, normalized to None if
+        blank or not applicable.
+    """
 
     command: tuple[str, ...]
     status: GitCommandExecutionStatus
@@ -32,7 +69,18 @@ class GitCommandResult:
     error_message: str | None = None
 
     def __post_init__(self) -> None:
-        """Validate captured Git process state."""
+        """Normalize and validate the captured Git process state.
+
+        :returns: None. `command` is normalized to a tuple of
+            strings, `elapsed_seconds` is coerced to a float, and
+            `error_message` is normalized to None if blank.
+        :raises ValueError: If `command` is empty, or
+            `elapsed_seconds` is negative.
+        :raises TypeError: If `status` is not a
+            :class:`GitCommandExecutionStatus`, `return_code` is
+            neither an int nor None, `stdout` or `stderr` is not a
+            string, or `elapsed_seconds` is not numeric.
+        """
 
         command = tuple(
             str(argument)
@@ -135,7 +183,12 @@ class GitCommandResult:
     def completed(
         self,
     ) -> bool:
-        """Return whether the Git process completed."""
+        """Report whether the Git process completed.
+
+        :returns: True if `status` is
+            :attr:`GitCommandExecutionStatus.COMPLETED`, False if it
+            timed out or failed to start.
+        """
 
         return (
             self.status
@@ -146,7 +199,11 @@ class GitCommandResult:
     def succeeded(
         self,
     ) -> bool:
-        """Return whether Git completed with return code zero."""
+        """Report whether Git completed with return code zero.
+
+        :returns: True if the process completed and `return_code`
+            is 0, False otherwise.
+        """
 
         return (
             self.completed
@@ -155,7 +212,22 @@ class GitCommandResult:
 
 
 class GitChangeStatus(StrEnum):
-    """Normalized Git index or worktree change state."""
+    """Normalized Git index or worktree change state.
+
+    :cvar UNMODIFIED: No change relative to the compared state.
+    :cvar MODIFIED: The path's content was modified.
+    :cvar TYPE_CHANGED: The path's type changed, for example between
+        a regular file and a symlink.
+    :cvar ADDED: The path was added.
+    :cvar DELETED: The path was deleted.
+    :cvar RENAMED: The path was renamed from `original_path`.
+    :cvar COPIED: The path was copied from `original_path`.
+    :cvar UNMERGED: The path has an unresolved merge conflict.
+    :cvar UNTRACKED: The path is not tracked by Git.
+    :cvar IGNORED: The path is excluded by `.gitignore` or similar.
+    :cvar UNKNOWN: The path's status could not be classified into
+        any of the above.
+    """
 
     UNMODIFIED = "unmodified"
     MODIFIED = "modified"
@@ -176,7 +248,17 @@ class GitChangeStatus(StrEnum):
     kw_only=True,
 )
 class GitChange:
-    """One changed repository path."""
+    """One changed repository path.
+
+    :ivar path: The repository-relative path of the changed entry,
+        normalized to a :class:`Path`.
+    :ivar index_status: The path's staged (index) change state.
+    :ivar worktree_status: The path's unstaged (worktree) change
+        state.
+    :ivar original_path: The path's previous location if it was
+        renamed or copied, normalized to a :class:`Path`, or None
+        otherwise.
+    """
 
     path: Path
     index_status: GitChangeStatus
@@ -184,7 +266,14 @@ class GitChange:
     original_path: Path | None = None
 
     def __post_init__(self) -> None:
-        """Normalize and validate changed-path state."""
+        """Normalize and validate the changed-path state.
+
+        :returns: None. `path` and `original_path` are normalized
+            to :class:`Path` instances.
+        :raises ValueError: If `path` is empty.
+        :raises TypeError: If `index_status` or `worktree_status` is
+            not a :class:`GitChangeStatus`.
+        """
 
         path = Path(
             self.path,
@@ -236,7 +325,11 @@ class GitChange:
     def staged(
         self,
     ) -> bool:
-        """Return whether the path has staged index changes."""
+        """Report whether the path has staged index changes.
+
+        :returns: True if `index_status` is anything other than
+            unmodified, untracked, or ignored.
+        """
 
         return self.index_status not in {
             GitChangeStatus.UNMODIFIED,
@@ -248,7 +341,11 @@ class GitChange:
     def unstaged(
         self,
     ) -> bool:
-        """Return whether the path has worktree changes."""
+        """Report whether the path has worktree changes.
+
+        :returns: True if `worktree_status` is anything other than
+            unmodified or ignored.
+        """
 
         return self.worktree_status not in {
             GitChangeStatus.UNMODIFIED,
@@ -262,7 +359,24 @@ class GitChange:
     kw_only=True,
 )
 class GitRepositoryStatus:
-    """Current branch and changed-path state for one Git repository."""
+    """Current branch and changed-path state for one Git repository.
+
+    :ivar repository_root: The repository's working tree root,
+        normalized to a :class:`Path`.
+    :ivar head_oid: The object ID that HEAD points to, or None if
+        HEAD is unborn (no commits yet).
+    :ivar branch_name: The current branch's name, or None if HEAD is
+        detached or unborn.
+    :ivar detached: Whether HEAD points directly at a commit rather
+        than a branch.
+    :ivar upstream: The current branch's configured upstream
+        reference, or None if it has none.
+    :ivar ahead: How many commits the current branch is ahead of its
+        upstream.
+    :ivar behind: How many commits the current branch is behind its
+        upstream.
+    :ivar changes: Every changed path reported for the repository.
+    """
 
     repository_root: Path
     head_oid: str | None
@@ -274,7 +388,18 @@ class GitRepositoryStatus:
     changes: tuple[GitChange, ...]
 
     def __post_init__(self) -> None:
-        """Normalize and validate repository status."""
+        """Normalize and validate the repository status.
+
+        :returns: None. `repository_root` is normalized to a
+            :class:`Path`, `head_oid`/`branch_name`/`upstream` are
+            normalized to None if blank, and `changes` is normalized
+            to a tuple.
+        :raises ValueError: If `ahead` or `behind` is negative, or if
+            `detached` is True while `branch_name` is not None.
+        :raises TypeError: If `detached` is not a bool, `ahead` or
+            `behind` is not a non-boolean int, or `changes` contains
+            anything other than :class:`GitChange` instances.
+        """
 
         repository_root = Path(
             self.repository_root,
@@ -365,7 +490,10 @@ class GitRepositoryStatus:
     def clean(
         self,
     ) -> bool:
-        """Return whether the repository has no reported changes."""
+        """Report whether the repository has no reported changes.
+
+        :returns: True if `changes` is empty.
+        """
 
         return not self.changes
 
@@ -373,7 +501,11 @@ class GitRepositoryStatus:
     def has_staged_changes(
         self,
     ) -> bool:
-        """Return whether any changed path has staged changes."""
+        """Report whether any changed path has staged changes.
+
+        :returns: True if any entry in `changes` has
+            :attr:`GitChange.staged` set.
+        """
 
         return any(
             change.staged
@@ -384,7 +516,11 @@ class GitRepositoryStatus:
     def has_unstaged_changes(
         self,
     ) -> bool:
-        """Return whether any changed path has worktree changes."""
+        """Report whether any changed path has worktree changes.
+
+        :returns: True if any entry in `changes` has
+            :attr:`GitChange.unstaged` set.
+        """
 
         return any(
             change.unstaged
@@ -398,13 +534,26 @@ class GitRepositoryStatus:
     kw_only=True,
 )
 class GitCommitResult:
-    """Result of creating one commit from staged index content."""
+    """Result of creating one commit from staged index content.
+
+    :ivar commit_oid: The newly created commit's object ID.
+    :ivar repository_status: The repository status refreshed after
+        the commit was created.
+    """
 
     commit_oid: str
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate committed repository state."""
+        """Normalize and validate the committed repository state.
+
+        :returns: None. `commit_oid` is normalized by stripping
+            surrounding whitespace.
+        :raises ValueError: If `commit_oid` is empty, or does not
+            match `repository_status.head_oid`.
+        :raises TypeError: If `repository_status` is not a
+            :class:`GitRepositoryStatus`.
+        """
 
         commit_oid = _require_non_empty_string(
             self.commit_oid,
@@ -442,7 +591,16 @@ class GitCommitResult:
     kw_only=True,
 )
 class GitRepositoryCreateResult:
-    """Result of creating one new local Git repository."""
+    """Result of creating one new local Git repository.
+
+    :ivar repository_root: The new repository's working tree root.
+    :ivar branch_name: The new repository's initial branch name, or
+        None if it has none yet.
+    :ivar head_oid: The new repository's HEAD object ID, or None if
+        it is unborn (no commits yet).
+    :ivar repository_status: The repository status refreshed after
+        creation.
+    """
 
     repository_root: Path
     branch_name: str | None
@@ -450,7 +608,16 @@ class GitRepositoryCreateResult:
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate created repository state."""
+        """Normalize and validate the created repository state.
+
+        :returns: None. `repository_root` is normalized to a
+            :class:`Path`, and `branch_name`/`head_oid` are
+            normalized to None if blank.
+        :raises ValueError: If `repository_status` does not match
+            `repository_root`, `branch_name`, or `head_oid`.
+        :raises TypeError: If `repository_status` is not a
+            :class:`GitRepositoryStatus`.
+        """
 
         repository_root = Path(
             self.repository_root,
@@ -523,7 +690,17 @@ class GitRepositoryCreateResult:
     kw_only=True,
 )
 class GitRepositoryCloneResult:
-    """Result of cloning one local Git repository from a source."""
+    """Result of cloning one local Git repository from a source.
+
+    :ivar repository_root: The cloned repository's working tree
+        root.
+    :ivar default_branch: The cloned repository's checked-out
+        default branch name, or None if it has none.
+    :ivar head_oid: The cloned repository's HEAD object ID, or None
+        if it is unborn (no commits yet).
+    :ivar repository_status: The repository status refreshed after
+        cloning.
+    """
 
     repository_root: Path
     default_branch: str | None
@@ -531,7 +708,16 @@ class GitRepositoryCloneResult:
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate cloned repository state."""
+        """Normalize and validate the cloned repository state.
+
+        :returns: None. `repository_root` is normalized to a
+            :class:`Path`, and `default_branch`/`head_oid` are
+            normalized to None if blank.
+        :raises ValueError: If `repository_status` does not match
+            `repository_root`, `default_branch`, or `head_oid`.
+        :raises TypeError: If `repository_status` is not a
+            :class:`GitRepositoryStatus`.
+        """
 
         repository_root = Path(
             self.repository_root,
@@ -604,14 +790,27 @@ class GitRepositoryCloneResult:
     kw_only=True,
 )
 class GitRemote:
-    """One configured Git remote and its fetch/push URLs."""
+    """One configured Git remote and its fetch/push URLs.
+
+    :ivar name: The remote's configured name.
+    :ivar fetch_url: The URL Git fetches from for this remote.
+    :ivar push_url: The URL Git pushes to for this remote.
+    """
 
     name: str
     fetch_url: str
     push_url: str
 
     def __post_init__(self) -> None:
-        """Normalize and validate remote configuration."""
+        """Normalize and validate the remote configuration.
+
+        :returns: None. `name`, `fetch_url`, and `push_url` are
+            normalized by stripping surrounding whitespace.
+        :raises ValueError: If `name`, `fetch_url`, or `push_url` is
+            empty.
+        :raises TypeError: If `name`, `fetch_url`, or `push_url` is
+            not a string.
+        """
 
         name = _require_non_empty_string(
             self.name,
@@ -649,13 +848,26 @@ class GitRemote:
     kw_only=True,
 )
 class GitRemoteAddResult:
-    """Result of adding one new Git remote."""
+    """Result of adding one new Git remote.
+
+    :ivar remote: The newly added remote.
+    :ivar remotes: Every remote configured for the repository after
+        the addition.
+    """
 
     remote: GitRemote
     remotes: tuple[GitRemote, ...]
 
     def __post_init__(self) -> None:
-        """Normalize and validate added remote state."""
+        """Normalize and validate the added remote state.
+
+        :returns: None. `remotes` is normalized to a tuple.
+        :raises ValueError: If `remote` does not appear in
+            `remotes`.
+        :raises TypeError: If `remote` is not a :class:`GitRemote`,
+            or `remotes` contains anything other than
+            :class:`GitRemote` instances.
+        """
 
         if not isinstance(
             self.remote,
@@ -692,13 +904,28 @@ class GitRemoteAddResult:
     kw_only=True,
 )
 class GitRemoteRemoveResult:
-    """Result of removing one Git remote."""
+    """Result of removing one Git remote.
+
+    :ivar removed_name: The name of the remote that was removed.
+    :ivar remotes: Every remote configured for the repository after
+        the removal.
+    """
 
     removed_name: str
     remotes: tuple[GitRemote, ...]
 
     def __post_init__(self) -> None:
-        """Normalize and validate removed remote state."""
+        """Normalize and validate the removed remote state.
+
+        :returns: None. `removed_name` is normalized by stripping
+            surrounding whitespace, and `remotes` is normalized to a
+            tuple.
+        :raises ValueError: If `removed_name` is empty, or a remote
+            named `removed_name` still appears in `remotes`.
+        :raises TypeError: If `removed_name` is not a string, or
+            `remotes` contains anything other than
+            :class:`GitRemote` instances.
+        """
 
         removed_name = _require_non_empty_string(
             self.removed_name,
@@ -736,14 +963,32 @@ class GitRemoteRemoveResult:
     kw_only=True,
 )
 class GitRemoteRenameResult:
-    """Result of renaming one Git remote."""
+    """Result of renaming one Git remote.
+
+    :ivar remote: The remote under its new name.
+    :ivar previous_name: The remote's name before the rename.
+    :ivar remotes: Every remote configured for the repository after
+        the rename.
+    """
 
     remote: GitRemote
     previous_name: str
     remotes: tuple[GitRemote, ...]
 
     def __post_init__(self) -> None:
-        """Normalize and validate renamed remote state."""
+        """Normalize and validate the renamed remote state.
+
+        :returns: None. `previous_name` is normalized by stripping
+            surrounding whitespace, and `remotes` is normalized to a
+            tuple.
+        :raises ValueError: If `previous_name` is empty, `remote`
+            does not appear in `remotes`, or (when the name actually
+            changed) a remote named `previous_name` still appears in
+            `remotes`.
+        :raises TypeError: If `remote` is not a :class:`GitRemote`,
+            or `remotes` contains anything other than
+            :class:`GitRemote` instances.
+        """
 
         if not isinstance(
             self.remote,
@@ -801,13 +1046,24 @@ class GitRemoteRenameResult:
     kw_only=True,
 )
 class GitFetchResult:
-    """Result of fetching from one Git remote."""
+    """Result of fetching from one Git remote.
+
+    :ivar remote: The name of the remote that was fetched from, or
+        None if Git's configured default was used.
+    :ivar repository_status: The repository status refreshed after
+        the fetch.
+    """
 
     remote: str | None
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate fetched repository state."""
+        """Normalize and validate the fetched repository state.
+
+        :returns: None. `remote` is normalized to None if blank.
+        :raises TypeError: If `repository_status` is not a
+            :class:`GitRepositoryStatus`.
+        """
 
         remote = _normalize_optional_string(
             self.remote,
@@ -836,14 +1092,31 @@ class GitFetchResult:
     kw_only=True,
 )
 class GitPullResult:
-    """Result of pulling from one Git remote branch."""
+    """Result of pulling from one Git remote branch.
+
+    :ivar remote: The name of the remote that was pulled from, or
+        None if Git's configured default was used.
+    :ivar branch: The name of the remote branch that was pulled, or
+        None if Git's configured default was used. Only meaningful
+        together with `remote`.
+    :ivar repository_status: The repository status refreshed after
+        the pull.
+    """
 
     remote: str | None
     branch: str | None
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate pulled repository state."""
+        """Normalize and validate the pulled repository state.
+
+        :returns: None. `remote` and `branch` are normalized to
+            None if blank.
+        :raises ValueError: If `branch` is set while `remote` is
+            None.
+        :raises TypeError: If `repository_status` is not a
+            :class:`GitRepositoryStatus`.
+        """
 
         remote = _normalize_optional_string(
             self.remote,
@@ -889,14 +1162,31 @@ class GitPullResult:
     kw_only=True,
 )
 class GitPushResult:
-    """Result of pushing to one Git remote branch."""
+    """Result of pushing to one Git remote branch.
+
+    :ivar remote: The name of the remote that was pushed to, or None
+        if Git's configured default was used.
+    :ivar branch: The name of the remote branch that was pushed to,
+        or None if Git's configured default was used. Only
+        meaningful together with `remote`.
+    :ivar repository_status: The repository status refreshed after
+        the push.
+    """
 
     remote: str | None
     branch: str | None
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate pushed repository state."""
+        """Normalize and validate the pushed repository state.
+
+        :returns: None. `remote` and `branch` are normalized to
+            None if blank.
+        :raises ValueError: If `branch` is set while `remote` is
+            None.
+        :raises TypeError: If `repository_status` is not a
+            :class:`GitRepositoryStatus`.
+        """
 
         remote = _normalize_optional_string(
             self.remote,
@@ -940,7 +1230,15 @@ def _require_remote_tuple(
     remotes: tuple[GitRemote, ...],
     name: str,
 ) -> tuple[GitRemote, ...]:
-    """Require a tuple of GitRemote instances."""
+    """Normalize and validate a sequence of remotes.
+
+    :param remotes: The sequence of remotes to normalize.
+    :param name: A human-readable label for `remotes`, used in any
+        raised error message.
+    :returns: `remotes` normalized to a tuple.
+    :raises TypeError: If `remotes` contains anything other than
+        :class:`GitRemote` instances.
+    """
 
     normalized_remotes = tuple(
         remotes,
@@ -966,7 +1264,15 @@ def _require_remote_tuple(
     kw_only=True,
 )
 class GitBranch:
-    """One local Git branch reference."""
+    """One local Git branch reference.
+
+    :ivar name: The branch's name.
+    :ivar head_oid: The object ID the branch points to.
+    :ivar is_current: Whether this branch is the repository's
+        currently checked-out branch.
+    :ivar upstream: The branch's configured upstream reference, or
+        None if it has none.
+    """
 
     name: str
     head_oid: str
@@ -974,7 +1280,15 @@ class GitBranch:
     upstream: str | None
 
     def __post_init__(self) -> None:
-        """Normalize and validate branch reference state."""
+        """Normalize and validate the branch reference state.
+
+        :returns: None. `name` and `head_oid` are normalized by
+            stripping surrounding whitespace, and `upstream` is
+            normalized to None if blank.
+        :raises ValueError: If `name` or `head_oid` is empty.
+        :raises TypeError: If `name` or `head_oid` is not a string,
+            or `is_current` is not a bool.
+        """
 
         name = _require_non_empty_string(
             self.name,
@@ -1020,13 +1334,26 @@ class GitBranch:
     kw_only=True,
 )
 class GitBranchCreateResult:
-    """Result of creating one new local Git branch."""
+    """Result of creating one new local Git branch.
+
+    :ivar branch: The newly created branch.
+    :ivar branches: Every local branch in the repository after the
+        creation.
+    """
 
     branch: GitBranch
     branches: tuple[GitBranch, ...]
 
     def __post_init__(self) -> None:
-        """Normalize and validate created branch state."""
+        """Normalize and validate the created branch state.
+
+        :returns: None. `branches` is normalized to a tuple.
+        :raises ValueError: If `branch` does not appear in
+            `branches`.
+        :raises TypeError: If `branch` is not a :class:`GitBranch`,
+            or `branches` contains anything other than
+            :class:`GitBranch` instances.
+        """
 
         if not isinstance(
             self.branch,
@@ -1063,13 +1390,28 @@ class GitBranchCreateResult:
     kw_only=True,
 )
 class GitBranchDeleteResult:
-    """Result of deleting one local Git branch."""
+    """Result of deleting one local Git branch.
+
+    :ivar deleted_name: The name of the branch that was deleted.
+    :ivar branches: Every local branch in the repository after the
+        deletion.
+    """
 
     deleted_name: str
     branches: tuple[GitBranch, ...]
 
     def __post_init__(self) -> None:
-        """Normalize and validate deleted branch state."""
+        """Normalize and validate the deleted branch state.
+
+        :returns: None. `deleted_name` is normalized by stripping
+            surrounding whitespace, and `branches` is normalized to
+            a tuple.
+        :raises ValueError: If `deleted_name` is empty, or a branch
+            named `deleted_name` still appears in `branches`.
+        :raises TypeError: If `deleted_name` is not a string, or
+            `branches` contains anything other than
+            :class:`GitBranch` instances.
+        """
 
         deleted_name = _require_non_empty_string(
             self.deleted_name,
@@ -1107,14 +1449,32 @@ class GitBranchDeleteResult:
     kw_only=True,
 )
 class GitBranchSwitchResult:
-    """Result of switching the current local Git branch."""
+    """Result of switching the current local Git branch.
+
+    :ivar branch: The branch that is now checked out.
+    :ivar branches: Every local branch in the repository after the
+        switch.
+    :ivar repository_status: The repository status refreshed after
+        the switch.
+    """
 
     branch: GitBranch
     branches: tuple[GitBranch, ...]
     repository_status: GitRepositoryStatus
 
     def __post_init__(self) -> None:
-        """Normalize and validate switched branch state."""
+        """Validate the switched branch state.
+
+        :returns: None. Nothing is normalized; this only validates.
+        :raises ValueError: If `branch` does not appear in
+            `branches`, `branch.is_current` is False, or
+            `repository_status`'s branch name or HEAD OID does not
+            match `branch`.
+        :raises TypeError: If `branch` is not a :class:`GitBranch`,
+            `branches` contains anything other than
+            :class:`GitBranch` instances, or `repository_status` is
+            not a :class:`GitRepositoryStatus`.
+        """
 
         if not isinstance(
             self.branch,
@@ -1176,7 +1536,15 @@ def _require_branch_tuple(
     branches: tuple[GitBranch, ...],
     name: str,
 ) -> tuple[GitBranch, ...]:
-    """Require a tuple of GitBranch instances."""
+    """Normalize and validate a sequence of branches.
+
+    :param branches: The sequence of branches to normalize.
+    :param name: A human-readable label for `branches`, used in any
+        raised error message.
+    :returns: `branches` normalized to a tuple.
+    :raises TypeError: If `branches` contains anything other than
+        :class:`GitBranch` instances.
+    """
 
     normalized_branches = tuple(
         branches,
