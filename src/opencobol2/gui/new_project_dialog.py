@@ -29,6 +29,12 @@ from PySide6.QtWidgets import (
 
 _DEFAULT_PROJECTS_DIRECTORY_NAME = "OpenCobol2 Projects"
 
+_MINIMUM_DIALOG_WIDTH = 480
+"""Wide enough for a full `default_projects_root()` path in the root
+directory field without truncation -- Qt otherwise sizes this dialog to
+barely fit its two labels, reading as cramped at the font size Windows
+renders it at."""
+
 
 def default_projects_root() -> Path:
     """Return the default parent directory new projects are suggested under.
@@ -74,6 +80,9 @@ class NewProjectDialog(QDialog):
 
         self.setWindowTitle(
             "New Project",
+        )
+        self.setMinimumWidth(
+            _MINIMUM_DIALOG_WIDTH,
         )
 
         self._root_manually_set = False

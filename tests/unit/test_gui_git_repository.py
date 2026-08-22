@@ -358,8 +358,7 @@ def test_new_branch_creates_branch(
     )
 
     with patch(
-        "opencobol2.gui.git_repository."
-        "QInputDialog.getText",
+        "opencobol2.gui.git_repository.prompt_for_text",
         return_value=(
             "feature-y",
             True,
@@ -397,8 +396,7 @@ def test_new_branch_cancelled_does_nothing(
     )
 
     with patch(
-        "opencobol2.gui.git_repository."
-        "QInputDialog.getText",
+        "opencobol2.gui.git_repository.prompt_for_text",
         return_value=(
             "",
             False,
@@ -430,8 +428,7 @@ def test_new_branch_with_a_dash_prefixed_name_shows_an_error_instead_of_crashing
 
     with (
         patch(
-            "opencobol2.gui.git_repository."
-            "QInputDialog.getText",
+            "opencobol2.gui.git_repository.prompt_for_text",
             return_value=(
                 "-weird",
                 True,
@@ -461,8 +458,7 @@ def test_new_tag_with_a_dash_prefixed_name_shows_an_error_instead_of_crashing(
 
     with (
         patch(
-            "opencobol2.gui.git_repository."
-            "QInputDialog.getText",
+            "opencobol2.gui.git_repository.prompt_for_text",
             side_effect=[
                 (
                     "-weird-tag",
@@ -655,8 +651,7 @@ def test_new_tag_creates_lightweight_tag(
     )
 
     with patch(
-        "opencobol2.gui.git_repository."
-        "QInputDialog.getText",
+        "opencobol2.gui.git_repository.prompt_for_text",
         side_effect=[
             (
                 "v2.0",
@@ -723,8 +718,7 @@ def test_add_remote_creates_remote(
     )
     # The fixture already adds an "origin" remote; use a different name.
     with patch(
-        "opencobol2.gui.git_repository."
-        "QInputDialog.getText",
+        "opencobol2.gui.git_repository.prompt_for_text",
         side_effect=[
             (
                 "upstream",
@@ -791,8 +785,7 @@ def test_rename_remote_renames_it(
     )
 
     with patch(
-        "opencobol2.gui.git_repository."
-        "QInputDialog.getText",
+        "opencobol2.gui.git_repository.prompt_for_text",
         return_value=(
             "renamed",
             True,

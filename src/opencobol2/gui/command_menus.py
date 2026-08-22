@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
@@ -271,8 +271,9 @@ def _create_command_action(
     :param contribution_service: The service used to execute the
         contribution when the action is triggered.
     :returns: A :class:`QAction`, parented to `menu`, whose enabled and
-        checked state mirror `resolved.state`, and whose `triggered`
-        signal executes the contribution.
+        checked state mirror `resolved.state`, whose keyboard shortcut
+        (if any) mirrors `resolved.command.default_shortcuts`, and
+        whose `triggered` signal executes the contribution.
     """
 
     action = QAction(
@@ -281,6 +282,16 @@ def _create_command_action(
     )
     action.setEnabled(
         resolved.state.enabled,
+    )
+    action.setShortcuts(
+        [
+            QKeySequence(
+                shortcut_text,
+            )
+            for shortcut_text in (
+                resolved.command.default_shortcuts
+            )
+        ]
     )
 
     if resolved.state.checked:

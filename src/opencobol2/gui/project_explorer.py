@@ -30,6 +30,13 @@ from opencobol2.project import (
 )
 
 
+_DIRECTORY_PATH_ROLE = Qt.ItemDataRole.UserRole + 1
+"""A second data role, distinct from the ordinary file-path role a file
+item's data is stored under, so a directory item's own path can be
+recorded without being mistaken for an openable file by
+`_handle_item_double_clicked`'s `isinstance(path, Path)` check."""
+
+
 class ProjectExplorerWidget(QWidget):
     """Displays the currently open project's files and organization."""
 
@@ -47,6 +54,16 @@ class ProjectExplorerWidget(QWidget):
 
     new_folder_requested = Signal(Path)
     """Emitted with a target directory when New Folder... is chosen."""
+
+    rename_path_requested = Signal(Path)
+    """Emitted with a file or directory's path when Rename... is chosen for it."""
+
+    delete_path_requested = Signal(Path)
+    """Emitted with a file or directory's path when Delete is chosen for it."""
+
+    find_in_path_requested = Signal(Path)
+    """Emitted with a file or directory's path when Find in File.../Find in
+    Folder... is chosen for it."""
 
     def __init__(
         self,
@@ -266,31 +283,178 @@ class ProjectExplorerWidget(QWidget):
 
         return menu
 
-    def _show_context_menu(
+    def build_file_context_menu(
+        self,
+    ) -> QMenu:
+        """Build a physical file item's context menu, without showing it.
+
+        Kept separate from `_show_context_menu` for the same reason as
+        :meth:`build_root_context_menu` -- see that method's docstring.
+
+        :returns: A menu with Find in File..., a separator, Rename...,
+            and Delete, in that order.
+        """
+
+        menu = QMenu(
+            self,
+        )
+        menu.addAction(
+            "Find in File...",
+        )
+        menu.addSeparator()
+        menu.addAction(
+            "Rename...",
+        )
+        menu.addAction(
+            "Delete",
+        )
+
+        return menu
+
+    def build_directory_context_menu(
+        self,
+    ) -> QMenu:
+        """Build a physical directory item's context menu, without showing it.
+
+        Kept separate from `_show_context_menu` for the same reason as
+        :meth:`build_root_context_menu` -- see that method's docstring.
+
+        :returns: A menu with New File..., New Folder..., a separator,
+            Find in Folder..., a separator, Rename..., and Delete, in
+            that order.
+        """
+
+        menu = QMenu(
+            self,
+        )
+        menu.addAction(
+            "New File...",
+        )
+        menu.addAction(
+            "New Folder...",
+        )
+        menu.addSeparator()
+        menu.addAction(
+            "Find in Folder...",
+        )
+        menu.addSeparator()
+        menu.addAction(
+            "Rename...",
+        )
+        menu.addAction(
+            "Delete",
+        )
+
+        return menu
+
+    def _resolve_context_menu_target(
         self,
         position,
-    ) -> None:
-        """Show the project root's context menu when it's right-clicked.
+    ) -> tuple[str, Path | None] | None:
+        """Determine what kind of context menu a right-click should show.
+
+        Split out from `_show_context_menu` so the routing decision --
+        which the item actually right-clicked determines -- is directly
+        testable without ever touching `QMenu.exec()`, which opens a
+        real, blocking native popup loop that hangs under the offscreen
+        test platform rather than failing.
 
         :param position: The right-click position, in the tree
             widget's own coordinates.
-        :returns: None. A context menu is shown only when the
-            right-clicked item is the tree's top-level (project root)
-            item; any other item, or empty space, is ignored.
+        :returns: `("root", None)` for the project's root item;
+            `("file", path)` or `("directory", path)` for a physical
+            file or directory item (or a virtual-folder member/linked
+            file item, which carries the same file-path data as a
+            physical file); or `None` when there is no item at
+            `position`, no project is open, or the item carries
+            neither a file nor a directory path (e.g. the "Virtual
+            Folders" heading, or a virtual folder itself).
         """
 
         item = self._tree.itemAt(
             position,
         )
 
-        if (
-            item is None
-            or item is not self._tree.topLevelItem(
-                0,
-            )
-            or self._project is None
+        if item is None or self._project is None:
+            return None
+
+        if item is self._tree.topLevelItem(
+            0,
         ):
+            return "root", None
+
+        file_path = item.data(
+            0,
+            Qt.ItemDataRole.UserRole,
+        )
+
+        if isinstance(
+            file_path,
+            Path,
+        ):
+            return "file", file_path
+
+        directory_path = item.data(
+            0,
+            _DIRECTORY_PATH_ROLE,
+        )
+
+        if isinstance(
+            directory_path,
+            Path,
+        ):
+            return "directory", directory_path
+
+        return None
+
+    def _show_context_menu(
+        self,
+        position,
+    ) -> None:
+        """Show the right-clicked item's context menu, if it has one.
+
+        :param position: The right-click position, in the tree
+            widget's own coordinates.
+        :returns: None. Dispatches to the root, file, or directory
+            context menu depending on what was right-clicked; does
+            nothing for empty space or an item with no menu of its own
+            (see :meth:`_resolve_context_menu_target`).
+        """
+
+        target = self._resolve_context_menu_target(
+            position,
+        )
+
+        if target is None:
             return
+
+        kind, path = target
+
+        if kind == "root":
+            self._show_root_context_menu(
+                position,
+            )
+        elif kind == "file":
+            self._show_file_context_menu(
+                position,
+                path,
+            )
+        elif kind == "directory":
+            self._show_directory_context_menu(
+                position,
+                path,
+            )
+
+    def _show_root_context_menu(
+        self,
+        position,
+    ) -> None:
+        """Show the project root's context menu and act on the chosen entry.
+
+        :param position: The right-click position, in the tree
+            widget's own coordinates.
+        :returns: None.
+        """
 
         menu = self.build_root_context_menu()
         chosen_action = menu.exec(
@@ -312,6 +476,86 @@ class ProjectExplorerWidget(QWidget):
             )
         elif chosen_action.text() == "Properties...":
             self._show_project_properties()
+
+    def _show_file_context_menu(
+        self,
+        position,
+        file_path: Path,
+    ) -> None:
+        """Show a physical file item's context menu and act on the chosen entry.
+
+        :param position: The right-click position, in the tree
+            widget's own coordinates.
+        :param file_path: The right-clicked file's path.
+        :returns: None.
+        """
+
+        menu = self.build_file_context_menu()
+        chosen_action = menu.exec(
+            self._tree.mapToGlobal(
+                position,
+            )
+        )
+
+        if chosen_action is None:
+            return
+
+        if chosen_action.text() == "Find in File...":
+            self.find_in_path_requested.emit(
+                file_path,
+            )
+        elif chosen_action.text() == "Rename...":
+            self.rename_path_requested.emit(
+                file_path,
+            )
+        elif chosen_action.text() == "Delete":
+            self.delete_path_requested.emit(
+                file_path,
+            )
+
+    def _show_directory_context_menu(
+        self,
+        position,
+        directory_path: Path,
+    ) -> None:
+        """Show a physical directory item's context menu and act on the chosen entry.
+
+        :param position: The right-click position, in the tree
+            widget's own coordinates.
+        :param directory_path: The right-clicked directory's path.
+        :returns: None.
+        """
+
+        menu = self.build_directory_context_menu()
+        chosen_action = menu.exec(
+            self._tree.mapToGlobal(
+                position,
+            )
+        )
+
+        if chosen_action is None:
+            return
+
+        if chosen_action.text() == "New File...":
+            self.new_file_requested.emit(
+                directory_path,
+            )
+        elif chosen_action.text() == "New Folder...":
+            self.new_folder_requested.emit(
+                directory_path,
+            )
+        elif chosen_action.text() == "Find in Folder...":
+            self.find_in_path_requested.emit(
+                directory_path,
+            )
+        elif chosen_action.text() == "Rename...":
+            self.rename_path_requested.emit(
+                directory_path,
+            )
+        elif chosen_action.text() == "Delete":
+            self.delete_path_requested.emit(
+                directory_path,
+            )
 
     def _show_project_properties(
         self,
@@ -433,10 +677,12 @@ def _add_physical_entries(
         place. Entries are sorted directories-first, then
         case-insensitively by name. A file item carries its
         :class:`~pathlib.Path` in `Qt.ItemDataRole.UserRole`; a
-        directory item does not, since it is a container rather than
-        something that can be opened. If `directory` cannot be listed
-        (e.g. a permissions error) or is not actually a directory, no
-        entries are added.
+        directory item carries its own path in `_DIRECTORY_PATH_ROLE`
+        instead, since it is a container rather than something that
+        can be opened, but still needs its path recorded for its own
+        context menu (New File..., Rename..., Delete, ...). If
+        `directory` cannot be listed (e.g. a permissions error) or is
+        not actually a directory, no entries are added.
     """
 
     if not directory.is_dir():
@@ -470,6 +716,11 @@ def _add_physical_entries(
         )
 
         if entry.is_dir():
+            item.setData(
+                0,
+                _DIRECTORY_PATH_ROLE,
+                entry,
+            )
             _add_physical_entries(
                 item,
                 entry,

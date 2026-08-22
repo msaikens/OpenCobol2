@@ -5,10 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from PySide6.QtWidgets import QMessageBox
+
 from opencobol2.commands import CommandContext
 from opencobol2.commands.builtins import BuiltInCommandIds
 from opencobol2.gui.new_project_dialog import NewProjectDialog
 from opencobol2.gui.project_commands import (
+    create_delete_path_handler,
     create_new_file_handler,
     create_new_folder_handler,
     create_project_close_handler,
@@ -18,6 +21,7 @@ from opencobol2.gui.project_commands import (
     create_project_open_recent_handler,
     create_project_save_as_handler,
     create_recent_project_provider,
+    create_rename_path_handler,
     open_project_from_path,
     record_recent_project,
     save_project_as,
@@ -1095,7 +1099,7 @@ def test_new_file_handler_creates_and_opens_the_file(
     )
 
     with patch(
-        "opencobol2.gui.project_commands.QInputDialog.getText",
+        "opencobol2.gui.project_commands.prompt_for_text",
         return_value=(
             "hello.cbl",
             True,
@@ -1109,6 +1113,77 @@ def test_new_file_handler_creates_and_opens_the_file(
         tmp_path / "hello.cbl"
     ).is_file()
     assert editor_tabs.count() == 1
+
+
+def test_new_file_handler_defaults_to_cbl_extension_when_none_given(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    editor_tabs = _build_editor_tabs(
+        tmp_path,
+    )
+    handler = create_new_file_handler(
+        project_explorer=explorer,
+        editor_tabs_widget=editor_tabs,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.prompt_for_text",
+        return_value=(
+            "hello",
+            True,
+        ),
+    ):
+        handler(
+            tmp_path,
+        )
+
+    assert (
+        tmp_path / "hello.cbl"
+    ).is_file()
+
+
+def test_new_file_handler_respects_an_explicit_extension(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    editor_tabs = _build_editor_tabs(
+        tmp_path,
+    )
+    handler = create_new_file_handler(
+        project_explorer=explorer,
+        editor_tabs_widget=editor_tabs,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.prompt_for_text",
+        return_value=(
+            "notes.txt",
+            True,
+        ),
+    ):
+        handler(
+            tmp_path,
+        )
+
+    assert (
+        tmp_path / "notes.txt"
+    ).is_file()
+    assert not (
+        tmp_path / "notes.txt.cbl"
+    ).exists()
 
 
 def test_new_file_handler_cancelled_creates_nothing(
@@ -1130,7 +1205,7 @@ def test_new_file_handler_cancelled_creates_nothing(
     )
 
     with patch(
-        "opencobol2.gui.project_commands.QInputDialog.getText",
+        "opencobol2.gui.project_commands.prompt_for_text",
         return_value=(
             "",
             False,
@@ -1170,7 +1245,7 @@ def test_new_file_handler_refuses_to_overwrite_an_existing_file(
 
     with (
         patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
+            "opencobol2.gui.project_commands.prompt_for_text",
             return_value=(
                 "already-here.cbl",
                 True,
@@ -1203,7 +1278,7 @@ def test_new_folder_handler_creates_the_folder(
     )
 
     with patch(
-        "opencobol2.gui.project_commands.QInputDialog.getText",
+        "opencobol2.gui.project_commands.prompt_for_text",
         return_value=(
             "Subfolder",
             True,
@@ -1238,3 +1313,206 @@ def test_project_explorer_context_menu_offers_new_file_and_folder(
     assert "New File..." in action_texts
     assert "New Folder..." in action_texts
     assert "Properties..." in action_texts
+
+
+def test_rename_path_handler_renames_a_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original.cbl"
+    original.write_text(
+        "x",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_rename_path_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.prompt_for_text",
+        return_value=(
+            "renamed.cbl",
+            True,
+        ),
+    ):
+        handler(
+            original,
+        )
+
+    assert not original.exists()
+    assert (
+        tmp_path / "renamed.cbl"
+    ).is_file()
+
+
+def test_rename_path_handler_does_nothing_when_cancelled(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original.cbl"
+    original.write_text(
+        "x",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_rename_path_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.prompt_for_text",
+        return_value=(
+            "renamed.cbl",
+            False,
+        ),
+    ):
+        handler(
+            original,
+        )
+
+    assert original.is_file()
+    assert not (
+        tmp_path / "renamed.cbl"
+    ).exists()
+
+
+def test_rename_path_handler_reports_an_error_when_the_new_name_already_exists(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original.cbl"
+    original.write_text(
+        "x",
+    )
+    (
+        tmp_path / "taken.cbl"
+    ).write_text(
+        "y",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_rename_path_handler(
+        project_explorer=explorer,
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.project_commands.prompt_for_text",
+            return_value=(
+                "taken.cbl",
+                True,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands.QMessageBox.critical",
+        ) as mock_critical,
+    ):
+        handler(
+            original,
+        )
+
+    mock_critical.assert_called_once()
+    assert original.is_file()
+
+
+def test_delete_path_handler_deletes_a_file_when_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "doomed.cbl"
+    target.write_text(
+        "x",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_delete_path_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        handler(
+            target,
+        )
+
+    assert not target.exists()
+
+
+def test_delete_path_handler_deletes_a_folder_and_its_contents_when_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "doomed_folder"
+    target.mkdir()
+    (
+        target / "inner.cbl"
+    ).write_text(
+        "x",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_delete_path_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        handler(
+            target,
+        )
+
+    assert not target.exists()
+
+
+def test_delete_path_handler_does_nothing_when_not_confirmed(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "safe.cbl"
+    target.write_text(
+        "x",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_delete_path_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    ):
+        handler(
+            target,
+        )
+
+    assert target.is_file()

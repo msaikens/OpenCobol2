@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from opencobol2.accessibility import AccessibilityProfileRegistry
 from opencobol2.commands import CommandContext
@@ -81,6 +81,7 @@ from opencobol2.gui.help_commands import (
     create_show_about_handler,
     create_show_keyboard_shortcuts_handler,
 )
+from opencobol2.gui.input_prompts import prompt_for_int, prompt_for_text
 from opencobol2.gui.locals_panel import LocalsWidget
 from opencobol2.gui.main_window import MainWindow
 from opencobol2.gui.memory_panel import MemoryWidget
@@ -88,6 +89,7 @@ from opencobol2.gui.outline_panel import OutlineWidget
 from opencobol2.gui.output_panel import OutputWidget
 from opencobol2.gui.problems_panel import ProblemsWidget
 from opencobol2.gui.project_commands import (
+    create_delete_path_handler,
     create_new_file_handler,
     create_new_folder_handler,
     create_project_close_handler,
@@ -96,6 +98,7 @@ from opencobol2.gui.project_commands import (
     create_project_open_recent_handler,
     create_project_save_as_handler,
     create_recent_project_provider,
+    create_rename_path_handler,
 )
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.gui.project_properties_dialog import (
@@ -103,6 +106,7 @@ from opencobol2.gui.project_properties_dialog import (
 )
 from opencobol2.gui.search_commands import (
     create_find_in_files_handler,
+    create_find_in_path_handler,
 )
 from opencobol2.gui.settings_dialog import (
     create_show_settings_handler,
@@ -657,11 +661,11 @@ def create_main_window(
         if not locations:
             return
 
-        new_name, accepted = QInputDialog.getText(
+        new_name, accepted = prompt_for_text(
             main_window_holder[0],
             "Rename Symbol",
             "New name:",
-            text=locations[0].name,
+            default_text=locations[0].name,
         )
         stripped_new_name = new_name.strip()
 
@@ -689,7 +693,7 @@ def create_main_window(
             return
 
         line_count = editor.document().blockCount()
-        line_number, accepted = QInputDialog.getInt(
+        line_number, accepted = prompt_for_int(
             main_window_holder[0],
             "Go to Line",
             f"Line number (1-{line_count}):",
@@ -786,6 +790,32 @@ def create_main_window(
     project_explorer.new_folder_requested.connect(
         create_new_folder_handler(
             project_explorer=project_explorer,
+            parent_widget_provider=(
+                lambda: main_window_holder[0]
+            ),
+        )
+    )
+    project_explorer.rename_path_requested.connect(
+        create_rename_path_handler(
+            project_explorer=project_explorer,
+            parent_widget_provider=(
+                lambda: main_window_holder[0]
+            ),
+        )
+    )
+    project_explorer.delete_path_requested.connect(
+        create_delete_path_handler(
+            project_explorer=project_explorer,
+            parent_widget_provider=(
+                lambda: main_window_holder[0]
+            ),
+        )
+    )
+    project_explorer.find_in_path_requested.connect(
+        create_find_in_path_handler(
+            project_explorer=project_explorer,
+            find_results_widget=find_results_widget,
+            reveal_find_results=_reveal_find_results,
             parent_widget_provider=(
                 lambda: main_window_holder[0]
             ),

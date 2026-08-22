@@ -20,7 +20,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -39,6 +38,7 @@ from opencobol2.git import (
     GitRemote,
     GitTag,
 )
+from opencobol2.gui.input_prompts import prompt_for_text
 from opencobol2.services.git import (
     GitBranchAlreadyExistsError,
     GitBranchNotFoundError,
@@ -453,7 +453,7 @@ class GitRepositoryWidget(QWidget):
         if self._repository_path is None:
             return
 
-        name, ok = QInputDialog.getText(
+        name, ok = prompt_for_text(
             self,
             "New Branch",
             "Branch name:",
@@ -573,7 +573,7 @@ class GitRepositoryWidget(QWidget):
         if self._repository_path is None:
             return
 
-        name, ok = QInputDialog.getText(
+        name, ok = prompt_for_text(
             self,
             "New Tag",
             "Tag name:",
@@ -582,7 +582,7 @@ class GitRepositoryWidget(QWidget):
         if not ok or not name.strip():
             return
 
-        message, _ = QInputDialog.getText(
+        message, _ = prompt_for_text(
             self,
             "New Tag",
             "Annotation message (leave blank for a lightweight tag):",
@@ -704,7 +704,7 @@ class GitRepositoryWidget(QWidget):
         if self._repository_path is None:
             return
 
-        name, ok = QInputDialog.getText(
+        name, ok = prompt_for_text(
             self,
             "Add Remote",
             "Remote name:",
@@ -713,7 +713,7 @@ class GitRepositoryWidget(QWidget):
         if not ok or not name.strip():
             return
 
-        url, ok = QInputDialog.getText(
+        url, ok = prompt_for_text(
             self,
             "Add Remote",
             "Remote URL:",
@@ -842,11 +842,11 @@ class GitRepositoryWidget(QWidget):
             nothing if the user cancels or enters a blank name.
         """
 
-        new_name, ok = QInputDialog.getText(
+        new_name, ok = prompt_for_text(
             self,
             "Rename Remote",
             "New remote name:",
-            text=remote_name,
+            default_text=remote_name,
         )
 
         if not ok or not new_name.strip():

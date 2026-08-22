@@ -9,6 +9,7 @@ from opencobol2.gui.find_results_panel import FindResultsWidget
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.gui.search_commands import (
     create_find_in_files_handler,
+    create_find_in_path_handler,
     search_project_for_text,
 )
 from opencobol2.project import create_project
@@ -119,6 +120,156 @@ def test_search_skips_unreadable_files(
     assert results == ()
 
 
+def test_search_with_a_directory_scope_only_finds_matches_under_it(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       MOVE X TO Y.\n"
+    )
+    subfolder = tmp_path / "sub"
+    subfolder.mkdir()
+    (
+        subfolder / "inner.cbl"
+    ).write_text(
+        "       MOVE X TO Z.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    results = search_project_for_text(
+        project,
+        "X",
+        scope=subfolder,
+    )
+
+    assert len(results) == 1
+    assert results[0].path == (
+        subfolder / "inner.cbl"
+    )
+
+
+def test_search_with_a_file_scope_only_finds_matches_in_that_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "main.cbl"
+    first.write_text(
+        "       MOVE X TO Y.\n"
+    )
+    (
+        tmp_path / "other.cbl"
+    ).write_text(
+        "       MOVE X TO Z.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+
+    results = search_project_for_text(
+        project,
+        "X",
+        scope=first,
+    )
+
+    assert len(results) == 1
+    assert results[0].path == first
+
+
+def test_find_in_path_handler_scopes_the_search_to_the_given_path(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       MOVE X TO Y.\n"
+    )
+    subfolder = tmp_path / "sub"
+    subfolder.mkdir()
+    (
+        subfolder / "inner.cbl"
+    ).write_text(
+        "       MOVE X TO Z.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    explorer = ProjectExplorerWidget(
+        project,
+    )
+    find_results_widget = FindResultsWidget()
+    revealed = []
+    handler = create_find_in_path_handler(
+        project_explorer=explorer,
+        find_results_widget=find_results_widget,
+        reveal_find_results=lambda: revealed.append(
+            True,
+        ),
+    )
+
+    with patch(
+        "opencobol2.gui.search_commands.prompt_for_text",
+        return_value=(
+            "X",
+            True,
+        ),
+    ):
+        result = handler(
+            subfolder,
+        )
+
+    assert len(result) == 1
+    assert result[0].path == (
+        subfolder / "inner.cbl"
+    )
+    assert revealed == [True]
+    assert find_results_widget.rowCount() == 1
+
+
+def test_find_in_path_handler_does_nothing_when_cancelled(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    (
+        tmp_path / "main.cbl"
+    ).write_text(
+        "       MOVE X TO Y.\n"
+    )
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    explorer = ProjectExplorerWidget(
+        project,
+    )
+    find_results_widget = FindResultsWidget()
+    handler = create_find_in_path_handler(
+        project_explorer=explorer,
+        find_results_widget=find_results_widget,
+    )
+
+    with patch(
+        "opencobol2.gui.search_commands.prompt_for_text",
+        return_value=(
+            "",
+            False,
+        ),
+    ):
+        result = handler(
+            tmp_path,
+        )
+
+    assert result is None
+    assert find_results_widget.rowCount() == 0
+
+
 def test_handler_shows_message_when_no_project_is_open(
     qapp,
 ) -> None:
@@ -167,7 +318,7 @@ def test_handler_does_nothing_when_dialog_is_cancelled(
     )
 
     with patch(
-        "opencobol2.gui.search_commands.QInputDialog.getText",
+        "opencobol2.gui.search_commands.prompt_for_text",
         return_value=(
             "",
             False,
@@ -209,7 +360,7 @@ def test_handler_runs_search_and_reveals_results_end_to_end(
     )
 
     with patch(
-        "opencobol2.gui.search_commands.QInputDialog.getText",
+        "opencobol2.gui.search_commands.prompt_for_text",
         return_value=(
             "MOVE",
             True,

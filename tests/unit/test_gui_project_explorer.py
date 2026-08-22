@@ -687,13 +687,12 @@ def test_context_menu_ignores_empty_area(
     assert received == []
 
 
-def test_context_menu_ignores_non_root_items(
+def test_resolve_context_menu_target_identifies_a_file_item(
     qapp,
     tmp_path: Path,
 ) -> None:
-    (
-        tmp_path / "main.cbl"
-    ).write_text(
+    file_path = tmp_path / "main.cbl"
+    file_path.write_text(
         "x",
     )
     project = create_project(
@@ -702,12 +701,6 @@ def test_context_menu_ignores_non_root_items(
     )
     widget = ProjectExplorerWidget(
         project,
-    )
-    received = []
-    widget.project_properties_requested.connect(
-        lambda: received.append(
-            True,
-        )
     )
 
     root_item = widget._tree.topLevelItem(
@@ -723,8 +716,190 @@ def test_context_menu_ignores_non_root_items(
         file_item,
     )
 
-    widget._show_context_menu(
+    assert widget._resolve_context_menu_target(
         file_rect.center(),
+    ) == (
+        "file",
+        file_path,
     )
 
-    assert received == []
+
+def test_resolve_context_menu_target_identifies_a_directory_item(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    subfolder = tmp_path / "sub"
+    subfolder.mkdir()
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    directory_item = root_item.child(
+        0,
+    )
+    widget._tree.expandItem(
+        root_item,
+    )
+    directory_rect = widget._tree.visualItemRect(
+        directory_item,
+    )
+
+    assert widget._resolve_context_menu_target(
+        directory_rect.center(),
+    ) == (
+        "directory",
+        subfolder,
+    )
+
+
+def test_resolve_context_menu_target_identifies_the_root_item(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    root_rect = widget._tree.visualItemRect(
+        root_item,
+    )
+
+    assert widget._resolve_context_menu_target(
+        root_rect.center(),
+    ) == (
+        "root",
+        None,
+    )
+
+
+def test_resolve_context_menu_target_ignores_organizational_headers(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    project = replace(
+        project,
+        virtual_folders=(
+            VirtualFolder(
+                folder_id=uuid4(),
+                name="Group",
+            ),
+        ),
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+
+    root_item = widget._tree.topLevelItem(
+        0,
+    )
+    virtual_root = next(
+        root_item.child(
+            index,
+        )
+        for index in range(
+            root_item.childCount(),
+        )
+        if root_item.child(
+            index,
+        ).text(
+            0,
+        )
+        == "Virtual Folders"
+    )
+    widget._tree.expandItem(
+        root_item,
+    )
+    header_rect = widget._tree.visualItemRect(
+        virtual_root,
+    )
+
+    assert (
+        widget._resolve_context_menu_target(
+            header_rect.center(),
+        )
+        is None
+    )
+
+
+def test_context_menu_ignores_empty_area_via_resolver(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="Demo",
+        root_path=tmp_path,
+    )
+    widget = ProjectExplorerWidget(
+        project,
+    )
+
+    assert (
+        widget._resolve_context_menu_target(
+            widget._tree.rect().bottomRight(),
+        )
+        is None
+    )
+
+
+def test_build_file_context_menu_offers_find_rename_and_delete(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    widget = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+
+    menu = widget.build_file_context_menu()
+
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+    ]
+    assert "Find in File..." in action_texts
+    assert "Rename..." in action_texts
+    assert "Delete" in action_texts
+
+
+def test_build_directory_context_menu_offers_the_full_set_of_actions(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    widget = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+
+    menu = widget.build_directory_context_menu()
+
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+    ]
+    assert "New File..." in action_texts
+    assert "New Folder..." in action_texts
+    assert "Find in Folder..." in action_texts
+    assert "Rename..." in action_texts
+    assert "Delete" in action_texts

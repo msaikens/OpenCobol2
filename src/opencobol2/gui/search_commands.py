@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QInputDialog,
     QMessageBox,
     QWidget,
 )
@@ -16,6 +16,7 @@ from opencobol2.gui.find_results_panel import (
     FindResult,
     FindResultsWidget,
 )
+from opencobol2.gui.input_prompts import prompt_for_text
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import Project
 
@@ -23,6 +24,8 @@ from opencobol2.project import Project
 def search_project_for_text(
     project: Project,
     query: str,
+    *,
+    scope: Path | None = None,
 ) -> tuple[FindResult, ...]:
     """Case-insensitively find every source line containing `query`.
 
@@ -30,6 +33,11 @@ def search_project_for_text(
     discovery `discover_cobol_source_files` uses for Build Project),
     reading each file independently so one unreadable file doesn't abort
     the whole search.
+
+    :param scope: When given, restricts the search to `scope` itself
+        (a single file) or, for a directory, its subtree -- the rest
+        of the project's files are skipped entirely. `None` searches
+        the whole project, matching this function's previous behavior.
     """
 
     if not query:
@@ -41,6 +49,13 @@ def search_project_for_text(
     for path in discover_cobol_source_files(
         project,
     ):
+        if (
+            scope is not None
+            and path != scope
+            and scope not in path.parents
+        ):
+            continue
+
         try:
             text = path.read_text(
                 errors="replace",
@@ -112,7 +127,7 @@ def create_find_in_files_handler(
             )
             return None
 
-        query, ok = QInputDialog.getText(
+        query, ok = prompt_for_text(
             parent_widget,
             "Find in Files",
             "Search for:",
@@ -133,3 +148,59 @@ def create_find_in_files_handler(
         return results
 
     return handle_find_in_files
+
+
+def create_find_in_path_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    find_results_widget: FindResultsWidget,
+    reveal_find_results: Callable[
+        [],
+        None,
+    ] = lambda: None,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> Callable[[Path], tuple[FindResult, ...] | None]:
+    """Create a handler that prompts for a query and searches within one path.
+
+    Wired to :attr:`ProjectExplorerWidget.find_in_path_requested` --
+    unlike :func:`create_find_in_files_handler`'s project-wide search,
+    results are limited to `path` itself (a single file) or its
+    subtree (a directory).
+    """
+
+    def handle_find_in_path(
+        path: Path,
+    ) -> tuple[FindResult, ...] | None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+        project = project_explorer.project
+
+        if project is None:
+            return None
+
+        query, ok = prompt_for_text(
+            parent_widget,
+            "Find in Files",
+            f"Search {path.name!r} for:",
+        )
+
+        if not ok or not query.strip():
+            return None
+
+        results = search_project_for_text(
+            project,
+            query,
+            scope=path,
+        )
+        find_results_widget.set_results(
+            results,
+        )
+        reveal_find_results()
+
+        return results
+
+    return handle_find_in_path

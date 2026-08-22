@@ -16,11 +16,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from opencobol2.commands import CommandContext, CommandHandler
 from opencobol2.gui.git_changes import GitChangesWidget
 from opencobol2.gui.git_repository import GitRepositoryWidget
+from opencobol2.gui.input_prompts import prompt_for_text
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.services.git import (
     GitCloneDestinationNotEmptyError,
@@ -346,7 +347,7 @@ def create_clone_repository_handler(
     def handle_clone_repository(context: CommandContext) -> None:
         parent_widget = parent_widget_provider()
 
-        source, confirmed = QInputDialog.getText(
+        source, confirmed = prompt_for_text(
             parent_widget,
             "Clone Repository",
             "Repository URL or path:",

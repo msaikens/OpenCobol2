@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
@@ -47,6 +48,9 @@ def _build_service(
             command_id="test.save",
             title="Save",
             handler=lambda context: "save",
+            default_shortcuts=(
+                "Ctrl+S",
+            ),
             state_provider=(
                 lambda context: CommandState(
                     enabled=enabled,
@@ -194,6 +198,56 @@ def test_populate_menu_reflects_command_state(
     assert save_action.isEnabled() is False
     assert save_action.isCheckable() is True
     assert save_action.isChecked() is True
+
+
+def test_command_action_carries_its_default_shortcut(
+    qapp,
+) -> None:
+    """A command's `default_shortcuts` must reach the real `QAction`,
+    not just sit as inert metadata -- this is what makes the shortcut
+    text shown in the menu (and the shortcut itself) actually work."""
+
+    service = _build_service()
+    menu = QMenu()
+
+    populate_menu(
+        menu,
+        "file",
+        service,
+    )
+
+    save_action = next(
+        action
+        for action in menu.actions()
+        if action.text() == "Save"
+    )
+
+    assert save_action.shortcuts() == [
+        QKeySequence(
+            "Ctrl+S",
+        ),
+    ]
+
+
+def test_command_action_with_no_default_shortcut_has_none(
+    qapp,
+) -> None:
+    service = _build_service()
+    menu = QMenu()
+
+    populate_menu(
+        menu,
+        "file",
+        service,
+    )
+
+    new_action = next(
+        action
+        for action in menu.actions()
+        if action.text() == "New"
+    )
+
+    assert new_action.shortcuts() == []
 
 
 def test_populate_menu_disables_dynamic_item(

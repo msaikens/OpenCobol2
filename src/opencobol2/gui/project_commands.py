@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from pathlib import Path
+import shutil
 
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
-    QInputDialog,
     QMessageBox,
     QWidget,
 )
@@ -22,6 +22,7 @@ from opencobol2.commands.builtins import BuiltInCommandIds
 from opencobol2.gui.editor import EditorTabsWidget
 from opencobol2.gui.new_project_dialog import NewProjectDialog
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.gui.input_prompts import prompt_for_text
 from opencobol2.project import (
     create_project,
     describe_project_file,
@@ -41,6 +42,12 @@ use, so opening an existing project never depends on which one it
 happens to be."""
 
 _PROJECT_FILE_EXTENSION = "ocproj"
+
+_DEFAULT_NEW_FILE_EXTENSION = "cbl"
+"""Appended to a New File... name with no extension of its own, since
+this IDE has no other file type to create -- matches
+`opencobol2.gui.editor._COBOL_SOURCE_EXTENSIONS`'s own first-listed
+(and therefore primary) COBOL extension."""
 
 
 def record_recent_project(
@@ -483,7 +490,11 @@ def create_new_file_handler(
 
     Wired to :attr:`ProjectExplorerWidget.new_file_requested`, which
     carries the target directory to create the file in (the project's
-    root, for a right-click on the project's own root item).
+    root, for a right-click on the project's own root item). A typed
+    name with no extension of its own (`"hello"`, not `"hello.cbl"`)
+    gets `.cbl` appended automatically -- this IDE has no other file
+    type to create, so a bare name should not create an extensionless
+    file the editor can't recognize as COBOL.
 
     :param project_explorer: The panel to refresh once the new file
         exists on disk.
@@ -503,7 +514,7 @@ def create_new_file_handler(
             parent_widget_provider()
         )
 
-        name, ok = QInputDialog.getText(
+        name, ok = prompt_for_text(
             parent_widget,
             "New File",
             "File name:",
@@ -512,7 +523,14 @@ def create_new_file_handler(
         if not ok or not name.strip():
             return
 
-        file_path = target_directory / name.strip()
+        name = name.strip()
+
+        if not Path(
+            name,
+        ).suffix:
+            name = f"{name}.{_DEFAULT_NEW_FILE_EXTENSION}"
+
+        file_path = target_directory / name
 
         if file_path.exists():
             QMessageBox.critical(
@@ -568,7 +586,7 @@ def create_new_folder_handler(
             parent_widget_provider()
         )
 
-        name, ok = QInputDialog.getText(
+        name, ok = prompt_for_text(
             parent_widget,
             "New Folder",
             "Folder name:",
@@ -600,3 +618,140 @@ def create_new_folder_handler(
         project_explorer.refresh()
 
     return handle_new_folder
+
+
+def create_rename_path_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> Callable[[Path], None]:
+    """Create a handler that renames a file or directory on disk.
+
+    Wired to :attr:`ProjectExplorerWidget.rename_path_requested`.
+
+    :param project_explorer: The panel to refresh once the rename
+        succeeds.
+    :param parent_widget_provider: Returns the widget to parent
+        prompts/dialogs to.
+    :returns: A callable taking the path to rename.
+    """
+
+    def handle_rename_path(
+        path: Path,
+    ) -> None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+
+        new_name, ok = prompt_for_text(
+            parent_widget,
+            "Rename",
+            "New name:",
+            default_text=path.name,
+        )
+
+        if not ok or not new_name.strip():
+            return
+
+        new_path = path.parent / new_name.strip()
+
+        if new_path.exists():
+            QMessageBox.critical(
+                parent_widget,
+                "Rename",
+                f"{new_path.name!r} already exists.",
+            )
+            return
+
+        try:
+            path.rename(
+                new_path,
+            )
+        except OSError as error:
+            QMessageBox.critical(
+                parent_widget,
+                "Rename",
+                f"Unable to rename: {error}",
+            )
+            return
+
+        project_explorer.refresh()
+
+    return handle_rename_path
+
+
+def create_delete_path_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> Callable[[Path], None]:
+    """Create a handler that deletes a file or directory after confirming.
+
+    Wired to :attr:`ProjectExplorerWidget.delete_path_requested`. A
+    directory is removed along with its full contents, so this always
+    confirms first -- there is no undo for either case.
+
+    :param project_explorer: The panel to refresh once the delete
+        succeeds.
+    :param parent_widget_provider: Returns the widget to parent
+        prompts/dialogs to.
+    :returns: A callable taking the path to delete.
+    """
+
+    def handle_delete_path(
+        path: Path,
+    ) -> None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+        is_directory = path.is_dir()
+        kind = (
+            "folder"
+            if is_directory
+            else "file"
+        )
+
+        confirmed = QMessageBox.question(
+            parent_widget,
+            "Delete",
+            (
+                f"Permanently delete the {kind} "
+                f"{path.name!r}?"
+            ),
+            (
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+            ),
+            QMessageBox.StandardButton.No,
+        )
+
+        if (
+            confirmed
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+
+        try:
+            if is_directory:
+                shutil.rmtree(
+                    path,
+                )
+            else:
+                path.unlink()
+        except OSError as error:
+            QMessageBox.critical(
+                parent_widget,
+                "Delete",
+                f"Unable to delete: {error}",
+            )
+            return
+
+        project_explorer.refresh()
+
+    return handle_delete_path

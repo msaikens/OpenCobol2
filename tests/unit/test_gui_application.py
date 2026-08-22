@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from PySide6.QtGui import QPalette, QTextCursor
 from PySide6.QtPrintSupport import QPrintDialog
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from opencobol2.compiler import (
     CobolSourceFormat,
@@ -2715,7 +2715,7 @@ def test_find_in_files_menu_action_searches_and_reveals_results(
     edit_menu.aboutToShow.emit()
 
     with patch(
-        "opencobol2.gui.search_commands.QInputDialog.getText",
+        "opencobol2.gui.search_commands.prompt_for_text",
         return_value=(
             "MOVE",
             True,
@@ -2772,7 +2772,7 @@ def test_closing_a_project_clears_stale_find_results(
     edit_menu.aboutToShow.emit()
 
     with patch(
-        "opencobol2.gui.search_commands.QInputDialog.getText",
+        "opencobol2.gui.search_commands.prompt_for_text",
         return_value=(
             "MOVE",
             True,
@@ -2859,7 +2859,7 @@ def test_double_clicking_a_find_result_opens_it_at_the_matched_location(
     edit_menu.aboutToShow.emit()
 
     with patch(
-        "opencobol2.gui.search_commands.QInputDialog.getText",
+        "opencobol2.gui.search_commands.prompt_for_text",
         return_value=(
             "MOVE",
             True,
@@ -4093,7 +4093,7 @@ def test_rename_symbol_menu_action_renames_every_reference(
     edit_menu.aboutToShow.emit()
 
     with patch(
-        "opencobol2.gui.application.QInputDialog.getText",
+        "opencobol2.gui.application.prompt_for_text",
         return_value=(
             "WS-TOTAL",
             True,
@@ -4143,7 +4143,7 @@ def test_rename_symbol_menu_action_does_nothing_when_dialog_is_cancelled(
     edit_menu.aboutToShow.emit()
 
     with patch(
-        "opencobol2.gui.application.QInputDialog.getText",
+        "opencobol2.gui.application.prompt_for_text",
         return_value=(
             "WS-TOTAL",
             False,
@@ -4435,7 +4435,7 @@ def test_go_to_menu_action_moves_the_cursor_to_the_requested_line(
     edit_menu.aboutToShow.emit()
 
     with patch(
-        "opencobol2.gui.application.QInputDialog.getInt",
+        "opencobol2.gui.application.prompt_for_int",
         return_value=(
             5,
             True,

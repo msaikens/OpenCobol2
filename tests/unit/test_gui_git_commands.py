@@ -703,7 +703,7 @@ def test_clone_repository_handler_does_nothing_when_the_source_prompt_is_cancell
 
     with (
         patch(
-            "opencobol2.gui.git_commands.QInputDialog.getText",
+            "opencobol2.gui.git_commands.prompt_for_text",
             return_value=("", False),
         ),
         patch(
@@ -742,7 +742,7 @@ def test_clone_repository_handler_clones_a_real_local_repository(
 
     with (
         patch(
-            "opencobol2.gui.git_commands.QInputDialog.getText",
+            "opencobol2.gui.git_commands.prompt_for_text",
             return_value=(str(source), True),
         ),
         patch(
