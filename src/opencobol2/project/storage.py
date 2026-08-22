@@ -130,6 +130,35 @@ class ProjectStorage:
         return self._path
 
 
+def describe_project_file(
+    path: Path,
+) -> str:
+    """Return a project file's display name for a recent-projects list.
+
+    Reads just enough of the file to recover its stored project name.
+    Falls back to the file's own stem (its filename without extension)
+    if the file can't be read or parsed, since a recent-projects entry
+    should still show something reasonable rather than disappearing or
+    raising just because its target became briefly unreadable (a
+    network drive blip, a file mid-write) at exactly the moment the
+    list is rendered.
+
+    :param path: The project file to describe.
+    :returns: The project's stored name, or `path.stem` if it can't be
+        loaded.
+    """
+
+    try:
+        return ProjectStorage(
+            path,
+        ).load().name
+    except (
+        OSError,
+        ValueError,
+    ):
+        return path.stem
+
+
 def _encode_project(
     project: Project,
 ) -> dict[str, Any]:

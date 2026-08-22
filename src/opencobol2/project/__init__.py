@@ -23,6 +23,7 @@ from opencobol2.project.service import (
     VirtualFolderNotFoundError,
 )
 from opencobol2.project.storage import (
+    describe_project_file,
     ProjectFormatError,
     ProjectNotFoundError,
     ProjectStorage,
@@ -50,5 +51,6 @@ __all__ = [
     "VirtualFolder",
     "VirtualFolderNotFoundError",
     "create_project",
+    "describe_project_file",
     "invoke_task_process",
 ]

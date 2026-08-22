@@ -25,6 +25,7 @@ from opencobol2.gui.application import (
     create_main_window,
     TOP_LEVEL_MENUS,
 )
+from opencobol2.gui.new_project_dialog import NewProjectDialog
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.gui.project_properties_dialog import (
     ProjectPropertiesDialog,
@@ -480,35 +481,31 @@ def test_new_and_save_project_as_menu_actions_work_end_to_end(
     new_submenu = new_action.menu()
     new_submenu.aboutToShow.emit()
 
-    project_file = (
-        tmp_path / "project.json"
+    root_path = (
+        tmp_path / "Demo"
     )
 
-    with (
-        patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
-            return_value=(
-                "Demo",
-                True,
+    def fake_new_project_dialog_exec(
+        dialog_self,
+    ):
+        dialog_self._name_edit.setText(
+            "Demo",
+        )
+        dialog_self._root_edit.setText(
+            str(
+                root_path,
             ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getExistingDirectory",
-            return_value=str(
-                tmp_path,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getSaveFileName",
-            return_value=(
-                str(
-                    project_file,
-                ),
-                "",
-            ),
-        ),
+        )
+        dialog_self._validate_and_accept()
+
+        return int(
+            dialog_self.result(),
+        )
+
+    with patch.object(
+        NewProjectDialog,
+        "exec",
+        fake_new_project_dialog_exec,
     ):
         _find_action(
             new_submenu,
@@ -2300,9 +2297,7 @@ def test_recent_projects_menu_lists_and_reopens_projects(
     file_menu.aboutToShow.emit()
     recent_item = _find_action(
         file_menu,
-        str(
-            project_one_file,
-        ),
+        "ProjectOne",
     )
     recent_item.trigger()
 
@@ -2470,35 +2465,31 @@ def test_welcome_page_new_project_button_creates_project_end_to_end(
         window,
     )
     editor_tabs = window.centralWidget()
-    project_file = (
-        tmp_path / "project.json"
+    root_path = (
+        tmp_path / "Demo"
     )
 
-    with (
-        patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
-            return_value=(
-                "Demo",
-                True,
+    def fake_new_project_dialog_exec(
+        dialog_self,
+    ):
+        dialog_self._name_edit.setText(
+            "Demo",
+        )
+        dialog_self._root_edit.setText(
+            str(
+                root_path,
             ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getExistingDirectory",
-            return_value=str(
-                tmp_path,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getSaveFileName",
-            return_value=(
-                str(
-                    project_file,
-                ),
-                "",
-            ),
-        ),
+        )
+        dialog_self._validate_and_accept()
+
+        return int(
+            dialog_self.result(),
+        )
+
+    with patch.object(
+        NewProjectDialog,
+        "exec",
+        fake_new_project_dialog_exec,
     ):
         editor_tabs.welcome_page.new_project_requested.emit()
 
@@ -2594,7 +2585,7 @@ def test_welcome_page_lists_recent_projects_on_bootstrap(
         editor_tabs.welcome_page
         ._recent_list.item(0)
         .text()
-        == str(project_file)
+        == "Recent"
     )
 
 
@@ -2685,7 +2676,7 @@ def test_welcome_page_recent_projects_list_grows_after_opening_a_project(
         editor_tabs.welcome_page
         ._recent_list.item(0)
         .text()
-        == str(project_file)
+        == "Fresh"
     )
 
 

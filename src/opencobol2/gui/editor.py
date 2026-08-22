@@ -4091,6 +4091,7 @@ class EditorTabsWidget(QTabWidget):
         self._welcome_page = WelcomePageWidget(
             self,
         )
+        self._project_is_open = False
         self._update_welcome_page_visibility()
 
         self._autosave_timer = QTimer(
@@ -4131,17 +4132,43 @@ class EditorTabsWidget(QTabWidget):
             self.rect(),
         )
 
+    def set_project_open(
+        self,
+        is_open: bool,
+    ) -> None:
+        """Tell the welcome page whether a project is currently open.
+
+        A project can be loaded (and shown in Project Explorer) with
+        zero editor tabs open -- a brand-new project has no files in
+        it yet, for instance -- and in that case the welcome page's
+        own "no open tabs" visibility rule would otherwise keep
+        showing the New/Open Project splash over an already-open
+        project, which reads as if opening the project silently did
+        nothing. Wired to `ProjectExplorerWidget.project_changed` by
+        the application shell.
+
+        :param is_open: Whether a project is currently open.
+        :returns: None. Re-evaluates welcome page visibility
+            immediately.
+        """
+
+        self._project_is_open = is_open
+        self._update_welcome_page_visibility()
+
     def _update_welcome_page_visibility(
         self,
     ) -> None:
-        """Show the welcome page only when there are no open tabs."""
+        """Show the welcome page only with no open tabs and no open project."""
 
-        has_open_documents = self.count() > 0
+        should_show_welcome_page = (
+            self.count() == 0
+            and not self._project_is_open
+        )
         self._welcome_page.setVisible(
-            not has_open_documents,
+            should_show_welcome_page,
         )
 
-        if not has_open_documents:
+        if should_show_welcome_page:
             self._welcome_page.raise_()
 
     def apply_theme(

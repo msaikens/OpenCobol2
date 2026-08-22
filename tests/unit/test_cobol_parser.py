@@ -932,6 +932,61 @@ def test_perform_thru_missing_target_does_not_crash() -> None:
     assert perform.through_name is None
 
 
+def test_program_id_at_end_of_file_does_not_crash() -> None:
+    # `PROGRAM-ID.` with nothing typed after it yet is the ordinary
+    # mid-edit state right after a user finishes typing the period --
+    # end-of-file was previously indistinguishable from a real name
+    # token, so its own empty text got consumed as the program name
+    # and failed IdentificationDivisionNode's non-empty-string
+    # validation with an uncaught ValueError.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID."
+    )
+    result = _parse(
+        source,
+    )
+
+    assert result.has_errors is True
+    assert any(
+        "Expected a program name after PROGRAM-ID." in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+    assert result.unit.identification.program_name == "UNKNOWN"
+
+
+def test_program_id_at_end_of_file_reports_only_one_diagnostic() -> None:
+    # PROGRAM-ID was genuinely found, just without a name -- reporting
+    # a second "Expected PROGRAM-ID in IDENTIFICATION DIVISION." on
+    # top of "Expected a program name after PROGRAM-ID." would be
+    # misleading, since PROGRAM-ID really was there.
+    source = (
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID."
+    )
+    result = _parse(
+        source,
+    )
+
+    assert len(result.diagnostics) == 1
+
+
+def test_missing_program_id_entirely_still_reports_its_own_diagnostic() -> (
+    None
+):
+    source = "       IDENTIFICATION DIVISION.\n"
+    result = _parse(
+        source,
+    )
+
+    assert any(
+        "Expected PROGRAM-ID in IDENTIFICATION DIVISION."
+        in diagnostic.message
+        for diagnostic in result.diagnostics
+    )
+    assert result.unit.identification.program_name == "UNKNOWN"
+
+
 def test_perform_thru_period_does_not_swallow_the_terminator() -> None:
     # Editor §Parser-4: `PERFORM PARA-A THRU.` used to silently consume
     # the real statement-terminating period as bogus through-name text,

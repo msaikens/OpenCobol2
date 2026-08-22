@@ -88,6 +88,8 @@ from opencobol2.gui.outline_panel import OutlineWidget
 from opencobol2.gui.output_panel import OutputWidget
 from opencobol2.gui.problems_panel import ProblemsWidget
 from opencobol2.gui.project_commands import (
+    create_new_file_handler,
+    create_new_folder_handler,
     create_project_close_handler,
     create_project_new_handler,
     create_project_open_handler,
@@ -771,6 +773,23 @@ def create_main_window(
 
     project_explorer.project_properties_requested.connect(
         _handle_show_project_properties,
+    )
+    project_explorer.new_file_requested.connect(
+        create_new_file_handler(
+            project_explorer=project_explorer,
+            editor_tabs_widget=editor_tabs_widget,
+            parent_widget_provider=(
+                lambda: main_window_holder[0]
+            ),
+        )
+    )
+    project_explorer.new_folder_requested.connect(
+        create_new_folder_handler(
+            project_explorer=project_explorer,
+            parent_widget_provider=(
+                lambda: main_window_holder[0]
+            ),
+        )
     )
 
     def _apply_settings_to_running_window(
@@ -1497,7 +1516,10 @@ def create_main_window(
 
         :param changed_project: The newly-open project, or `None` if
             the project was closed.
-        :returns: None. Refreshes the status bar, clears the
+        :returns: None. Refreshes the status bar, hides the welcome
+            page if a project is now open (a brand-new project can
+            have zero editor tabs open and would otherwise still show
+            the New/Open Project splash over it), clears the
             Output/Problems/Find Results panels, re-points the Git
             Changes/Repository panels and terminal's working directory
             at the new project, rescans the Task List, and refreshes
@@ -1505,6 +1527,10 @@ def create_main_window(
         """
 
         window.refresh_status_bar()
+
+        editor_tabs_widget.set_project_open(
+            changed_project is not None,
+        )
 
         output_widget.clear()
         problems_widget.clear_diagnostics()
@@ -1933,7 +1959,7 @@ def main() -> int:
     )
 
     window = create_main_window()
-    window.show()
+    window.showMaximized()
 
     return application.exec()
 

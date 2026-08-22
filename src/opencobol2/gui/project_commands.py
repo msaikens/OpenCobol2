@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QInputDialog,
     QMessageBox,
@@ -19,9 +20,11 @@ from opencobol2.commands import (
 )
 from opencobol2.commands.builtins import BuiltInCommandIds
 from opencobol2.gui.editor import EditorTabsWidget
+from opencobol2.gui.new_project_dialog import NewProjectDialog
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
 from opencobol2.project import (
     create_project,
+    describe_project_file,
     Project,
     ProjectStorage,
 )
@@ -29,9 +32,15 @@ from opencobol2.settings import SettingsService
 
 
 _PROJECT_FILE_FILTER = (
-    "OpenCobol2 Project Files (*.json);;"
+    "OpenCobol2 Project Files (*.ocproj *.json);;"
     "All Files (*)"
 )
+"""Accepts both the current `.ocproj` extension new projects are saved
+with and the older `.json` extension pre-existing projects may already
+use, so opening an existing project never depends on which one it
+happens to be."""
+
+_PROJECT_FILE_EXTENSION = "ocproj"
 
 
 def record_recent_project(
@@ -224,7 +233,16 @@ def create_project_new_handler(
         QWidget | None,
     ] = lambda: None,
 ) -> CommandHandler:
-    """Create a handler that prompts for new-project details and creates it."""
+    """Create a handler that prompts for new-project details and creates it.
+
+    Asks only for a name and a root directory, via one
+    :class:`NewProjectDialog` form -- unlike the project *file* itself
+    (an internal artifact placed automatically as `<name>.ocproj`
+    inside the chosen root; see `create_project_from_details`), the
+    root directory genuinely is the user's decision to make, so it
+    keeps a real prompt (pre-filled with a sensible default, not
+    asked bluntly).
+    """
 
     def handle_new_project(
         context: CommandContext,
@@ -233,43 +251,23 @@ def create_project_new_handler(
             parent_widget_provider()
         )
 
-        name, ok = QInputDialog.getText(
+        dialog = NewProjectDialog(
             parent_widget,
-            "New Project",
-            "Project name:",
         )
 
-        if not ok or not name.strip():
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
 
-        root_path_str = QFileDialog.getExistingDirectory(
-            parent_widget,
-            "Select Project Root Directory",
-        )
-
-        if not root_path_str:
-            return None
-
-        project_file_str, _ = QFileDialog.getSaveFileName(
-            parent_widget,
-            "Save Project As",
-            "",
-            _PROJECT_FILE_FILTER,
-        )
-
-        if not project_file_str:
-            return None
-
-        project_file = Path(
-            project_file_str,
+        name = dialog.project_name
+        root_path = dialog.project_root
+        project_file = root_path / (
+            f"{name}.{_PROJECT_FILE_EXTENSION}"
         )
 
         try:
             project = create_project_from_details(
                 name,
-                Path(
-                    root_path_str,
-                ),
+                root_path,
                 project_file,
             )
         except (
@@ -382,14 +380,20 @@ def create_recent_project_provider(
     [CommandContext],
     Iterable[DynamicMenuItem],
 ]:
-    """Create a dynamic menu provider listing recent, still-existing project files."""
+    """Create a dynamic menu provider listing recent, still-existing project files.
+
+    Each item's title is the project's own stored name (via
+    `describe_project_file`), not its file path -- a project file is
+    an internal artifact, and its raw filesystem path is neither
+    meaningful nor attractive as a menu label.
+    """
 
     def provide_recent_projects(
         context: CommandContext,
     ) -> Iterable[DynamicMenuItem]:
         return tuple(
             DynamicMenuItem(
-                title=str(
+                title=describe_project_file(
                     path,
                 ),
                 command_id=(
@@ -464,3 +468,135 @@ def create_project_open_recent_handler(
         return project
 
     return handle_open_recent_project
+
+
+def create_new_file_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    editor_tabs_widget: EditorTabsWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> Callable[[Path], None]:
+    """Create a handler that creates a new file inside a target directory.
+
+    Wired to :attr:`ProjectExplorerWidget.new_file_requested`, which
+    carries the target directory to create the file in (the project's
+    root, for a right-click on the project's own root item).
+
+    :param project_explorer: The panel to refresh once the new file
+        exists on disk.
+    :param editor_tabs_widget: Opens the newly created file once it
+        exists, matching the common "create it, then start editing it"
+        expectation.
+    :param parent_widget_provider: Returns the widget to parent
+        prompts/dialogs to.
+    :returns: A callable taking the target directory and creating a
+        file inside it.
+    """
+
+    def handle_new_file(
+        target_directory: Path,
+    ) -> None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+
+        name, ok = QInputDialog.getText(
+            parent_widget,
+            "New File",
+            "File name:",
+        )
+
+        if not ok or not name.strip():
+            return
+
+        file_path = target_directory / name.strip()
+
+        if file_path.exists():
+            QMessageBox.critical(
+                parent_widget,
+                "New File",
+                f"{file_path.name!r} already exists.",
+            )
+            return
+
+        try:
+            file_path.touch()
+        except OSError as error:
+            QMessageBox.critical(
+                parent_widget,
+                "New File",
+                f"Unable to create file: {error}",
+            )
+            return
+
+        project_explorer.refresh()
+        editor_tabs_widget.open_path(
+            file_path,
+        )
+
+    return handle_new_file
+
+
+def create_new_folder_handler(
+    *,
+    project_explorer: ProjectExplorerWidget,
+    parent_widget_provider: Callable[
+        [],
+        QWidget | None,
+    ] = lambda: None,
+) -> Callable[[Path], None]:
+    """Create a handler that creates a new folder inside a target directory.
+
+    Wired to :attr:`ProjectExplorerWidget.new_folder_requested`, the
+    folder-creation counterpart to :func:`create_new_file_handler`.
+
+    :param project_explorer: The panel to refresh once the new folder
+        exists on disk.
+    :param parent_widget_provider: Returns the widget to parent
+        prompts/dialogs to.
+    :returns: A callable taking the target directory and creating a
+        folder inside it.
+    """
+
+    def handle_new_folder(
+        target_directory: Path,
+    ) -> None:
+        parent_widget = (
+            parent_widget_provider()
+        )
+
+        name, ok = QInputDialog.getText(
+            parent_widget,
+            "New Folder",
+            "Folder name:",
+        )
+
+        if not ok or not name.strip():
+            return
+
+        folder_path = target_directory / name.strip()
+
+        if folder_path.exists():
+            QMessageBox.critical(
+                parent_widget,
+                "New Folder",
+                f"{folder_path.name!r} already exists.",
+            )
+            return
+
+        try:
+            folder_path.mkdir()
+        except OSError as error:
+            QMessageBox.critical(
+                parent_widget,
+                "New Folder",
+                f"Unable to create folder: {error}",
+            )
+            return
+
+        project_explorer.refresh()
+
+    return handle_new_folder

@@ -828,10 +828,22 @@ class CobolParser:
     ) -> IdentificationDivisionNode:
         """Parse the identification division.
 
+        If `PROGRAM-ID` is present but reaches end-of-file before a
+        name token (the common mid-edit state right after typing
+        `PROGRAM-ID.` and nothing else yet), that must be treated the
+        same as a missing name -- otherwise the end-of-file token's
+        own empty text gets consumed as the program name, which then
+        fails :class:`IdentificationDivisionNode`'s non-empty-string
+        validation with an uncaught `ValueError` instead of a normal
+        parse diagnostic. If `PROGRAM-ID` was found but had no valid
+        name, only the "Expected a program name after PROGRAM-ID."
+        diagnostic is recorded, not also a separate "Expected
+        PROGRAM-ID" one -- it *was* found, just without a name.
+
         :returns: The parsed :class:`IdentificationDivisionNode`. If
-            no `PROGRAM-ID` paragraph is found, records an error
-            diagnostic and substitutes the placeholder program name
-            `"UNKNOWN"`.
+            no `PROGRAM-ID` paragraph is found (or one was found with
+            no valid name after it), records an error diagnostic and
+            substitutes the placeholder program name `"UNKNOWN"`.
         """
 
         start = self._cursor.current().span.start
@@ -840,6 +852,7 @@ class CobolParser:
         self._expect_period()
 
         program_name: str | None = None
+        program_id_seen = False
 
         while (
             not self._cursor.at_end()
@@ -850,6 +863,7 @@ class CobolParser:
             if _word(
                 token,
             ) == "PROGRAM-ID":
+                program_id_seen = True
                 self._cursor.advance()
 
                 if self._cursor.current().kind is TokenKind.PERIOD:
@@ -857,6 +871,7 @@ class CobolParser:
 
                 if (
                     self._cursor.current().kind is TokenKind.PERIOD
+                    or self._cursor.at_end()
                     or self._at_any_division_header()
                 ):
                     self._error(
@@ -871,10 +886,12 @@ class CobolParser:
                 self._skip_to_period_or_division()
 
         if program_name is None:
-            self._error(
-                "Expected PROGRAM-ID in IDENTIFICATION DIVISION.",
-                self._cursor.current(),
-            )
+            if not program_id_seen:
+                self._error(
+                    "Expected PROGRAM-ID in IDENTIFICATION DIVISION.",
+                    self._cursor.current(),
+                )
+
             program_name = "UNKNOWN"
 
         return IdentificationDivisionNode(

@@ -42,6 +42,12 @@ class ProjectExplorerWidget(QWidget):
     project_properties_requested = Signal()
     """Emitted when the user chooses Properties... on the project's root item."""
 
+    new_file_requested = Signal(Path)
+    """Emitted with a target directory when New File... is chosen."""
+
+    new_folder_requested = Signal(Path)
+    """Emitted with a target directory when New Folder... is chosen."""
+
     def __init__(
         self,
         project: Project | None = None,
@@ -145,26 +151,58 @@ class ProjectExplorerWidget(QWidget):
             )
 
         self._project = project
+        self._rebuild_tree()
+
+        self.project_changed.emit(
+            project,
+        )
+
+    def refresh(
+        self,
+    ) -> None:
+        """Re-scan the current project's files and rebuild the tree.
+
+        Unlike calling `set_project(self.project)`, this does not
+        re-emit `project_changed` -- callers use it after a purely
+        cosmetic change (a file or folder created on disk through this
+        widget's own New File.../New Folder... actions), where
+        re-running every `project_changed` listener (which clears the
+        Output/Problems/Find Results panels, among other things) would
+        be unwanted, visible churn for what is, from every other
+        panel's perspective, not actually a project change.
+
+        :returns: None. A no-op when no project is open.
+        """
+
+        if self._project is None:
+            return
+
+        self._rebuild_tree()
+
+    def _rebuild_tree(
+        self,
+    ) -> None:
+        """Rebuild the tree widget from `self._project`'s current state.
+
+        :returns: None. Clears back to the empty state if no project
+            is open; otherwise re-scans the project's files from disk
+            and repopulates the tree.
+        """
+
         self._tree.clear()
 
-        if project is None:
+        if self._project is None:
             self._stack.setCurrentWidget(
                 self._empty_label,
-            )
-            self.project_changed.emit(
-                None,
             )
             return
 
         populate_project_tree(
             self._tree,
-            project,
+            self._project,
         )
         self._stack.setCurrentWidget(
             self._tree,
-        )
-        self.project_changed.emit(
-            project,
         )
 
     def _handle_item_double_clicked(
@@ -195,11 +233,44 @@ class ProjectExplorerWidget(QWidget):
                 path,
             )
 
+    def build_root_context_menu(
+        self,
+    ) -> QMenu:
+        """Build the project root's context menu, without showing it.
+
+        Kept separate from `_show_context_menu` so the menu's actual
+        *contents* are directly testable: `QMenu.exec()` opens a real,
+        blocking native popup loop that doesn't return until dismissed,
+        and can't be intercepted by monkeypatching at the class level
+        the way overriding a Qt virtual method can -- a test that
+        patched it and called `_show_context_menu` directly would hang
+        forever waiting on a popup nothing will ever dismiss.
+
+        :returns: A menu with New File..., New Folder..., a separator,
+            and Properties..., in that order.
+        """
+
+        menu = QMenu(
+            self,
+        )
+        menu.addAction(
+            "New File...",
+        )
+        menu.addAction(
+            "New Folder...",
+        )
+        menu.addSeparator()
+        menu.addAction(
+            "Properties...",
+        )
+
+        return menu
+
     def _show_context_menu(
         self,
         position,
     ) -> None:
-        """Show Properties... when the project's own root item is right-clicked.
+        """Show the project root's context menu when it's right-clicked.
 
         :param position: The right-click position, in the tree
             widget's own coordinates.
@@ -217,22 +288,29 @@ class ProjectExplorerWidget(QWidget):
             or item is not self._tree.topLevelItem(
                 0,
             )
+            or self._project is None
         ):
             return
 
-        menu = QMenu(
-            self,
-        )
-        properties_action = menu.addAction(
-            "Properties...",
-        )
+        menu = self.build_root_context_menu()
         chosen_action = menu.exec(
             self._tree.mapToGlobal(
                 position,
             )
         )
 
-        if chosen_action is properties_action:
+        if chosen_action is None:
+            return
+
+        if chosen_action.text() == "New File...":
+            self.new_file_requested.emit(
+                self._project.root_path,
+            )
+        elif chosen_action.text() == "New Folder...":
+            self.new_folder_requested.emit(
+                self._project.root_path,
+            )
+        elif chosen_action.text() == "Properties...":
             self._show_project_properties()
 
     def _show_project_properties(

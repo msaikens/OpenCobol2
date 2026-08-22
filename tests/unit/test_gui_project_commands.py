@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 from opencobol2.commands import CommandContext
 from opencobol2.commands.builtins import BuiltInCommandIds
+from opencobol2.gui.new_project_dialog import NewProjectDialog
 from opencobol2.gui.project_commands import (
+    create_new_file_handler,
+    create_new_folder_handler,
     create_project_close_handler,
     create_project_from_details,
     create_project_new_handler,
@@ -19,7 +22,9 @@ from opencobol2.gui.project_commands import (
     record_recent_project,
     save_project_as,
 )
+from opencobol2.gui.editor import EditorTabsWidget
 from opencobol2.gui.project_explorer import ProjectExplorerWidget
+from opencobol2.documents import DocumentService
 from opencobol2.project import (
     create_project,
     ProjectStorage,
@@ -364,30 +369,52 @@ def test_save_project_as_persists_to_new_location(
     )
 
 
-def test_new_project_handler_cancelled_at_name_prompt(
-    qapp,
-) -> None:
-    explorer = ProjectExplorerWidget()
-    handler = create_project_new_handler(
-        project_explorer=explorer,
-    )
+def _fake_new_project_dialog_exec(
+    name: str,
+    root_path: Path,
+):
+    """Build a fake `NewProjectDialog.exec` that fills in and accepts the form.
 
-    with patch(
-        "opencobol2.gui.project_commands.QInputDialog.getText",
-        return_value=(
-            "",
-            False,
-        ),
+    Mirrors the established pattern for testing a real `QDialog.exec()`
+    flow without opening an actual blocking modal (see
+    `SettingsDialog`/`CompilerProfilesDialog`'s own tests): patched in
+    as a replacement for the bound method, so it receives the dialog
+    instance as its first argument.
+    """
+
+    def fake_exec(
+        dialog_self,
     ):
-        result = handler(
-            None,
+        dialog_self._name_edit.setText(
+            name,
+        )
+        dialog_self._root_edit.setText(
+            str(
+                root_path,
+            ),
+        )
+        dialog_self._validate_and_accept()
+
+        return int(
+            dialog_self.result(),
         )
 
-    assert result is None
-    assert explorer.project is None
+    return fake_exec
 
 
-def test_new_project_handler_cancelled_at_directory_prompt(
+def _fake_cancelled_new_project_dialog_exec(
+    dialog_self,
+) -> int:
+    """A fake `NewProjectDialog.exec` that immediately cancels the form."""
+
+    dialog_self.reject()
+
+    return int(
+        dialog_self.result(),
+    )
+
+
+def test_new_project_handler_cancelled_returns_none(
     qapp,
 ) -> None:
     explorer = ProjectExplorerWidget()
@@ -395,60 +422,10 @@ def test_new_project_handler_cancelled_at_directory_prompt(
         project_explorer=explorer,
     )
 
-    with (
-        patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
-            return_value=(
-                "Demo",
-                True,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getExistingDirectory",
-            return_value="",
-        ),
-    ):
-        result = handler(
-            None,
-        )
-
-    assert result is None
-    assert explorer.project is None
-
-
-def test_new_project_handler_cancelled_at_save_prompt(
-    qapp,
-    tmp_path: Path,
-) -> None:
-    explorer = ProjectExplorerWidget()
-    handler = create_project_new_handler(
-        project_explorer=explorer,
-    )
-
-    with (
-        patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
-            return_value=(
-                "Demo",
-                True,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getExistingDirectory",
-            return_value=str(
-                tmp_path,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getSaveFileName",
-            return_value=(
-                "",
-                "",
-            ),
-        ),
+    with patch.object(
+        NewProjectDialog,
+        "exec",
+        _fake_cancelled_new_project_dialog_exec,
     ):
         result = handler(
             None,
@@ -466,34 +443,16 @@ def test_new_project_handler_creates_project_end_to_end(
     handler = create_project_new_handler(
         project_explorer=explorer,
     )
-    project_file = (
-        tmp_path / "project.json"
+    root_path = (
+        tmp_path / "Demo"
     )
 
-    with (
-        patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
-            return_value=(
-                "Demo",
-                True,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getExistingDirectory",
-            return_value=str(
-                tmp_path,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getSaveFileName",
-            return_value=(
-                str(
-                    project_file,
-                ),
-                "",
-            ),
+    with patch.object(
+        NewProjectDialog,
+        "exec",
+        _fake_new_project_dialog_exec(
+            "Demo",
+            root_path,
         ),
     ):
         result = handler(
@@ -503,7 +462,42 @@ def test_new_project_handler_creates_project_end_to_end(
     assert result is not None
     assert result.name == "Demo"
     assert explorer.project == result
-    assert project_file.is_file()
+    assert (
+        root_path / "Demo.ocproj"
+    ).is_file()
+
+
+def test_new_project_handler_creates_the_root_directory_if_missing(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    """The root directory field can point at a location that doesn't
+    exist yet (its default suggestion always does, on a fresh
+    install) -- the handler must create it rather than fail."""
+
+    explorer = ProjectExplorerWidget()
+    handler = create_project_new_handler(
+        project_explorer=explorer,
+    )
+    root_path = (
+        tmp_path / "does-not-exist-yet" / "Demo"
+    )
+    assert not root_path.exists()
+
+    with patch.object(
+        NewProjectDialog,
+        "exec",
+        _fake_new_project_dialog_exec(
+            "Demo",
+            root_path,
+        ),
+    ):
+        result = handler(
+            None,
+        )
+
+    assert result is not None
+    assert root_path.is_dir()
 
 
 def test_new_project_handler_records_the_created_path_in_the_holder(
@@ -518,41 +512,25 @@ def test_new_project_handler_records_the_created_path_in_the_holder(
         project_explorer=explorer,
         project_file_path_holder=project_file_path_holder,
     )
-    project_file = (
-        tmp_path / "project.json"
+    root_path = (
+        tmp_path / "Demo"
     )
 
-    with (
-        patch(
-            "opencobol2.gui.project_commands.QInputDialog.getText",
-            return_value=(
-                "Demo",
-                True,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getExistingDirectory",
-            return_value=str(
-                tmp_path,
-            ),
-        ),
-        patch(
-            "opencobol2.gui.project_commands."
-            "QFileDialog.getSaveFileName",
-            return_value=(
-                str(
-                    project_file,
-                ),
-                "",
-            ),
+    with patch.object(
+        NewProjectDialog,
+        "exec",
+        _fake_new_project_dialog_exec(
+            "Demo",
+            root_path,
         ),
     ):
         handler(
             None,
         )
 
-    assert project_file_path_holder[0] == project_file
+    assert project_file_path_holder[0] == (
+        root_path / "Demo.ocproj"
+    )
 
 
 def test_save_as_handler_shows_information_when_no_project_open(
@@ -811,10 +789,12 @@ def test_recent_project_provider_lists_only_existing_files(
         )
     )
 
+    # existing_path holds "{}" (not a real, loadable project), so its
+    # title falls back to the file's own stem -- the point of this
+    # test is the existence filter, not name resolution, which has
+    # its own dedicated test below.
     assert len(items) == 1
-    assert items[0].title == str(
-        existing_path,
-    )
+    assert items[0].title == "exists"
     assert (
         items[0].command_id
         == BuiltInCommandIds.PROJECT_OPEN_RECENT
@@ -824,6 +804,43 @@ def test_recent_project_provider_lists_only_existing_files(
     ) == str(
         existing_path,
     )
+
+
+def test_recent_project_provider_shows_the_projects_own_name(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings_service = _build_settings_service(
+        tmp_path,
+    )
+    project = create_project(
+        name="My Real Project",
+        root_path=tmp_path,
+    )
+    project_file = (
+        tmp_path / "whatever-i-named-it.ocproj"
+    )
+    ProjectStorage(
+        project_file,
+    ).save(
+        project,
+    )
+    record_recent_project(
+        settings_service,
+        project_file,
+    )
+
+    provider = create_recent_project_provider(
+        settings_service,
+    )
+    items = tuple(
+        provider(
+            CommandContext(),
+        )
+    )
+
+    assert len(items) == 1
+    assert items[0].title == "My Real Project"
 
 
 def test_open_recent_handler_opens_project_and_re_records(
@@ -1038,3 +1055,186 @@ def test_open_handler_without_settings_service_does_not_record(
         )
 
     assert result is not None
+
+
+# --- New File.../New Folder... (Project Explorer context menu) -------
+
+
+def _build_editor_tabs(
+    tmp_path: Path,
+) -> EditorTabsWidget:
+    from opencobol2.theming import (
+        create_builtin_theme_registry,
+        DARK_THEME_ID,
+    )
+
+    return EditorTabsWidget(
+        document_service=DocumentService(),
+        theme=create_builtin_theme_registry().get(
+            DARK_THEME_ID,
+        ),
+    )
+
+
+def test_new_file_handler_creates_and_opens_the_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    editor_tabs = _build_editor_tabs(
+        tmp_path,
+    )
+    handler = create_new_file_handler(
+        project_explorer=explorer,
+        editor_tabs_widget=editor_tabs,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QInputDialog.getText",
+        return_value=(
+            "hello.cbl",
+            True,
+        ),
+    ):
+        handler(
+            tmp_path,
+        )
+
+    assert (
+        tmp_path / "hello.cbl"
+    ).is_file()
+    assert editor_tabs.count() == 1
+
+
+def test_new_file_handler_cancelled_creates_nothing(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    editor_tabs = _build_editor_tabs(
+        tmp_path,
+    )
+    handler = create_new_file_handler(
+        project_explorer=explorer,
+        editor_tabs_widget=editor_tabs,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QInputDialog.getText",
+        return_value=(
+            "",
+            False,
+        ),
+    ):
+        handler(
+            tmp_path,
+        )
+
+    assert list(
+        tmp_path.iterdir(),
+    ) == []
+    assert editor_tabs.count() == 0
+
+
+def test_new_file_handler_refuses_to_overwrite_an_existing_file(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    existing = tmp_path / "already-here.cbl"
+    existing.write_text(
+        "ORIGINAL",
+    )
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    editor_tabs = _build_editor_tabs(
+        tmp_path,
+    )
+    handler = create_new_file_handler(
+        project_explorer=explorer,
+        editor_tabs_widget=editor_tabs,
+    )
+
+    with (
+        patch(
+            "opencobol2.gui.project_commands.QInputDialog.getText",
+            return_value=(
+                "already-here.cbl",
+                True,
+            ),
+        ),
+        patch(
+            "opencobol2.gui.project_commands.QMessageBox.critical",
+        ) as mock_critical,
+    ):
+        handler(
+            tmp_path,
+        )
+
+    mock_critical.assert_called_once()
+    assert existing.read_text() == "ORIGINAL"
+
+
+def test_new_folder_handler_creates_the_folder(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+    handler = create_new_folder_handler(
+        project_explorer=explorer,
+    )
+
+    with patch(
+        "opencobol2.gui.project_commands.QInputDialog.getText",
+        return_value=(
+            "Subfolder",
+            True,
+        ),
+    ):
+        handler(
+            tmp_path,
+        )
+
+    assert (
+        tmp_path / "Subfolder"
+    ).is_dir()
+
+
+def test_project_explorer_context_menu_offers_new_file_and_folder(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    explorer = ProjectExplorerWidget(
+        create_project(
+            name="Demo",
+            root_path=tmp_path,
+        )
+    )
+
+    menu = explorer.build_root_context_menu()
+
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+    ]
+    assert "New File..." in action_texts
+    assert "New Folder..." in action_texts
+    assert "Properties..." in action_texts

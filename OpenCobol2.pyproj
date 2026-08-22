@@ -649,6 +649,7 @@
     <Compile Include="src\opencobol2\gui\locals_panel.py" />
     <Compile Include="src\opencobol2\gui\main_window.py" />
     <Compile Include="src\opencobol2\gui\memory_panel.py" />
+    <Compile Include="src\opencobol2\gui\new_project_dialog.py" />
     <Compile Include="src\opencobol2\gui\outline_panel.py" />
     <Compile Include="src\opencobol2\gui\output_panel.py" />
     <Compile Include="src\opencobol2\gui\problems_panel.py" />

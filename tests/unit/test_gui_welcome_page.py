@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QPushButton
 
 from opencobol2.gui.welcome_page import WelcomePageWidget
+from opencobol2.project import create_project, ProjectStorage
 
 
 def _button(
@@ -49,12 +50,38 @@ def test_set_recent_projects_populates_the_list(
         ),
     )
 
+    # Neither path exists on disk, so the displayed name falls back to
+    # the file's own stem (see describe_project_file) -- the full path
+    # is still available as a tooltip.
     assert widget._recent_list.count() == 2
-    assert widget._recent_list.item(0).text() == str(
+    assert widget._recent_list.item(0).text() == "one"
+    assert widget._recent_list.item(0).toolTip() == str(
         first_path,
     )
     assert not widget._recent_list.isHidden()
     assert widget._empty_recent_label.isHidden()
+
+
+def test_set_recent_projects_shows_the_projects_own_name(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    project = create_project(
+        name="My Real Project",
+        root_path=tmp_path,
+    )
+    project_file = tmp_path / "whatever-i-named-it.ocproj"
+    ProjectStorage(project_file).save(project)
+
+    widget = WelcomePageWidget()
+    widget.set_recent_projects(
+        (project_file,),
+    )
+
+    assert widget._recent_list.item(0).text() == "My Real Project"
+    assert widget._recent_list.item(0).toolTip() == str(
+        project_file,
+    )
 
 
 def test_set_recent_projects_with_empty_sequence_restores_placeholder(

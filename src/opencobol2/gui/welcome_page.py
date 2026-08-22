@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from opencobol2.project import describe_project_file
+
 
 class WelcomePageWidget(QWidget):
     """A quick-start page: New/Open Project actions and recent projects.
@@ -161,6 +163,13 @@ class WelcomePageWidget(QWidget):
     ) -> None:
         """Replace the displayed recent-projects list.
 
+        Each entry displays the project's own stored name (read via
+        `opencobol2.project.describe_project_file`), not its file
+        path -- a project file is an internal artifact, and its raw
+        filesystem path is neither meaningful nor attractive as a
+        list label. The full path is still shown as a tooltip, for
+        anyone who wants to confirm exactly which file it is.
+
         :param paths: The recent project paths to display, in the
             order they should be shown.
         :returns: None. The recent-projects list widget is repopulated
@@ -172,6 +181,13 @@ class WelcomePageWidget(QWidget):
 
         for path in paths:
             item = QListWidgetItem(
+                describe_project_file(
+                    Path(
+                        path,
+                    ),
+                ),
+            )
+            item.setToolTip(
                 str(
                     path,
                 ),
